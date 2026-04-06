@@ -307,15 +307,37 @@ try {
       decision = 'written';
     }
 
-    // ── 7. Write booking decision to 👩‍🎓 All Data col AZ ───────────────────
+// ── 7. Write booking decision to 👩‍🎓 All Data col AZ ───────────────────
+await sheets.spreadsheets.values.update({
+  spreadsheetId: MASTER_SHEET_ID,
+  range: `${MASTER_TAB}!AZ${studentRowIndex}`,
+  valueInputOption: 'USER_ENTERED',
+  requestBody: { values: [[decision]] },
+});
+
+// ── 8. Write AI reason to CheckinForm col K (most recent row for this student) ──
+if (reason) {
+  const checkinRes = await sheets.spreadsheets.values.get({
+    spreadsheetId: MASTER_SHEET_ID,
+    range: `${CHECKIN_TAB}!A:K`,
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+  const checkinRows = checkinRes.data.values || [];
+  let lastMatchIndex = -1;
+  checkinRows.forEach((r, i) => {
+    if (r[1] === studentName) lastMatchIndex = i;
+  });
+  if (lastMatchIndex > -1) {
     await sheets.spreadsheets.values.update({
       spreadsheetId: MASTER_SHEET_ID,
-      range: `${MASTER_TAB}!AZ${studentRowIndex}`,
+      range: `${CHECKIN_TAB}!K${lastMatchIndex + 1}`,
       valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [[decision]] },
+      requestBody: { values: [[reason]] },
     });
+  }
+}
 
-    return Response.json({ success: true, decision, reason });
+return Response.json({ success: true, decision, reason });
 
   } catch (err) {
     console.error('submitUpdateForm error:', err);

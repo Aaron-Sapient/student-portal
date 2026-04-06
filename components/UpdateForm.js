@@ -1,6 +1,12 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { BookPlus } from 'lucide-react';
+import { CalendarClock } from 'lucide-react';
+import { ListTodo } from 'lucide-react';
+import { FileQuestionMark } from 'lucide-react';
+import { Sparkle } from 'lucide-react';
+
 
 const GRADE_OPTIONS = ['A+','A','A-','B+','B','B-','C+','C','C-','D+','D','D-','F'];
 const STATUS_OPTIONS = ['Completed', 'In Progress', 'Not Started'];
@@ -180,21 +186,7 @@ export default function UpdateForm({ onFormComplete }) {
     </div>
   );
 
-  if (status === 'done') return (
-    <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
-      <button
-        onClick={async () => {
-          await fetch('/api/resetFormStatus', { method: 'POST' });
-          setStatus('needed');
-          setStep(0);
-          setRoutingResult(null);
-        }}
-        style={styles.devReset}
-      >
-        [dev] reset check-in
-      </button>
-    </div>
-  );
+if (status === 'done') return null;
 
   if (status === 'needed' && !formData) return (
     <div style={styles.loadingWrap}>
@@ -248,7 +240,7 @@ export default function UpdateForm({ onFormComplete }) {
           <>
             <div style={styles.header}>
               <div style={styles.iconBox}>
-                <span style={styles.iconFallback}>📊</span>
+               <BookPlus className="w-15 h-15 text-gray-700 mt-1" strokeWidth={0.8} />
               </div>
               <div>
                 <h2 style={styles.title}>Grades Update</h2>
@@ -258,14 +250,27 @@ export default function UpdateForm({ onFormComplete }) {
               </div>
             </div>
 
-            <div style={styles.tableHeader}>
-              <span style={styles.colLabel}>Class</span>
-              <span style={styles.colLabel}>Grade</span>
-            </div>
+       <div style={{ ...styles.tableHeader, justifyContent: 'flex-start' }}>
+  {/* flex: 1 pushes the next span to the right */}
+  <span style={{ ...styles.colLabel, flex: 1, textAlign: 'left' }}>
+    Class
+  </span>
+<span style={{ 
+    ...styles.colLabel, 
+    textAlign: 'left', 
+    minWidth: '64px',
+    paddingLeft: '0.3rem' // <--- Add this to match the pill's internal padding
+  }}>
+    Grade
+  </span>
+</div>
 
             {formData?.classes.map((cls, i) => (
-              <div key={i} style={styles.row}>
-                <span style={styles.className}>{cls.name}</span>
+            <div key={i} style={styles.row}>
+  {/* Match the flex: 1 here */}
+  <span style={{ ...styles.className, flex: 1, textAlign: 'left' }}>
+    {cls.name}
+  </span>
                 <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
                   <button
                     className="grade-pill"
@@ -310,7 +315,7 @@ export default function UpdateForm({ onFormComplete }) {
           <>
             <div style={styles.header}>
               <div style={{ ...styles.iconBox, backgroundColor: 'transparent' }}>
-                <span style={styles.iconFallback}>📅</span>
+               <CalendarClock className="w-15 h-15 text-gray-700 -mt-3" strokeWidth={0.8} />
               </div>
               <div>
                 <h2 style={styles.title}>Tests & Deadlines</h2>
@@ -336,7 +341,7 @@ export default function UpdateForm({ onFormComplete }) {
           <>
             <div style={styles.header}>
               <div style={{ ...styles.iconBox, backgroundColor: 'transparent' }}>
-                <span style={styles.iconFallback}>✅</span>
+                <ListTodo className="w-15 h-15 text-gray-700 -mt-3" strokeWidth={0.8} />
               </div>
               <div>
                 <h2 style={styles.title}>Task Updates</h2>
@@ -348,7 +353,7 @@ export default function UpdateForm({ onFormComplete }) {
 
             <div style={styles.tableHeader}>
               <span style={styles.colLabel}>Task</span>
-              <span style={styles.colLabel}>Status</span>
+              <span style={{ ...styles.colLabel, position: 'relative', right: '30px' }}>Status</span>
             </div>
 
             {actionItems.map((item, i) => (
@@ -411,7 +416,7 @@ export default function UpdateForm({ onFormComplete }) {
           <>
             <div style={styles.header}>
               <div style={{ ...styles.iconBox, backgroundColor: 'transparent' }}>
-                <span style={styles.iconFallback}>💬</span>
+               <FileQuestionMark className="w-15 h-15 text-gray-700 mt-1" strokeWidth={0.8} />
               </div>
               <div>
                 <h2 style={styles.title}>Questions/Concerns</h2>
@@ -479,7 +484,7 @@ export default function UpdateForm({ onFormComplete }) {
           <>
             <div style={styles.header}>
               <div style={{ ...styles.iconBox, backgroundColor: 'transparent' }}>
-                <span style={styles.iconFallback}>🌟</span>
+                   <Sparkle className="w-15 h-15 text-gray-700" strokeWidth={0.9} />
               </div>
               <div>
                 <h2 style={styles.title}>Self-Evaluation</h2>
@@ -637,9 +642,8 @@ const styles = {
     width: '72px',
     height: '72px',
     borderRadius: '16px',
-    backgroundColor: '#111',
     display: 'flex',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'center',
     flexShrink: 0,
     fontSize: '2rem',

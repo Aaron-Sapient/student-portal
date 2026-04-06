@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
+import { Calendar1 } from 'lucide-react';
 
 const VALID_DAYS = [2, 3, 4];
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -171,7 +172,7 @@ export default function UpcomingMeetings({ studentName }) {
       <div style={styles.card}>
         <div style={styles.header}>
           <div style={{ ...styles.iconBox, backgroundColor: 'transparent' }}>
-            <span style={styles.iconFallback}>📅</span>
+            <Calendar1 className="w-15 h-15 text-gray-700 mt-1.5" strokeWidth={0.8} />
           </div>
           <h2 style={styles.title}>Upcoming Meetings</h2>
         </div>
@@ -373,7 +374,7 @@ export default function UpcomingMeetings({ studentName }) {
                     </div>
                   )}
 
-                  <div style={styles.rowDivider} />
+                   
                 </div>
               );
             })}
@@ -398,20 +399,20 @@ const styles = {
     gap: '1rem',
     marginBottom: '2rem',
   },
-  iconBox: {
-    width: '48px',
-    height: '48px',
-    borderRadius: '12px',
+   iconBox: {
+    width: '72px',
+    height: '72px',
+    borderRadius: '16px',
     display: 'flex',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'center',
     flexShrink: 0,
-    fontSize: '1.75rem',
+    fontSize: '2rem',
   },
   iconFallback: { fontSize: '1.75rem', lineHeight: 1 },
   title: {
     margin: 0,
-    fontSize: '1.5rem',
+    fontSize: '2rem',
     fontWeight: '700',
     color: '#111',
     letterSpacing: '-0.02em',
