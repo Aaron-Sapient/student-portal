@@ -16,6 +16,7 @@ export default function SignInPage() {
 
   async function handleSubmit(e) {
     e.preventDefault()
+    console.log('handleSubmit fired')
     if (!isLoaded) return
 
     setLoading(true)
@@ -40,6 +41,7 @@ export default function SignInPage() {
   }
 
   async function handleGoogleSignIn() {
+    console.log('handleGoogleSignIn fired')
     if (!isLoaded) return
     try {
       await signIn.authenticateWithRedirect({
