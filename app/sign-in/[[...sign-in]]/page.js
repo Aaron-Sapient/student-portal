@@ -6,8 +6,10 @@ import { useState } from 'react'
 import styles from './sign-in.module.css'
 
 export default function SignInPage() {
-  const { signIn, isLoaded } = useSignIn()
-  const router = useRouter()
+const signinData = useSignIn()
+console.log('useSignIn result:', signinData)
+const { signIn, isLoaded } = signinData || {}
+const router = useRouter()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
