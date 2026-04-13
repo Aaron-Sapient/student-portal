@@ -15,44 +15,44 @@ export default function SignInPage() {
   const [loading, setLoading] = useState(false)
 
   async function handleSubmit(e) {
-    e.preventDefault()
-    console.log('handleSubmit fired')
-    if (!isLoaded) return
+  e.preventDefault()
+  console.log('handleSubmit fired')
+  console.log('isLoaded:', isLoaded)
+  
+  if (!isLoaded) return
+  setLoading(true)
+  setError('')
 
-    setLoading(true)
-    setError('')
-
-    try {
-      const result = await signIn.create({
-        identifier: email,
-        password,
-      })
-
-      if (result.status === 'complete') {
-        await signIn.setActive({ session: result.createdSessionId })
-        router.push('/dashboard')
-      }
-    } catch (err) {
-      const msg = err.errors?.[0]?.longMessage || 'Incorrect email or password.'
-      setError(msg)
-    } finally {
-      setLoading(false)
-    }
+  try {
+    console.log('attempting signIn.create...')
+    const result = await signIn.create({
+      identifier: email,
+      password,
+    })
+    console.log('result:', result)
+  } catch (err) {
+    console.log('caught error:', err)
+    console.log('error details:', err.errors)
+  } finally {
+    setLoading(false)
   }
+}
 
-  async function handleGoogleSignIn() {
-    console.log('handleGoogleSignIn fired')
-    if (!isLoaded) return
-    try {
-      await signIn.authenticateWithRedirect({
-        strategy: 'oauth_google',
-        redirectUrl: '/sso-callback',
-        redirectUrlComplete: '/dashboard',
-      })
-    } catch (err) {
-      setError('Google sign-in failed. Please try again.')
-    }
+async function handleGoogleSignIn() {
+  console.log('handleGoogleSignIn fired')
+  console.log('isLoaded:', isLoaded)
+  if (!isLoaded) return
+  try {
+    console.log('attempting redirect...')
+    await signIn.authenticateWithRedirect({
+      strategy: 'oauth_google',
+      redirectUrl: '/sso-callback',
+      redirectUrlComplete: '/dashboard',
+    })
+  } catch (err) {
+    console.log('google error:', err)
   }
+}
 
   return (
     <div className={styles.signInWrapper}>
