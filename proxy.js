@@ -9,5 +9,5 @@ export default clerkMiddleware(async (auth, request) => {
 }, { signInUrl: '/sign-in' })
 
 export const config = {
-  matcher: ['/((?!_next|.*\\..*).*)'],
+  matcher: ['/((?!_next|api|.*\\..*).*)'],
 }
