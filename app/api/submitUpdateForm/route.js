@@ -315,26 +315,34 @@ await sheets.spreadsheets.values.update({
   requestBody: { values: [[decision]] },
 });
 
-// ── 8. Write AI reason to CheckinForm col K (most recent row for this student) ──
-if (reason) {
-  const checkinRes = await sheets.spreadsheets.values.get({
+// ── 8. Write AI reason to CheckinForm col K and decision to col L ────────
+// We renamed this from 'checkinRes' to 'allRowsRes' to avoid the "already defined" error
+const allRowsRes = await sheets.spreadsheets.values.get({
+  spreadsheetId: MASTER_SHEET_ID,
+  range: `${CHECKIN_TAB}!A:L`,
+  valueRenderOption: 'UNFORMATTED_VALUE',
+});
+
+const checkinRows = allRowsRes.data.values || [];
+let lastMatchIndex = -1;
+
+// Find the row we JUST appended for this student
+checkinRows.forEach((r, i) => {
+  if (r[1] === studentName) lastMatchIndex = i;
+});
+
+if (lastMatchIndex > -1) {
+  const sheetRow = lastMatchIndex + 1;
+  await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId: MASTER_SHEET_ID,
-    range: `${CHECKIN_TAB}!A:K`,
-    valueRenderOption: 'UNFORMATTED_VALUE',
-  });
-  const checkinRows = checkinRes.data.values || [];
-  let lastMatchIndex = -1;
-  checkinRows.forEach((r, i) => {
-    if (r[1] === studentName) lastMatchIndex = i;
-  });
-  if (lastMatchIndex > -1) {
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${CHECKIN_TAB}!K${lastMatchIndex + 1}`,
+    requestBody: {
       valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [[reason]] },
-    });
-  }
+      data: [
+        { range: `${CHECKIN_TAB}!K${sheetRow}`, values: [[reason || '']] },
+        { range: `${CHECKIN_TAB}!L${sheetRow}`, values: [[decision]] },
+      ],
+    },
+  });
 }
 
 return Response.json({ success: true, decision, reason });

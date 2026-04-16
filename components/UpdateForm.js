@@ -168,7 +168,7 @@ export default function UpdateForm({ onFormComplete }) {
     <div style={styles.errorWrap}>Something went wrong: {error}</div>
   );
 
-  if (status === 'routed') return (
+if (status === 'routed') return (
     <div style={styles.card}>
       <div style={styles.header}>
         <div style={{ ...styles.iconBox, backgroundColor: 'transparent' }}>
@@ -179,14 +179,8 @@ export default function UpdateForm({ onFormComplete }) {
           <p style={styles.subtitle}>Ryan will send you a written update soon.</p>
         </div>
       </div>
-      {routingResult?.reason && (
-        <p style={{ fontSize: '0.9rem', color: '#888', marginTop: '0.5rem', fontFamily: "'DM Sans', 'Poppins', sans-serif" }}>
-          {routingResult.reason}
-        </p>
-      )}
     </div>
   );
-
 if (status === 'done') return null;
 
   if (status === 'needed' && !formData) return (

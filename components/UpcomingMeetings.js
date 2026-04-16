@@ -1,8 +1,9 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { Calendar1 } from 'lucide-react';
+import { DateTime } from 'luxon';
 
-const VALID_DAYS = [2, 3, 4];
+const VALID_DAYS = [2, 3, 4, 5];
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const AGENDA_MAX = 30;
@@ -298,20 +299,45 @@ export default function UpcomingMeetings({ studentName }) {
                         {DAY_NAMES.map(d => <div key={d} style={styles.calDayHeader}>{d}</div>)}
                         {buildCalendarGrid(calYear, calMonth).flat().map((date, i) => {
                           if (!date) return <div key={i} />;
-                          const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-                          const disabled = dateOnly < today || !VALID_DAYS.includes(date.getDay()) ||
-                            date < new Date(Date.now() + 24*60*60*1000);
-                          const isSelected = rescheduleDate && formatDateStr(date) === formatDateStr(rescheduleDate);
-                          return (
-                            <button key={i} disabled={disabled} onClick={() => !disabled && setRescheduleDate(date)}
-                              className={disabled ? '' : 'cal-day-hover'}
-                              style={{ ...styles.calDay, opacity: disabled ? 0.25 : 1, cursor: disabled ? 'default' : 'pointer',
-                                backgroundColor: isSelected ? '#C6613F' : 'transparent',
-                                color: isSelected ? 'white' : '#111', fontWeight: isSelected ? '700' : '400' }}>
-                              {date.getDate()}
-                            </button>
-                          );
-                        })}
+// --- NEW LUXON LOGIC START ---
+  // Create Luxon versions of 'today' and the current calendar 'date'
+  const luxonDate = DateTime.fromJSDate(date).setZone('America/Los_Angeles');
+  const nowInLA = DateTime.now().setZone('America/Los_Angeles');
+
+  // isPast: Check if the day is before today in Pacific Time
+  const isPast = luxonDate.startOf('day') < nowInLA.startOf('day');
+  
+  // notBookable: Check if it's Tue-Fri (2, 3, 4, 5)
+  const notBookable = !VALID_DAYS.includes(luxonDate.weekday);
+  
+  // tooSoon: Check for the 24-hour notice window
+  const tooSoon = luxonDate < nowInLA.plus({ days: 1 });
+
+  // Combine them into one variable
+  const disabled = isPast || notBookable || tooSoon;
+  // --- NEW LUXON LOGIC END ---
+
+  const isSelected = rescheduleDate && formatDateStr(date) === formatDateStr(rescheduleDate);
+  
+  return (
+    <button 
+      key={i} 
+      disabled={disabled} 
+      onClick={() => !disabled && setRescheduleDate(date)}
+      className={disabled ? '' : 'cal-day-hover'}
+      style={{ 
+        ...styles.calDay, 
+        opacity: disabled ? 0.25 : 1, 
+        cursor: disabled ? 'default' : 'pointer',
+        backgroundColor: isSelected ? '#C6613F' : 'transparent',
+        color: isSelected ? 'white' : '#111', 
+        fontWeight: isSelected ? '700' : '400' 
+      }}
+    >
+      {date.getDate()}
+    </button>
+  );
+})}
                       </div>
 
                       {rescheduleDate && (

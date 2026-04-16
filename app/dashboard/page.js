@@ -4,6 +4,7 @@ import UpdateForm from '@/components/UpdateForm';
 import UpcomingMeetings from '@/components/UpcomingMeetings';
 import { Italic } from 'lucide-react';
 import Link from 'next/link';
+import { DateTime } from 'luxon';
 
 function getMostRecentMonday() {
   const now = new Date();
@@ -13,6 +14,15 @@ function getMostRecentMonday() {
   monday.setHours(0, 0, 0, 0);
   monday.setDate(now.getDate() - diff);
   return monday;
+}
+
+function getNextMondayDate() {
+  // Finds the next Monday at 12:00 AM Pacific
+  return DateTime.now()
+    .setZone('America/Los_Angeles')
+    .startOf('week')
+    .plus({ weeks: 1 })
+    .toLocaleString({ month: 'long', day: 'numeric' });
 }
 
 function formatCheckinDate(rawValue) {
@@ -115,16 +125,42 @@ export default function Dashboard() {
           {'Weekly Check-in Form'}
         </h2>
 
-        <h3 style={{
-          fontSize: '14px',
-          fontStyle: Italic,
-          fontWeight: '700',
-          color: '#3c3c3c',
-          fontFamily: "'DM Sans', 'Poppins', sans-serif",
-        }}>
-          {'Please fill this out to have a meeting with Director Ryan'}
-        </h3>
+<h3 style={{
+  fontSize: '14px',
+  fontStyle: 'italic', // String format for React
+  fontWeight: '700',
+  color: '#3c3c3c',
+  fontFamily: "'DM Sans', 'Poppins', sans-serif",
+}}>
+  {(() => {
+    // Situation 1: If no check-in exists at all
+    if (!lastCheckin) {
+      return 'Please fill this out to have a meeting with Director Ryan';
+    }
 
+    // Convert lastCheckin (from Sheets) to a Luxon object
+    const lastCheckinDate = typeof lastCheckin === 'number'
+      ? DateTime.fromMillis((lastCheckin - 25569) * 86400 * 1000).setZone('America/Los_Angeles')
+      : DateTime.fromISO(lastCheckin).setZone('America/Los_Angeles');
+
+    const startOfThisWeek = DateTime.now().setZone('America/Los_Angeles').startOf('week');
+
+    // Situation 2: If the check-in happened this week (on or after Monday)
+    if (lastCheckinDate >= startOfThisWeek) {
+      return (
+        <>
+          Thanks for checking in this week! Your check-in form will re-open{' '}
+          <span style={{ color: '#C6613F' }}>
+            Monday, {getNextMondayDate()}
+          </span>.
+        </>
+      );
+    }
+
+    // Default: It's a new week
+    return 'Please fill out your check-in form to have a meeting with Director Ryan';
+  })()}
+</h3>
 {/* Conditional Booking Button */}
         {bookingUrl && (
           <div style={{ marginTop: '1rem', marginBottom: '1rem' }}>
@@ -151,7 +187,7 @@ export default function Dashboard() {
           fontFamily: "'DM Sans', 'Poppins', sans-serif",
           color: checkinColor,
         }}>
-         {checkinDateStr ? `Last check-in: ${checkinDateStr}` : ''}
+         {checkinDateStr ? `Your last check-in was: ${checkinDateStr}` : ''}
         </p>
 
 
