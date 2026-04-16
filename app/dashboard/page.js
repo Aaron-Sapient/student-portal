@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import UpdateForm from '@/components/UpdateForm';
 import UpcomingMeetings from '@/components/UpcomingMeetings';
 import { Italic } from 'lucide-react';
+import Link from 'next/link';
 
 function getMostRecentMonday() {
   const now = new Date();
@@ -52,6 +53,7 @@ export default function Dashboard() {
   const [projects, setProjects] = useState([]);
   const [studentName, setStudentName] = useState('');
   const [lastCheckin, setLastCheckin] = useState(null);
+  const [meetingType, setMeetingType] = useState(null); // New state
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [formComplete, setFormComplete] = useState(false);
@@ -65,6 +67,7 @@ export default function Dashboard() {
           setProjects(data.activeProjects || []);
           setStudentName(data.studentName || '');
           setLastCheckin(data.lastCheckin || null);
+          setMeetingType(data.meetingType || null);
         }
         setLoading(false);
       })
@@ -76,6 +79,8 @@ export default function Dashboard() {
 
   const checkinDateStr = formatCheckinDate(lastCheckin);
   const checkinColor = getCheckinColor(lastCheckin);
+  const bookingUrl = meetingType === '30min' ? '/booking?type=30' : 
+                     meetingType === '15min' ? '/booking?type=15' : null;
 
   return (
     <div style={{ backgroundColor: '#FAF9F4', minHeight: '100vh', width: '100%' }}>
@@ -120,7 +125,25 @@ export default function Dashboard() {
           {'Please fill this out to have a meeting with Director Ryan'}
         </h3>
 
-
+{/* Conditional Booking Button */}
+        {bookingUrl && (
+          <div style={{ marginTop: '1rem', marginBottom: '1rem' }}>
+            <Link href={bookingUrl}>
+              <button style={{
+                backgroundColor: '#111',
+                color: '#fff',
+                padding: '10px 20px',
+                borderRadius: '8px',
+                border: 'none',
+                fontWeight: '600',
+                cursor: 'pointer',
+                fontFamily: "'DM Sans', sans-serif"
+              }}>
+                Book {meetingType} Meeting
+              </button>
+            </Link>
+          </div>
+        )}
         <p style={{
           fontSize: '13px',
           fontWeight: '500',

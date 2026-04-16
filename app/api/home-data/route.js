@@ -6,14 +6,11 @@ export async function GET() {
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
   const userEmail = sessionClaims?.email ?? sessionClaims?.primary_email_address ?? null
-  console.log('Full sessionClaims:', JSON.stringify(sessionClaims))
-  console.log('1. User email from Clerk:', userEmail)
-
-  const sheets = getGoogleSheetsClient()
+   const sheets = getGoogleSheetsClient()
 
   const masterRes = await sheets.spreadsheets.values.get({
     spreadsheetId: process.env.MASTER_SHEET_ID,
-    range: "'👩‍🎓 All Data'!G:AY",
+    range: "'👩‍🎓 All Data'!G:AZ",
   })
 
   const masterRows = masterRes.data.values || []
@@ -64,6 +61,8 @@ export async function GET() {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
 
+const meetingType = studentRow[45] || null;
+
   const activeProjects = projectRows
     .slice(1)
     .filter(row => {
@@ -90,5 +89,10 @@ export async function GET() {
 
   console.log('10. Active projects:', JSON.stringify(activeProjects))
 
-  return Response.json({ activeProjects, studentName, lastCheckin: studentRow[44] || null  })
+  return Response.json({ 
+    activeProjects, 
+    studentName, 
+    lastCheckin: studentRow[44] || null,
+    meetingType // Added this to the return object
+  })
 }
