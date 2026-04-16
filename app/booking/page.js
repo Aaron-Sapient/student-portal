@@ -3,6 +3,7 @@ import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Video } from 'lucide-react';
 import { PhoneCall } from 'lucide-react';
+import { DateTime } from 'luxon';
 
 const VALID_DAYS = [2, 3, 4]; // Tue, Wed, Thu
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -60,21 +61,22 @@ function buildCalendarGrid(year, month) {
 
 // Check if a given month has any bookable slots (Tue/Wed/Thu, 24hr notice, up to end of month)
 function monthHasBookableSlots(year, month, durationMins) {
-  const today = getToday();
-  const earliest = new Date(Date.now() + 24 * 60 * 60 * 1000);
-  const lastDay = new Date(year, month + 1, 0);
+  // Keep the name 'today', but make it Luxon-powered
+  const today = DateTime.now().setZone('America/Los_Angeles').startOf('day');
+  const earliest = today.plus({ days: 1 }); // Still named 'earliest'
+  const lastDay = DateTime.fromObject({ year, month: month + 1 }).endOf('month');
 
-  for (let d = new Date(year, month, 1); d <= lastDay; d.setDate(d.getDate() + 1)) {
-    if (!VALID_DAYS.includes(d.getDay())) continue;
-    if (d < today) continue;
-    // Generate candidate slots and check if any pass 24hr notice
-    for (const hour of [17, 17.5, 18, 18.5, 19, 19.5]) {
-      const slotStart = new Date(year, month, d.getDate(),
-        Math.floor(hour), hour % 1 === 0.5 ? 30 : 0);
-      const slotEnd = new Date(slotStart.getTime() + durationMins * 60 * 1000);
-      if (slotEnd.getHours() > 20) continue;
-      if (slotStart >= earliest) return true;
+  // Loop through days of the month
+  let d = DateTime.fromObject({ year, month: month + 1, day: 1 }, { zone: 'America/Los_Angeles' });
+
+  while (d <= lastDay) {
+    if (VALID_DAYS.includes(d.weekday)) {
+      // If the day is after 'today' and satisfies the 24hr 'earliest' rule
+      if (d >= today && d.plus({ hours: 17 }) >= earliest) {
+        return true;
+      }
     }
+    d = d.plus({ days: 1 });
   }
   return false;
 }
@@ -370,11 +372,24 @@ function BookingPageInner() {
 
             <div style={styles.calGrid}>
               {DAY_NAMES.map(d => <div key={d} style={styles.calDayHeader}>{d}</div>)}
-             {grid.flat().map(({ date, overflow }, i) => {
-  const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const isPast = dateOnly < today;
-  const notBookable = !VALID_DAYS.includes(date.getDay());
-  const tooSoon = date < new Date(Date.now() + 24 * 60 * 60 * 1000);
+  {grid.flat().map(({ date, overflow }, i) => {
+  // --- NEW LUXON LOGIC START ---
+  // This creates a "Luxon" version of the calendar day in Pacific Time
+  const luxonDate = DateTime.fromJSDate(date).setZone('America/Los_Angeles');
+  const nowInLA = DateTime.now().setZone('America/Los_Angeles');
+
+  // isPast: Is the day before today?
+  const isPast = luxonDate.startOf('day') < nowInLA.startOf('day');
+
+  // notBookable: Is it NOT Tue(2), Wed(3), or Thu(4)? 
+  // (Luxon uses 1-7 for Mon-Sun, so Tue-Thu is still 2, 3, 4)
+  const notBookable = !VALID_DAYS.includes(luxonDate.weekday);
+
+  // tooSoon: Is it less than 24 hours from right now?
+  const tooSoon = luxonDate < nowInLA.plus({ days: 1 });
+
+  // --- NEW LUXON LOGIC END ---
+
   const disabled = isPast || notBookable || tooSoon || overflow;
   const isSelected = selectedDate && formatDateStr(date) === formatDateStr(selectedDate);
   const isAvailable = !disabled;

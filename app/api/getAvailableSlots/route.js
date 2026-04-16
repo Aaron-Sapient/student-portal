@@ -1,5 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
+import { DateTime } from 'luxon';
 
 const CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID_RYAN;
 
@@ -18,36 +19,38 @@ function getServiceAuth() {
   });
 }
 
-// Generate all on-the-hour and half-hour slots between 5pm–8pm for a given date
-// durationMinutes: 15 or 30
-// Returns array of { start: Date, end: Date, label: string }
 function generateSlots(dateStr, durationMinutes) {
   const slots = [];
+  const zone = 'America/Los_Angeles';
 
-  // dateStr is "YYYY-MM-DD", interpreted in Pacific Time
-  // We'll work in UTC but anchor to Pacific
-  // Pacific is UTC-8 (PST) or UTC-7 (PDT) — use a fixed offset approach
-  // Safest: build the time as a Pacific local time string and let Date parse it
-  const pacificBase = new Date(`${dateStr}T${String(START_HOUR).padStart(2, '0')}:00:00`);
+  // 1. Parse the date string as a Pacific Time start (5:00 PM)
+  let startPointer = DateTime.fromISO(dateStr, { zone }).set({
+    hour: START_HOUR,
+    minute: 0,
+    second: 0,
+    millisecond: 0
+  });
 
-  // Generate slots at 0 and 30 minutes past each hour
-  for (let hour = START_HOUR; hour < END_HOUR; hour++) {
-    for (const minute of [0, 30]) {
-      const start = new Date(`${dateStr}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`);
-      const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
+  // 2. Set the hard cutoff (8:00 PM)
+  const endLimit = startPointer.set({ hour: END_HOUR, minute: 0 });
 
-      // Don't add slot if it runs past 8pm
-      if (end.getHours() > END_HOUR || (end.getHours() === END_HOUR && end.getMinutes() > 0)) continue;
+  // 3. Loop until we hit the 8 PM cutoff
+  while (startPointer < endLimit) {
+    const slotEnd = startPointer.plus({ minutes: durationMinutes });
 
-      const label = start.toLocaleTimeString('en-US', {
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true,
-        timeZone: 'America/Los_Angeles',
+    // Ensure the individual slot doesn't overflow the 8pm boundary
+    if (slotEnd <= endLimit) {
+      slots.push({
+        // .toISO() now includes the correct offset (-07:00 or -08:00) automatically
+        start: startPointer.toISO(),
+        end: slotEnd.toISO(),
+        // Format the label (e.g., "5:30 PM") specifically for the UI
+        label: startPointer.toLocaleString(DateTime.TIME_SIMPLE)
       });
-
-      slots.push({ start: start.toISOString(), end: end.toISOString(), label });
     }
+
+    // Move the pointer forward by 30 minutes for the next available slot
+    startPointer = startPointer.plus({ minutes: 30 });
   }
 
   return slots;
@@ -60,65 +63,62 @@ export async function GET(request) {
   }
 
   const { searchParams } = new URL(request.url);
-  const dateStr = searchParams.get('date'); // "YYYY-MM-DD"
-  const duration = parseInt(searchParams.get('duration') || '30'); // 15 or 30
+  const dateStr = searchParams.get('date'); 
+  const duration = parseInt(searchParams.get('duration') || '30'); 
 
   if (!dateStr) {
     return Response.json({ error: 'Missing date parameter' }, { status: 400 });
   }
 
-  // Validate it's a bookable day (Tue–Thu)
-  // Parse date as local to avoid timezone shifting the day
-  const [year, month, day] = dateStr.split('-').map(Number);
-  const localDate = new Date(year, month - 1, day);
-  const dayOfWeek = localDate.getDay();
-
-  if (!VALID_DAYS.includes(dayOfWeek)) {
+  // 1. Validate Day of Week using Luxon (Tue=2, Wed=3, Thu=4)
+  const requestedDate = DateTime.fromISO(dateStr, { zone: 'America/Los_Angeles' });
+  if (!VALID_DAYS.includes(requestedDate.weekday)) {
     return Response.json({ slots: [], reason: 'Not a bookable day' });
   }
 
-  // Enforce 24-hour advance notice
-  const now = new Date();
-  const earliest = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  // 2. Set up our "24-hour notice" wall
+  const now = DateTime.now().setZone('America/Los_Angeles');
+  const earliestAllowed = now.plus({ days: 1 });
 
   try {
     const authClient = getServiceAuth();
     const calendar = google.calendar({ version: 'v3', auth: authClient });
 
-    // Fetch all events on Ryan's calendar for this day
-    // Use Pacific midnight to Pacific midnight
-    const dayStart = new Date(`${dateStr}T00:00:00`);
-    const dayEnd = new Date(`${dateStr}T23:59:59`);
+    // 3. Fetch Busy Events (STAYING IN THE CODE!)
+    const dayStart = requestedDate.startOf('day').toISO();
+const dayEnd = requestedDate.endOf('day').toISO();
 
     const eventsRes = await calendar.events.list({
       calendarId: CALENDAR_ID,
-      timeMin: dayStart.toISOString(),
-      timeMax: dayEnd.toISOString(),
+      timeMin: dayStart,
+      timeMax: dayEnd,
       singleEvents: true,
       orderBy: 'startTime',
     });
 
     const events = eventsRes.data.items || [];
 
-    // Build list of busy windows from existing events
+    // 4. Convert Google Events to Luxon objects for comparison
     const busyWindows = events
       .filter(e => e.status !== 'cancelled')
       .map(e => ({
-        start: new Date(e.start.dateTime || e.start.date),
-        end: new Date(e.end.dateTime || e.end.date),
+        // We use DateTime.fromISO because Google returns ISO strings
+        start: DateTime.fromISO(e.start.dateTime || e.start.date),
+        end: DateTime.fromISO(e.end.dateTime || e.end.date),
       }));
 
-    // Generate candidate slots and filter out conflicts
+    // 5. Generate potential slots (The 5pm-8pm Pacific windows)
     const candidates = generateSlots(dateStr, duration);
 
+    // 6. FILTER: This is where we check both "24-hour notice" AND "Double-booking"
     const available = candidates.filter(slot => {
-      const slotStart = new Date(slot.start);
-      const slotEnd = new Date(slot.end);
+      const slotStart = DateTime.fromISO(slot.start);
+      const slotEnd = DateTime.fromISO(slot.end);
 
-      // Must be at least 24 hours from now
-      if (slotStart < earliest) return false;
+      // A. Check 24-hour notice
+      if (slotStart < earliestAllowed) return false;
 
-      // Must not overlap with any existing event
+      // B. Check against Google Calendar busy windows (Prevents Double-Booking)
       const hasConflict = busyWindows.some(busy =>
         slotStart < busy.end && slotEnd > busy.start
       );

@@ -98,6 +98,7 @@ export default function UpdateForm({ onFormComplete }) {
   }
 
   async function handleSubmit() {
+    if (submitting) return;
     if (!actionItems.some(x => x.task.trim())) {
       setError('Please enter at least one task in the Task Updates section.');
       return;

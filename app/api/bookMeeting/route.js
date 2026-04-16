@@ -1,6 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
 import nodemailer from 'nodemailer';
+import { DateTime } from 'luxon';
 
 const CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID_RYAN;
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
@@ -55,34 +56,52 @@ export async function POST(request) {
   if (!email) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const { start, end, duration, studentName, agenda, isReschedule } = await request.json();
+  const { start, end, duration, studentName, agenda, isReschedule } = await request.json();
 
-    if (!start || !end || !duration || !studentName) {
-      return Response.json({ error: 'Missing required fields' }, { status: 400 });
-    }
+  if (!start || !end || !duration || !studentName) {
+    return Response.json({ error: 'Missing required fields' }, { status: 400 });
+  }
 
-    // Enforce 24-hour advance notice server-side
-    if (new Date(start) < new Date(Date.now() + 24 * 60 * 60 * 1000)) {
-      return Response.json({ error: 'Slot is within 24-hour notice window' }, { status: 400 });
-    }
+  // --- NEW LUXON VALIDATION START ---
+  const startTime = DateTime.fromISO(start).setZone('America/Los_Angeles');
+  const now = DateTime.now().setZone('America/Los_Angeles');
 
-    const authClient = getServiceAuth();
-    const calendar = google.calendar({ version: 'v3', auth: authClient });
-    const sheets = google.sheets({ version: 'v4', auth: authClient });
+  // 1. Security Check: 24-hour advance notice
+  if (startTime < now.plus({ days: 1 })) {
+    return Response.json({ error: 'Meetings require 24-hour advance notice.' }, { status: 400 });
+  }
 
-    // ── 1. Double-check slot is still free ───────────────────────────────────
-    const conflictCheck = await calendar.events.list({
-      calendarId: CALENDAR_ID,
-      timeMin: start,
-      timeMax: end,
-      singleEvents: true,
-    });
-    const conflicts = (conflictCheck.data.items || []).filter(e => e.status !== 'cancelled');
-    if (conflicts.length > 0) {
-      return Response.json({
-        error: 'This slot was just booked by someone else. Please choose another time.',
-      }, { status: 409 });
-    }
+  // 2. Security Check: Valid Day (Tue=2, Wed=3, Thu=4)
+  const VALID_DAYS = [2, 3, 4];
+  if (!VALID_DAYS.includes(startTime.weekday)) {
+    return Response.json({ error: 'Meetings can only be booked Tuesday through Thursday.' }, { status: 400 });
+  }
+
+  // 3. Security Check: Valid Hours (5 PM - 8 PM Pacific)
+  // .hour is in 24-hour format, so 17 = 5pm and 20 = 8pm
+  if (startTime.hour < 17 || startTime.hour >= 20) {
+    return Response.json({ error: 'Meetings must be between 5:00 PM and 8:00 PM Pacific Time.' }, { status: 400 });
+  }
+  // --- NEW LUXON VALIDATION END ---
+
+  const authClient = getServiceAuth();
+  const calendar = google.calendar({ version: 'v3', auth: authClient });
+  const sheets = google.sheets({ version: 'v4', auth: authClient });
+
+  // ── 1. Double-check slot is still free ───────────────────────────────────
+  const conflictCheck = await calendar.events.list({
+    calendarId: CALENDAR_ID,
+    timeMin: start,
+    timeMax: end,
+    singleEvents: true,
+  });
+  
+  const conflicts = (conflictCheck.data.items || []).filter(e => e.status !== 'cancelled');
+  if (conflicts.length > 0) {
+    return Response.json({
+      error: 'This slot was just booked by someone else. Please choose another time.',
+    }, { status: 409 });
+  }
 
     // ── 2. Build event title and description ─────────────────────────────────
     // Title: [Student Name] – 30min: [agenda]  OR  [Student Name] – 30min

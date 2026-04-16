@@ -13,6 +13,7 @@
     "@clerk/nextjs": "^7.0.8",
     "googleapis": "^171.4.0",
     "lucide-react": "^1.7.0",
+    "luxon": "^3.7.2",
     "next": "^16.2.1",
     "nodemailer": "^8.0.4",
     "react": "19.2.3",
