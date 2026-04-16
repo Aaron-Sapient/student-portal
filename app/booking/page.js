@@ -72,7 +72,7 @@ function monthHasBookableSlots(year, month, durationMins) {
   while (d <= lastDay) {
     if (VALID_DAYS.includes(d.weekday)) {
       // If the day is after 'today' and satisfies the 24hr 'earliest' rule
-      if (d >= today && d.plus({ hours: 17 }) >= earliest) {
+      if (d >= today && d.plus({ hours: 16 }) >= earliest) {
         return true;
       }
     }

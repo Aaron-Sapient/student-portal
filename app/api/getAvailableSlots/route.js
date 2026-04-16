@@ -6,7 +6,7 @@ const CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID_RYAN;
 
 // Booking window: Tue=2, Wed=3, Thu=4
 const VALID_DAYS = [2, 3, 4];
-const START_HOUR = 17; // 5pm Pacific
+const START_HOUR = 16; // 5pm Pacific
 const END_HOUR = 20;   // 8pm Pacific
 
 function getServiceAuth() {

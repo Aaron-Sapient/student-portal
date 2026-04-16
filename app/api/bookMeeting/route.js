@@ -77,10 +77,9 @@ export async function POST(request) {
     return Response.json({ error: 'Meetings can only be booked Tuesday through Thursday.' }, { status: 400 });
   }
 
-  // 3. Security Check: Valid Hours (5 PM - 8 PM Pacific)
-  // .hour is in 24-hour format, so 17 = 5pm and 20 = 8pm
-  if (startTime.hour < 17 || startTime.hour >= 20) {
-    return Response.json({ error: 'Meetings must be between 5:00 PM and 8:00 PM Pacific Time.' }, { status: 400 });
+  // 3. Security Check: Valid Hours (4 PM - 8 PM Pacific)
+  if (startTime.hour < 16 || startTime.hour >= 20) {
+    return Response.json({ error: 'Meetings must be between 4:00 PM and 8:00 PM Pacific Time.' }, { status: 400 });
   }
   // --- NEW LUXON VALIDATION END ---
 
