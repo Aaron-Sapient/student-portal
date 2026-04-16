@@ -5,7 +5,7 @@ import { DateTime } from 'luxon';
 const CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID_RYAN;
 
 // Booking window: Tue=2, Wed=3, Thu=4
-const VALID_DAYS = [2, 3, 4];
+const VALID_DAYS = [2, 3, 4, 5];
 const START_HOUR = 16; // 5pm Pacific
 const END_HOUR = 20;   // 8pm Pacific
 
@@ -23,33 +23,36 @@ function generateSlots(dateStr, durationMinutes) {
   const slots = [];
   const zone = 'America/Los_Angeles';
 
-  // 1. Parse the date string as a Pacific Time start (5:00 PM)
-  let startPointer = DateTime.fromISO(dateStr, { zone }).set({
-    hour: START_HOUR,
-    minute: 0,
-    second: 0,
-    millisecond: 0
-  });
+  // 1. Determine the weekday (Mon=1, Tue=2, Wed=3, Thu=4, Fri=5)
+  const dayObj = DateTime.fromISO(dateStr, { zone });
+  const weekday = dayObj.weekday;
 
-  // 2. Set the hard cutoff (8:00 PM)
-  const endLimit = startPointer.set({ hour: END_HOUR, minute: 0 });
+  // 2. Set custom hours based on the day
+  let startHour, endHour;
+  
+  if (weekday >= 2 && weekday <= 4) { // Tue-Thu
+    startHour = 16; // 4pm
+    endHour = 20;   // 8pm
+  } else if (weekday === 5) {        // Fri
+    startHour = 16; // 4pm
+    endHour = 19;   // 7pm
+  } else {
+    return []; // Not a bookable day
+  }
 
-  // 3. Loop until we hit the 8 PM cutoff
+  // 3. Generate the slots
+  let startPointer = dayObj.set({ hour: startHour, minute: 0, second: 0, millisecond: 0 });
+  const endLimit = dayObj.set({ hour: endHour, minute: 0 });
+
   while (startPointer < endLimit) {
     const slotEnd = startPointer.plus({ minutes: durationMinutes });
-
-    // Ensure the individual slot doesn't overflow the 8pm boundary
     if (slotEnd <= endLimit) {
       slots.push({
-        // .toISO() now includes the correct offset (-07:00 or -08:00) automatically
         start: startPointer.toISO(),
         end: slotEnd.toISO(),
-        // Format the label (e.g., "5:30 PM") specifically for the UI
         label: startPointer.toLocaleString(DateTime.TIME_SIMPLE)
       });
     }
-
-    // Move the pointer forward by 30 minutes for the next available slot
     startPointer = startPointer.plus({ minutes: 30 });
   }
 

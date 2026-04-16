@@ -5,7 +5,7 @@ import { Video } from 'lucide-react';
 import { PhoneCall } from 'lucide-react';
 import { DateTime } from 'luxon';
 
-const VALID_DAYS = [2, 3, 4]; // Tue, Wed, Thu
+const VALID_DAYS = [2, 3, 4, 5];
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = [
   'January','February','March','April','May','June',
@@ -69,15 +69,18 @@ function monthHasBookableSlots(year, month, durationMins) {
   // Loop through days of the month
   let d = DateTime.fromObject({ year, month: month + 1, day: 1 }, { zone: 'America/Los_Angeles' });
 
-  while (d <= lastDay) {
-    if (VALID_DAYS.includes(d.weekday)) {
-      // If the day is after 'today' and satisfies the 24hr 'earliest' rule
-      if (d >= today && d.plus({ hours: 16 }) >= earliest) {
-        return true;
-      }
+ while (d <= lastDay) {
+  if (VALID_DAYS.includes(d.weekday)) {
+    // Determine the start time for that specific day
+    const dayStartHour = 16; // Both start at 4pm
+    
+    // Check if the 4pm slot on this day is at least 24 hours away
+    if (d >= today && d.plus({ hours: dayStartHour }) >= earliest) {
+      return true;
     }
-    d = d.plus({ days: 1 });
   }
+  d = d.plus({ days: 1 });
+}
   return false;
 }
 

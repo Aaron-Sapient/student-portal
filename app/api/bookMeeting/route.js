@@ -72,15 +72,23 @@ export async function POST(request) {
   }
 
   // 2. Security Check: Valid Day (Tue=2, Wed=3, Thu=4)
-  const VALID_DAYS = [2, 3, 4];
-  if (!VALID_DAYS.includes(startTime.weekday)) {
-    return Response.json({ error: 'Meetings can only be booked Tuesday through Thursday.' }, { status: 400 });
-  }
+  const VALID_DAYS = [2, 3, 4, 5];
+if (!VALID_DAYS.includes(startTime.weekday)) {
+  return Response.json({ error: 'Meetings can only be booked Tue-Fri.' }, { status: 400 });
+}
 
-  // 3. Security Check: Valid Hours (4 PM - 8 PM Pacific)
-  if (startTime.hour < 16 || startTime.hour >= 20) {
-    return Response.json({ error: 'Meetings must be between 4:00 PM and 8:00 PM Pacific Time.' }, { status: 400 });
-  }
+const hour = startTime.hour;
+const isFriday = startTime.weekday === 5;
+
+// Tue-Thu check (4-8pm)
+if (!isFriday && (hour < 16 || hour >= 20)) {
+  return Response.json({ error: 'Tue-Thu meetings must be 4–8pm.' }, { status: 400 });
+}
+
+// Friday check (4-7pm)
+if (isFriday && (hour < 16 || hour >= 19)) {
+  return Response.json({ error: 'Friday meetings must be 4–7pm.' }, { status: 400 });
+}
   // --- NEW LUXON VALIDATION END ---
 
   const authClient = getServiceAuth();
