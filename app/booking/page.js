@@ -145,7 +145,7 @@ function BookingPageInner() {
   const [calMonth, setCalMonth] = useState(initMonth);
   const [calYear, setCalYear] = useState(initYear);
   const [selectedDate, setSelectedDate] = useState(null);
-
+const [recommendedSlots, setRecommendedSlots] = useState([]);
   const [slots, setSlots] = useState([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState(null);
@@ -181,16 +181,28 @@ function BookingPageInner() {
     validate();
   }, []);
 
-  useEffect(() => {
-    if (!selectedDate) return;
-    setSelectedSlot(null);
-    setSlots([]);
-    setLoadingSlots(true);
-    fetch(`/api/getAvailableSlots?date=${formatDateStr(selectedDate)}&duration=${durationMins}`)
-      .then(r => r.json())
-      .then(data => { setSlots(data.slots || []); setLoadingSlots(false); })
-      .catch(() => { setSlots([]); setLoadingSlots(false); });
-  }, [selectedDate]);
+useEffect(() => {
+  if (!selectedDate) return;
+  
+  setSelectedSlot(null);
+  setSlots([]);
+  setRecommendedSlots([]); // Clear recommendations on date change
+  setLoadingSlots(true);
+  
+  fetch(`/api/getAvailableSlots?date=${formatDateStr(selectedDate)}&duration=${durationMins}`)
+    .then(r => r.json())
+    .then(data => { 
+      // Capture both the full list and the curated recommendations
+      setSlots(data.slots || []); 
+      setRecommendedSlots(data.recommendations || []); 
+      setLoadingSlots(false); 
+    })
+    .catch(() => { 
+      setSlots([]); 
+      setRecommendedSlots([]);
+      setLoadingSlots(false); 
+    });
+}, [selectedDate, durationMins]); // Added durationMins to the dependency array
 
   async function handleBook() {
     if (!selectedSlot || !studentName) return;
@@ -363,6 +375,33 @@ function BookingPageInner() {
               <p style={styles.subtitle}>Choose a date, then select an available time.</p>
             </div>
           </div>
+{/* RECOMMENDED SLOTS MODAL/BANNER */}
+{recommendedSlots.length > 0 && (
+  <div style={styles.recommendationWrapper}>
+    <div style={styles.recommendationHeader}>
+      <span style={{ fontSize: '1.2rem' }}>✨</span>
+      <h3 style={styles.recommendationTitle}>Recommended Slots</h3>
+    </div>
+    <p style={styles.recommendationSubtext}>
+      Select a preferred time to help Ryan group meetings together.
+    </p>
+    <div style={styles.recommendationGrid}>
+      {recommendedSlots.map((slot) => (
+        <button
+          key={`rec-${slot.start}`}
+          onClick={() => setSelectedSlot(slot)} // This uses the slot just like the regular grid
+          style={{
+            ...styles.slotButton,
+            ...styles.recommendedButton,
+            ...(selectedSlot?.start === slot.start ? styles.selectedSlot : {}),
+          }}
+        >
+          {slot.label}
+        </button>
+      ))}
+    </div>
+  </div>
+)}
 
           {/* Calendar */}
           <div style={styles.calendarWrap}>
@@ -423,6 +462,9 @@ function BookingPageInner() {
 })}
             </div>
           </div>
+
+
+{/* Your existing full grid below */}
 
           {/* Slots */}
           {selectedDate && (
@@ -576,6 +618,43 @@ calBtnIcon: {
   display: 'flex',
   alignItems: 'center',
 },
+
+recommendationWrapper: {
+    backgroundColor: '#fffef8',
+    border: '1px solid #E5E7EB',
+    borderRadius: '12px',
+    padding: '1.25rem',
+    marginBottom: '2rem',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+  },
+  recommendationHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    marginBottom: '0.25rem',
+  },
+  recommendationTitle: {
+    fontSize: '1rem',
+    fontWeight: '700',
+    color: '#111',
+    margin: 0,
+  },
+  recommendationSubtext: {
+    fontSize: '0.85rem',
+    color: '#6B7280',
+    marginBottom: '1rem',
+  },
+  recommendationGrid: {
+    display: 'flex',
+    gap: '0.75rem',
+    flexWrap: 'wrap',
+  },
+  recommendedButton: {
+    border: '2px solid #C6613F', // Using your brand color from the dashboard
+    backgroundColor: 'white',
+    color: '#C6613F',
+  },
+
   backBtn: {
     backgroundColor: '#d8d6c8', color: '#2c2c2c', border: 'none',
     borderRadius: '999px', padding: '0.5rem 1.4rem', fontSize: '0.9rem',

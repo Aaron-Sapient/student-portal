@@ -1,6 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
 import Anthropic from '@anthropic-ai/sdk';
+import { triggerReportGeneration } from '@/app/api/generateReport/route';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -226,20 +227,23 @@ RESPONSE TYPES (with target distribution):
 
 DECISION RULES (apply in order of weight):
 
-HIGH WEIGHT signals that escalate toward 30min:
-- Grade drop of 1.0+ GPA points in any class (e.g. B to C or worse)
-- Any class currently at D or F — this ALWAYS escalates to 30min regardless of other signals
-- GPA below 2.0 — this ALWAYS escalates to at least 15min
-- Questions/Concerns category is "Need to Discuss" — this ALWAYS escalates to at least 15min
-- Academic self-rating of 1, 2, or 3 — strong escalation signal
+TOP WEIGHT signals that strongly push to "written" and automatically disqualify "30min" regardless of any other signals:
+- Questions/Concerns text is left blank (this signals low engagement)
+- ALL task updates marked as "Not Started" (this also signals low engagement)
 
-MEDIUM WEIGHT signals that escalate toward 15min:
+HIGH WEIGHT signals that escalate toward 30min or 15min:
+- Grade drop of 1.0+ GPA points in any class (e.g. B to C or worse)
+- Any class currently at D or F
+- GPA below 2.0
+- Questions/Concerns category is "Need to Discuss"
+- Academic self-rating of 1, 2, or 3
+
+MEDIUM WEIGHT signals that escalate toward 30min or 15min:
 - Questions/Concerns category is "Quick Question"
-- Academic self-rating of 4 or 5 out of 10
-- Multiple action items marked "Not Started"
+- Academic self-rating of 4 or 5
 - GPA between 2.0 and 2.7
 
-LOW WEIGHT (tiebreaker only, do not override strong signals):
+LOW WEIGHT (tiebreaker only, do not override stronger signals):
 - Student's response preference
 
 DEFAULT BIAS: If no medium or high signals are present, return "written".
@@ -343,6 +347,12 @@ if (lastMatchIndex > -1) {
       ],
     },
   });
+}
+
+if (decision === 'written') {
+  triggerReportGeneration(studentName, studentSheetId)
+    .catch(err => console.error('Report generation failed:', err));
+  // No await — still fire-and-forget, but works on localhost too
 }
 
 return Response.json({ success: true, decision, reason });

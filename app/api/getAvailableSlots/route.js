@@ -3,11 +3,7 @@ import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 
 const CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID_RYAN;
-
-// Booking window: Tue=2, Wed=3, Thu=4
 const VALID_DAYS = [2, 3, 4, 5];
-const START_HOUR = 16; // 5pm Pacific
-const END_HOUR = 20;   // 8pm Pacific
 
 function getServiceAuth() {
   return new google.auth.GoogleAuth({
@@ -19,28 +15,18 @@ function getServiceAuth() {
   });
 }
 
+// Logic 1: Use durationMinutes as the increment
 function generateSlots(dateStr, durationMinutes) {
   const slots = [];
   const zone = 'America/Los_Angeles';
-
-  // 1. Determine the weekday (Mon=1, Tue=2, Wed=3, Thu=4, Fri=5)
   const dayObj = DateTime.fromISO(dateStr, { zone });
   const weekday = dayObj.weekday;
 
-  // 2. Set custom hours based on the day
   let startHour, endHour;
-  
-  if (weekday >= 2 && weekday <= 4) { // Tue-Thu
-    startHour = 16; // 4pm
-    endHour = 20;   // 8pm
-  } else if (weekday === 5) {        // Fri
-    startHour = 16; // 4pm
-    endHour = 19;   // 7pm
-  } else {
-    return []; // Not a bookable day
-  }
+  if (weekday >= 2 && weekday <= 4) { startHour = 16; endHour = 20; }
+  else if (weekday === 5) { startHour = 16; endHour = 19; }
+  else { return []; }
 
-  // 3. Generate the slots
   let startPointer = dayObj.set({ hour: startHour, minute: 0, second: 0, millisecond: 0 });
   const endLimit = dayObj.set({ hour: endHour, minute: 0 });
 
@@ -53,12 +39,33 @@ function generateSlots(dateStr, durationMinutes) {
         label: startPointer.toLocaleString(DateTime.TIME_SIMPLE)
       });
     }
-    startPointer = startPointer.plus({ minutes: 30 });
+    // Increment by the meeting duration (15m or 30m)
+    startPointer = startPointer.plus({ minutes: durationMinutes });
   }
-
   return slots;
 }
 
+// Logic 2: Scoring for Recommendations
+function scoreSlots(availableSlots, busyWindows) {
+  return availableSlots.map(slot => {
+    const slotStart = DateTime.fromISO(slot.start);
+    const slotEnd = DateTime.fromISO(slot.end);
+    let score = 0;
+
+    // 2a. Top Priority: Back-to-back (Score: 100)
+    const isBackToBack = busyWindows.some(busy => 
+      slotStart.equals(busy.end) || slotEnd.equals(busy.start)
+    );
+    if (isBackToBack) score += 100;
+
+    // 2b. Second Priority: Day Density
+    score += busyWindows.length;
+
+    return { ...slot, score };
+  });
+}
+
+// ONLY ONE GET FUNCTION ALLOWED
 export async function GET(request) {
   const { sessionClaims } = await auth();
   if (!sessionClaims?.email) {
@@ -73,13 +80,7 @@ export async function GET(request) {
     return Response.json({ error: 'Missing date parameter' }, { status: 400 });
   }
 
-  // 1. Validate Day of Week using Luxon (Tue=2, Wed=3, Thu=4)
   const requestedDate = DateTime.fromISO(dateStr, { zone: 'America/Los_Angeles' });
-  if (!VALID_DAYS.includes(requestedDate.weekday)) {
-    return Response.json({ slots: [], reason: 'Not a bookable day' });
-  }
-
-  // 2. Set up our "24-hour notice" wall
   const now = DateTime.now().setZone('America/Los_Angeles');
   const earliestAllowed = now.plus({ days: 1 });
 
@@ -87,9 +88,8 @@ export async function GET(request) {
     const authClient = getServiceAuth();
     const calendar = google.calendar({ version: 'v3', auth: authClient });
 
-    // 3. Fetch Busy Events (STAYING IN THE CODE!)
     const dayStart = requestedDate.startOf('day').toISO();
-const dayEnd = requestedDate.endOf('day').toISO();
+    const dayEnd = requestedDate.endOf('day').toISO();
 
     const eventsRes = await calendar.events.list({
       calendarId: CALENDAR_ID,
@@ -99,40 +99,32 @@ const dayEnd = requestedDate.endOf('day').toISO();
       orderBy: 'startTime',
     });
 
-    const events = eventsRes.data.items || [];
-
-    // 4. Convert Google Events to Luxon objects for comparison
-    const busyWindows = events
+    const busyWindows = (eventsRes.data.items || [])
       .filter(e => e.status !== 'cancelled')
       .map(e => ({
-        // We use DateTime.fromISO because Google returns ISO strings
         start: DateTime.fromISO(e.start.dateTime || e.start.date),
         end: DateTime.fromISO(e.end.dateTime || e.end.date),
       }));
 
-    // 5. Generate potential slots (The 5pm-8pm Pacific windows)
     const candidates = generateSlots(dateStr, duration);
-
-    // 6. FILTER: This is where we check both "24-hour notice" AND "Double-booking"
     const available = candidates.filter(slot => {
       const slotStart = DateTime.fromISO(slot.start);
       const slotEnd = DateTime.fromISO(slot.end);
-
-      // A. Check 24-hour notice
       if (slotStart < earliestAllowed) return false;
-
-      // B. Check against Google Calendar busy windows (Prevents Double-Booking)
-      const hasConflict = busyWindows.some(busy =>
-        slotStart < busy.end && slotEnd > busy.start
-      );
-
-      return !hasConflict;
+      return !busyWindows.some(busy => slotStart < busy.end && slotEnd > busy.start);
     });
 
-    return Response.json({ slots: available });
+    const scored = scoreSlots(available, busyWindows);
+    const recommendations = [...scored]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+
+    return Response.json({ 
+      slots: available, 
+      recommendations: recommendations 
+    });
 
   } catch (err) {
-    console.error('getAvailableSlots error:', err);
-    return Response.json({ error: err.message || 'Server error' }, { status: 500 });
+    return Response.json({ error: err.message }, { status: 500 });
   }
 }

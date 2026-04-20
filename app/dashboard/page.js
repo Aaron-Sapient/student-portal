@@ -6,22 +6,11 @@ import { Italic } from 'lucide-react';
 import Link from 'next/link';
 import { DateTime } from 'luxon';
 
-function getMostRecentMonday() {
-  const now = new Date();
-  const day = now.getDay();
-  const diff = day === 0 ? 6 : day - 1;
-  const monday = new Date(now);
-  monday.setHours(0, 0, 0, 0);
-  monday.setDate(now.getDate() - diff);
-  return monday;
-}
-
-function getNextMondayDate() {
-  // Finds the next Monday at 12:00 AM Pacific
+function getNextSaturdayDate() {
   return DateTime.now()
     .setZone('America/Los_Angeles')
-    .startOf('week')
-    .plus({ weeks: 1 })
+    .set({ weekday: 6 }) // Luxon uses 6 for Saturday, 7 for Sunday
+    .plus(DateTime.now().weekday >= 6 ? { weeks: 1 } : {}) // If it's Sat/Sun, move to next Sat
     .toLocaleString({ month: 'long', day: 'numeric' });
 }
 
@@ -55,8 +44,16 @@ function getCheckinColor(rawValue) {
     date = new Date(rawValue);
   }
   if (isNaN(date)) return '#e00000';
-  const monday = getMostRecentMonday();
-  return date >= monday ? '#C6613F' : '#e00000';
+
+  // NEW SATURDAY LOGIC
+  const now = new Date();
+  const day = now.getDay();
+  const diff = (day + 1) % 7; // Days since Saturday
+  const saturday = new Date(now);
+  saturday.setHours(0, 0, 0, 0);
+  saturday.setDate(now.getDate() - diff);
+
+  return date >= saturday ? '#C6613F' : '#e00000';
 }
 
 export default function Dashboard() {
@@ -133,33 +130,35 @@ export default function Dashboard() {
   fontFamily: "'DM Sans', 'Poppins', sans-serif",
 }}>
   {(() => {
-    // Situation 1: If no check-in exists at all
-    if (!lastCheckin) {
-      return 'Please fill this out to have a meeting with Director Ryan';
-    }
+  if (!lastCheckin) {
+    return 'Please fill this out to have a meeting with Director Ryan';
+  }
 
-    // Convert lastCheckin (from Sheets) to a Luxon object
-    const lastCheckinDate = typeof lastCheckin === 'number'
-      ? DateTime.fromMillis((lastCheckin - 25569) * 86400 * 1000).setZone('America/Los_Angeles')
-      : DateTime.fromISO(lastCheckin).setZone('America/Los_Angeles');
+  const lastCheckinDate = typeof lastCheckin === 'number'
+    ? DateTime.fromMillis((lastCheckin - 25569) * 86400 * 1000).setZone('America/Los_Angeles')
+    : DateTime.fromISO(lastCheckin).setZone('America/Los_Angeles');
 
-    const startOfThisWeek = DateTime.now().setZone('America/Los_Angeles').startOf('week');
+  // FIND START OF CURRENT SATURDAY
+  const now = DateTime.now().setZone('America/Los_Angeles');
+  let startOfThisWeek = now.set({ weekday: 6 });
+  if (now.weekday < 6) {
+    startOfThisWeek = startOfThisWeek.minus({ weeks: 1 });
+  }
+  startOfThisWeek = startOfThisWeek.startOf('day');
 
-    // Situation 2: If the check-in happened this week (on or after Monday)
-    if (lastCheckinDate >= startOfThisWeek) {
-      return (
-        <>
-          Thanks for checking in this week! Your check-in form will re-open{' '}
-          <span style={{ color: '#C6613F' }}>
-            Monday, {getNextMondayDate()}
-          </span>.
-        </>
-      );
-    }
+  if (lastCheckinDate >= startOfThisWeek) {
+    return (
+      <>
+        Thanks for checking in! Your check-in form will re-open{' '}
+        <span style={{ color: '#C6613F' }}>
+          Saturday, {getNextSaturdayDate()}
+        </span>.
+      </>
+    );
+  }
 
-    // Default: It's a new week
-    return 'Please fill out your check-in form to have a meeting with Director Ryan';
-  })()}
+  return 'Please fill out your check-in form to have a meeting with Director Ryan';
+})()}
 </h3>
 {/* Conditional Booking Button */}
         {bookingUrl && (

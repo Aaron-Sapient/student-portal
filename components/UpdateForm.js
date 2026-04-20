@@ -14,19 +14,24 @@ const CONCERN_OPTIONS = ['None', 'Quick Question', 'Need to Discuss'];
 const RESPONSE_OPTIONS = ['No preference', 'Written report', '15-min call', '30-min Zoom'];
 const ACADEMIC_RATINGS = [1,2,3,4,5,6,7,8,9,10];
 
-function getMostRecentMonday() {
+function getMostRecentSaturday() {
   const now = new Date();
-  const day = now.getDay();
-  const diff = day === 0 ? 6 : day - 1;
-  const monday = new Date(now);
-  monday.setHours(0, 0, 0, 0);
-  monday.setDate(now.getDate() - diff);
-  return monday;
+  const day = now.getDay(); // Sunday is 0, Monday is 1, ..., Saturday is 6
+  
+  // If today is Saturday (6), diff is 0. 
+  // If today is Sunday (0), diff is 1.
+  // If today is Friday (5), diff is 6.
+  const diff = (day + 1) % 7; 
+  
+  const saturday = new Date(now);
+  saturday.setHours(0, 0, 0, 0);
+  saturday.setDate(now.getDate() - diff);
+  return saturday;
 }
 
 function isFormStillValid(lastSubmitted) {
   if (!lastSubmitted) return false;
-  return new Date(lastSubmitted) >= getMostRecentMonday();
+  return new Date(lastSubmitted) >= getMostRecentSaturday();
 }
 
 const semesterLabel = s => s === 'S1' ? 'Fall' : 'Spring';
