@@ -1,0 +1,20 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Figtree:ital,wght@0,400;0,700;1,400;1,700&family=Bitter:ital,wght@0,400;0,700;1,400&display=swap');
+
+.parent-input:focus {
+  border-color: #C6613F !important;
+  box-shadow: 0 0 0 3px rgba(198, 97, 63, 0.12) !important;
+}
+
+.parent-submit-btn:hover {
+  opacity: 0.87;
+}
+
+.parent-submit-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #b0aca4;
+}
