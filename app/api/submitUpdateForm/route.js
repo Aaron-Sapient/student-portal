@@ -1,7 +1,21 @@
 import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
 import Anthropic from '@anthropic-ai/sdk';
-import { triggerReportGeneration } from '@/app/api/generateReport/route';
+import { triggerReportGeneration } from '@/lib/generateReport';
+
+export async function POST(request) {
+  try {
+    const { studentName, studentSheetId } = await request.json();
+    if (!studentName || !studentSheetId) {
+      return Response.json({ error: 'Missing required fields' }, { status: 400 });
+    }
+    await triggerReportGeneration(studentName, studentSheetId);
+    return Response.json({ success: true });
+  } catch (err) {
+    console.error('generateReport route error:', err);
+    return Response.json({ error: err.message || 'Server error' }, { status: 500 });
+  }
+}
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
