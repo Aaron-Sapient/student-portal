@@ -1,7 +1,8 @@
 import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
 
-const CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID_RYAN;
+const RYANS_CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID_RYAN;
+const AARONS_CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID_AARON;
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
 
@@ -28,7 +29,7 @@ export async function GET() {
     const sheets = google.sheets({ version: 'v4', auth: authClient });
     const calendar = google.calendar({ version: 'v3', auth: authClient });
 
-    // Get student name from master sheet
+    // 1. Get student name from master sheet
     const masterRes = await sheets.spreadsheets.values.get({
       spreadsheetId: MASTER_SHEET_ID,
       range: `${MASTER_TAB}!A:AY`,
@@ -36,14 +37,10 @@ export async function GET() {
     });
 
     const rows = masterRes.data.values || [];
-    const studentRow = rows.find(r => r[9 - 0] === email) || rows.find((r, i) => {
-      // col J = index 9
-      return r[9] === email;
-    });
+    const studentRow = rows.find(r => r[9] === email);
 
     if (!studentRow) return Response.json({ error: 'Student not found' }, { status: 404 });
 
-    // Get student name from their portal sheet
     const studentSheetUrl = studentRow[6];
     const sheetIdMatch = studentSheetUrl?.match(/\/d\/([a-zA-Z0-9-_]+)/);
     if (!sheetIdMatch) return Response.json({ meetings: [] });
@@ -57,36 +54,52 @@ export async function GET() {
     const studentName = nameRes.data.values?.[0]?.[0] || '';
     if (!studentName) return Response.json({ meetings: [] });
 
-    // Fetch upcoming events from Ryan's calendar
+    // 2. Define constants for the calendar fetch
     const now = new Date();
     const eightWeeksOut = new Date(now.getTime() + 8 * 7 * 24 * 60 * 60 * 1000);
 
-    const eventsRes = await calendar.events.list({
-      calendarId: CALENDAR_ID,
-      timeMin: now.toISOString(),
-      timeMax: eightWeeksOut.toISOString(),
-      singleEvents: true,
-      orderBy: 'startTime',
-      q: studentName, // search by student name in event title
-    });
+    // HELPER FUNCTION: Defined inside GET to use 'calendar', 'now', etc.
+    async function fetchFromCalendar(calendarId, instructorName) {
+      const res = await calendar.events.list({
+        calendarId: calendarId,
+        timeMin: now.toISOString(),
+        timeMax: eightWeeksOut.toISOString(),
+        singleEvents: true,
+        orderBy: 'startTime'
+      });
+      
+return (res.data.items || [])
+    .filter(e => {
+      if (e.status === 'cancelled' || !e.summary) return false;
+      
+      // Clean up the names to prevent tiny typos from breaking the match
+      const eventTitle = e.summary.toLowerCase().trim();
+      const searchName = studentName.toLowerCase().trim();
+      
+      return eventTitle.includes(searchName);
+    })
+    .map(e => ({
+      id: e.id,
+      title: e.summary,
+      start: e.start.dateTime || e.start.date,
+      end: e.end.dateTime || e.end.date,
+      description: e.description || '',
+      instructor: instructorName
+    }));
+}
 
-    const events = eventsRes.data.items || [];
+    // 3. Fetch from both calendars at the same time
+    const [ryansEvents, aaronsEvents] = await Promise.all([
+      fetchFromCalendar(RYANS_CALENDAR_ID, 'Ryan'),
+      fetchFromCalendar(AARONS_CALENDAR_ID, 'Aaron')
+    ]);
 
-    // Filter to events that actually have this student's name in the title
-    const studentEvents = events
-      .filter(e =>
-        e.status !== 'cancelled' &&
-        e.summary?.includes(studentName)
-      )
-      .map(e => ({
-        id: e.id,
-        title: e.summary,
-        start: e.start.dateTime,
-        end: e.end.dateTime,
-        description: e.description || '',
-      }));
+    // 4. Combine and Sort by Date
+    const allMeetings = [...ryansEvents, ...aaronsEvents].sort((a, b) => 
+      new Date(a.start) - new Date(b.start)
+    );
 
-    return Response.json({ meetings: studentEvents, studentName });
+    return Response.json({ meetings: allMeetings, studentName });
 
   } catch (err) {
     console.error('getUpcomingMeetings error:', err);

@@ -23,7 +23,7 @@ function getServiceAuth() {
   });
 }
 
-async function sendBookingEmail(studentName, duration, meetingStart, agenda, isReschedule = false) {
+async function sendBookingEmail(studentName, studentEmail, duration, meetingStart, agenda, isReschedule = false) {
   const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: parseInt(process.env.SMTP_PORT || '587'),
@@ -40,13 +40,14 @@ async function sendBookingEmail(studentName, duration, meetingStart, agenda, isR
   const action = isReschedule ? 'rescheduled' : 'booked';
   const agendaLine = agenda ? `\nAgenda: ${agenda}` : '';
 
-  await transporter.sendMail({
+await transporter.sendMail({
     from: process.env.SMTP_USER,
-    to: RYAN_EMAIL,
+    to: studentEmail, // Primary recipient
+    cc: RYAN_EMAIL,    // Ryan is now CC'd
     subject: isReschedule
       ? `Meeting Rescheduled: ${studentName} – ${duration}`
       : `New Meeting Booked: ${studentName} – ${duration}`,
-    text: `Hi Ryan,\n\n${studentName} has ${action} a ${duration} meeting for ${dateLabel} (Pacific Time).${agendaLine}\n\nZoom: ${ZOOM_LINK}\n\nThis is an automated message from the student portal.`,
+    text: `Hi,\n\n${studentName} has ${action} a ${duration} meeting for ${dateLabel} (Pacific Time).${agendaLine}\n\nZoom: ${ZOOM_LINK}\n\nThis is an automated message from the student portal.`,
   });
 }
 
@@ -185,7 +186,7 @@ if (isFriday && (hour < 16 || hour >= 19)) {
 
     // ── 7. Email Ryan ────────────────────────────────────────────────────────
     try {
-      await sendBookingEmail(studentName, duration, start, agendaTrimmed, isReschedule);
+      await sendBookingEmail(studentName, email, duration, start, agendaTrimmed, isReschedule);
     } catch (emailErr) {
       console.error('Failed to send booking email:', emailErr);
     }

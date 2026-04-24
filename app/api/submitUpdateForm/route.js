@@ -350,9 +350,9 @@ if (lastMatchIndex > -1) {
 }
 
 if (decision === 'written') {
-  triggerReportGeneration(studentName, studentSheetId)
-    .catch(err => console.error('Report generation failed:', err));
-  // No await — still fire-and-forget, but works on localhost too
+  const start = Date.now();
+  await triggerReportGeneration(studentName, studentSheetId);
+  console.log('Report generation took', Date.now() - start, 'ms');
 }
 
 return Response.json({ success: true, decision, reason });

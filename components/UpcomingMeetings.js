@@ -41,8 +41,8 @@ function isWithin24Hours(dateStr) {
 // Description format: "Zoom: https://...\nAgenda: some text"
 function parseAgenda(description) {
   if (!description) return '';
-  const match = description.match(/Agenda:\s*(.+)/i);
-  return match ? match[1].trim() : '';
+  // Simply remove any HTML tags like <div> or <br> and return the text
+  return description.replace(/<[^>]*>?/gm, '').trim();
 }
 
 export default function UpcomingMeetings({ studentName }) {
@@ -198,10 +198,11 @@ export default function UpcomingMeetings({ studentName }) {
         {!loading && meetings.length > 0 && (
           <>
             <div style={styles.tableHeader}>
-              <span style={{ ...styles.colLabel, flex: '0 0 160px' }}>Date</span>
-              <span style={{ ...styles.colLabel, flex: 1, paddingLeft: '1rem' }}>Agenda</span>
-              <span style={{ ...styles.colLabel, flex: '0 0 160px', textAlign: 'right' }}>Reschedule / Cancel</span>
-            </div>
+  <span style={{ ...styles.colLabel, flex: '0 0 80px' }}>Instructor</span>
+  <span style={{ ...styles.colLabel, flex: '0 0 160px' }}>Date</span>
+  <span style={{ ...styles.colLabel, flex: 1, paddingLeft: '1rem' }}>Agenda</span>
+  <span style={{ ...styles.colLabel, flex: '0 0 160px', textAlign: 'right' }}>Reschedule / Cancel</span>
+</div>
 
             {meetings.map(meeting => {
               const start = new Date(meeting.start);
@@ -227,6 +228,9 @@ export default function UpcomingMeetings({ studentName }) {
               return (
                 <div key={meeting.id}>
                   <div style={styles.meetingRow}>
+                  <div style={{ flex: '0 0 80px', fontWeight: '600', fontSize: '0.9rem', color: '#555' }}>
+          {meeting.instructor}
+        </div>
                     <div style={{ flex: '0 0 160px' }}>
                       <div style={styles.dateCard}>
                         <span style={styles.dateMain}>{dateLabel}</span>
@@ -240,31 +244,39 @@ export default function UpcomingMeetings({ studentName }) {
                       </div>
                     </div>
 
-                    <div style={{ flex: '0 0 160px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem' }}>
-                      {within24 ? (
-                        <span style={styles.lockedNote}>Within 24hrs —{'\n'}changes locked</span>
-                      ) : (
-                        <>
-                          <button className="action-btn" style={styles.actionBtn}
-                            onClick={() => {
-                              if (isRescheduling) {
-                                setReschedulingId(null); setRescheduleDate(null);
-                                setSelectedSlot(null); setRescheduleAgenda('');
-                              } else {
-                                setReschedulingId(meeting.id); setCancellingId(null);
-                                setRescheduleDate(null); setSelectedSlot(null);
-                                setRescheduleAgenda(agenda || '');
-                              }
-                            }}>
-                            {isRescheduling ? 'Close ✕' : 'Reschedule'}
-                          </button>
-                          <button className="action-btn" style={styles.actionBtn}
-                            onClick={() => setCancellingId(isCancelling ? null : meeting.id)}>
-                            Cancel
-                          </button>
-                        </>
-                      )}
-                    </div>
+<div style={{ flex: '0 0 160px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem' }}>
+  {/* 1. First, check if it's Aaron's meeting */}
+  {meeting.instructor === 'Aaron' ? (
+    <span style={{ fontSize: '0.8rem', color: '#aaa', fontStyle: 'italic', textAlign: 'right' }}>
+      Contact Aaron to change
+    </span>
+  ) : (
+    /* 2. If it's NOT Aaron (it's Ryan), keep your existing 24hr / Button logic */
+    within24 ? (
+      <span style={styles.lockedNote}>Within 24hrs —{'\n'}changes locked</span>
+    ) : (
+      <>
+        <button className="action-btn" style={styles.actionBtn}
+          onClick={() => {
+            if (isRescheduling) {
+              setReschedulingId(null); setRescheduleDate(null);
+              setSelectedSlot(null); setRescheduleAgenda('');
+            } else {
+              setReschedulingId(meeting.id); setCancellingId(null);
+              setRescheduleDate(null); setSelectedSlot(null);
+              setRescheduleAgenda(agenda || '');
+            }
+          }}>
+          {isRescheduling ? 'Close ✕' : 'Reschedule'}
+        </button>
+        <button className="action-btn" style={styles.actionBtn}
+          onClick={() => setCancellingId(isCancelling ? null : meeting.id)}>
+          Cancel
+        </button>
+      </>
+    )
+  )}
+</div>
                   </div>
 
                   {/* Cancel confirm */}
