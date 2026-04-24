@@ -197,87 +197,85 @@ export default function UpcomingMeetings({ studentName }) {
 
         {!loading && meetings.length > 0 && (
           <>
-            <div style={styles.tableHeader}>
-  <span style={{ ...styles.colLabel, flex: '0 0 80px' }}>Instructor</span>
-  <span style={{ ...styles.colLabel, flex: '0 0 160px' }}>Date</span>
-  <span style={{ ...styles.colLabel, flex: 1, paddingLeft: '1rem' }}>Agenda</span>
-  <span style={{ ...styles.colLabel, flex: '0 0 160px', textAlign: 'right' }}>Reschedule / Cancel</span>
+{/* Updated Table Header (Cleaned up for new alignment) */}
+<div style={{ ...styles.tableHeader, display: 'flex', alignItems: 'center', width: '100%' }}>
+  {/* 1. Fixed width matching the Instructor name */}
+  <span style={{ ...styles.colLabel, width: '50px' }}>Staff</span>
+  
+  {/* 2. Padding to align with the Date Card */}
+  <span style={{ ...styles.colLabel, paddingLeft: '1rem' }}>Meeting Details</span>
+  
+  {/* 3. flex: 1 fills the middle, textAlign: right pushes text to the far edge */}
+  <span style={{ ...styles.colLabel, flex: 1, textAlign: 'right' }}>
+    Reschedule / Cancel
+  </span>
 </div>
 
-            {meetings.map(meeting => {
-              const start = new Date(meeting.start);
-              const end = new Date(meeting.end);
-              const within24 = isWithin24Hours(meeting.start);
-              const isRescheduling = reschedulingId === meeting.id;
-              const isCancelling = cancellingId === meeting.id;
-              const agenda = parseAgenda(meeting.description);
+{meetings.map(meeting => {
+  const start = new Date(meeting.start);
+  const end = new Date(meeting.end);
+  const within24 = isWithin24Hours(meeting.start);
+  const isRescheduling = reschedulingId === meeting.id;
+  const isCancelling = cancellingId === meeting.id;
+  
+  // Clean Agenda/Description
+  const agendaText = (meeting.description || '').replace(/<[^>]*>?/gm, '').trim();
 
-              const dateLabel = start.toLocaleDateString('en-US', {
-                weekday: 'short', month: 'short', day: 'numeric',
-                timeZone: 'America/Los_Angeles',
-              });
-              const startTime = start.toLocaleTimeString('en-US', {
-                hour: 'numeric', minute: '2-digit', hour12: true,
-                timeZone: 'America/Los_Angeles',
-              });
-              const endTime = end.toLocaleTimeString('en-US', {
-                hour: 'numeric', minute: '2-digit', hour12: true,
-                timeZone: 'America/Los_Angeles',
-              });
+  const dateLabel = start.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/Los_Angeles' });
+  const timeRange = `${start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/Los_Angeles' })} – ${end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/Los_Angeles' })}`;
 
-              return (
-                <div key={meeting.id}>
-                  <div style={styles.meetingRow}>
-                  <div style={{ flex: '0 0 80px', fontWeight: '600', fontSize: '0.9rem', color: '#555' }}>
-          {meeting.instructor}
+  return (
+  <div key={meeting.id} style={styles.meetingRow}>
+    
+    {/* ROW 1: Instructor + Date + Vertical Buttons */}
+    <div style={styles.topRow}>
+      {/* Instructor */}
+      <div style={styles.instructorLabel}>
+        {meeting.instructor || 'Ryan'}
+      </div>
+
+      {/* Date Card with dedicated horizontal space */}
+      <div style={styles.dateColumn}>
+        <div style={styles.dateCard}>
+          <span style={styles.dateMain}>{dateLabel}</span>
+          <span style={styles.dateTime}>{timeRange}</span>
         </div>
-                    <div style={{ flex: '0 0 160px' }}>
-                      <div style={styles.dateCard}>
-                        <span style={styles.dateMain}>{dateLabel}</span>
-                        <span style={styles.dateTime}>{startTime} – {endTime}</span>
-                      </div>
-                    </div>
+      </div>
 
-                    <div style={{ flex: 1, paddingLeft: '1rem' }}>
-                      <div style={styles.agendaCard}>
-                        {agenda || <span style={{ color: '#bbb' }}>No agenda set</span>}
-                      </div>
-                    </div>
+      {/* Action Buttons (Stacked Vertically) */}
+      <div style={styles.actionGroup}>
+        {meeting.instructor === 'Aaron' ? (
+          <span style={{ fontSize: '0.75rem', color: '#aaa', fontStyle: 'italic' }}>Contact Aaron</span>
+        ) : within24 ? (
+          <span style={styles.lockedNote}>Changes locked</span>
+        ) : (
+          <>
+            <button className="action-btn" style={styles.actionBtn} 
+              onClick={() => setReschedulingId(isRescheduling ? null : meeting.id)}>
+              {isRescheduling ? 'Close ✕' : 'Reschedule'}
+            </button>
+            <button className="action-btn" style={styles.actionBtn} 
+              onClick={() => setCancellingId(isCancelling ? null : meeting.id)}>
+              Cancel
+            </button>
+          </>
+        )}
+      </div>
+    </div>
 
-<div style={{ flex: '0 0 160px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem' }}>
-  {/* 1. First, check if it's Aaron's meeting */}
-  {meeting.instructor === 'Aaron' ? (
-    <span style={{ fontSize: '0.8rem', color: '#aaa', fontStyle: 'italic', textAlign: 'right' }}>
-      Contact Aaron to change
-    </span>
-  ) : (
-    /* 2. If it's NOT Aaron (it's Ryan), keep your existing 24hr / Button logic */
-    within24 ? (
-      <span style={styles.lockedNote}>Within 24hrs —{'\n'}changes locked</span>
-    ) : (
-      <>
-        <button className="action-btn" style={styles.actionBtn}
-          onClick={() => {
-            if (isRescheduling) {
-              setReschedulingId(null); setRescheduleDate(null);
-              setSelectedSlot(null); setRescheduleAgenda('');
-            } else {
-              setReschedulingId(meeting.id); setCancellingId(null);
-              setRescheduleDate(null); setSelectedSlot(null);
-              setRescheduleAgenda(agenda || '');
-            }
-          }}>
-          {isRescheduling ? 'Close ✕' : 'Reschedule'}
-        </button>
-        <button className="action-btn" style={styles.actionBtn}
-          onClick={() => setCancellingId(isCancelling ? null : meeting.id)}>
-          Cancel
-        </button>
-      </>
-    )
-  )}
+  {/* ROW 2: Agenda Label + Box in same row */}
+<div style={styles.agendaRow}>
+  {/* Label */}
+  <div style={styles.agendaLabel}>
+    Agenda
+  </div>
+  
+  {/* Text Box */}
+  <div style={styles.agendaCard}>
+    {agendaText || <span style={{ color: '#bbb' }}>No agenda provided</span>}
+  </div>
 </div>
-                  </div>
+
 
                   {/* Cancel confirm */}
                   {isCancelling && (
@@ -468,50 +466,101 @@ const styles = {
     color: '#aaa',
     fontFamily: "'DM Sans', 'Poppins', sans-serif",
   },
-  meetingRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '0',
-    padding: '1rem 0',
-  },
+meetingRow: {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.75rem',
+  padding: '1.25rem 0',
+  borderBottom: '1px solid #B4B3B0',
+},
+topRow: {
+  display: 'flex',
+  flexDirection: 'row', // Forces horizontal even on mobile
+  alignItems: 'center',
+  justifyContent: 'flex-start', // Keeps everything tucked to the left
+  gap: '0.75rem', // Small, consistent gap between items
+  width: '100%',
+},
+dateColumn: {
+  flex: '0 0 180px', 
+  display: 'flex',
+  justifyContent: 'flex-start',
+},
   rowDivider: { height: '1px', backgroundColor: '#B4B3B0' },
-  dateCard: {
-    backgroundColor: '#efede2',
-    borderRadius: '12px',
-    padding: '0.75rem 1rem',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.2rem',
-  },
+dateCard: {
+  backgroundColor: '#efede2',
+  borderRadius: '12px',
+  padding: '0.6rem 0.8rem', // Slightly tighter padding
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.1rem',
+},
+actionGroup: {
+  display: 'flex',
+  flexDirection: 'column', 
+  gap: '0.4rem',
+  marginLeft: 'auto', // Keeps the stack on the right
+  alignItems: 'flex-end',
+},
+instructorLabel: {
+  fontWeight: '700',
+  fontSize: '0.95rem',
+  color: '#111',
+  minWidth: '50px', // Prevents name from squishing
+},
+agendaLabel: {
+  fontWeight: '700',
+  fontSize: '0.8rem',
+  color: '#111',
+  width: '50px', 
+  flexShrink: 0,
+  paddingTop: '0', // Removed the top padding to keep it centered
+},
+agendaRow: {
+  display: 'flex',
+  flexDirection: 'row',
+  gap: '1rem',
+  width: '100%',
+  alignItems: 'center', // Changed from 'flex-start' to 'center'
+},
   dateMain: { fontSize: '0.95rem', fontWeight: '700', color: '#111', fontFamily: "'DM Sans', 'Poppins', sans-serif" },
   dateTime: { fontSize: '0.8rem', color: '#888', fontFamily: "'DM Sans', 'Poppins', sans-serif" },
-  agendaCard: {
-    backgroundColor: '#fffef8',
-    border: '1px solid white',
-    borderRadius: '12px',
-    padding: '0.75rem 1rem',
-    fontSize: '0.9rem',
-    color: '#111',
-    boxShadow: '0 1px 6px rgba(0,0,0,0.05)',
-    fontFamily: "'DM Sans', 'Poppins', sans-serif",
-    minHeight: '60px',
-    display: 'flex',
-    alignItems: 'center',
-  },
-  actionBtn: {
-    backgroundColor: '#efede2',
-    border: '1px solid #B4B3B0',
-    borderRadius: '10px',
-    padding: '0.4rem 1rem',
-    fontSize: '0.85rem',
-    fontWeight: '500',
-    cursor: 'pointer',
-    fontFamily: "'DM Sans', 'Poppins', sans-serif",
-    color: '#111',
-    transition: 'background-color 0.12s ease',
-    width: '120px',
-    textAlign: 'center',
-  },
+agendaCard: {
+  backgroundColor: '#fffef8',
+  border: '1px solid #eee',
+  borderRadius: '12px',
+  padding: '0.75rem 1rem',
+  fontSize: '0.9rem',
+  color: '#111',
+  boxShadow: '0 1px 6px rgba(0,0,0,0.05)',
+  fontFamily: "'DM Sans', 'Poppins', sans-serif",
+  flex: 1, // Takes up all remaining space
+  wordBreak: 'break-word',
+  whiteSpace: 'pre-wrap',
+},
+actionBtn: {
+  backgroundColor: '#efede2',
+  border: '1px solid #B4B3B0',
+  borderRadius: '10px',
+  padding: '0.4rem 0.8rem',
+  fontSize: '0.8rem',
+  fontWeight: '500',
+  cursor: 'pointer',
+  fontFamily: "'DM Sans', 'Poppins', sans-serif",
+  color: '#111',
+  transition: 'background-color 0.12s ease',
+  width: '100px', // Uniform width for stacked look
+  textAlign: 'center',
+},
+
+labelStyle: {
+  flex: '0 0 80px', 
+  fontWeight: '600', 
+  fontSize: '0.9rem', 
+  color: '#555',
+  fontFamily: "'DM Sans', 'Poppins', sans-serif",
+},
+
   lockedNote: {
     fontSize: '0.75rem', color: '#aaa', textAlign: 'right',
     fontFamily: "'DM Sans', 'Poppins', sans-serif",
@@ -575,6 +624,45 @@ const styles = {
 
 const cssString = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&display=swap');
+.meeting-card-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    padding: 1.5rem 0;
+    border-bottom: 1px solid #B4B3B0;
+    width: 100%;
+  }
+
+  .top-info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    gap: 1rem;
+    flex-wrap: wrap; /* Allows stacking on mobile */
+  }
+
+  .agenda-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    width: 100%;
+  }
+
+  @media (max-width: 650px) {
+    .top-info-row {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .action-group {
+      width: 100%;
+      flex-direction: row !important;
+      justify-content: flex-start;
+    }
+    .table-header-desktop {
+      display: none !important;
+    }
+  }
   .action-btn:hover { background-color: #d8d7ce !important; }
   .cal-day-hover:hover { background-color: #efede2 !important; }
   .slot-btn:hover { opacity: 0.85; }

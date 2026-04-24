@@ -8,7 +8,7 @@ const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
 const CHECKIN_TAB = 'CheckinForm';
 const ZOOM_LINK = 'https://us02web.zoom.us/j/8846768033';
-const RYAN_EMAIL = 'ryan@admissions.partners';
+const RYAN_EMAIL = 'support@admissions.partners';
 
 function getServiceAuth() {
   return new google.auth.GoogleAuth({
@@ -42,8 +42,7 @@ async function sendBookingEmail(studentName, studentEmail, duration, meetingStar
 
 await transporter.sendMail({
     from: process.env.SMTP_USER,
-    to: studentEmail, // Primary recipient
-    cc: RYAN_EMAIL,    // Ryan is now CC'd
+    to: `${studentEmail}, ${RYAN_EMAIL}`,
     subject: isReschedule
       ? `Meeting Rescheduled: ${studentName} – ${duration}`
       : `New Meeting Booked: ${studentName} – ${duration}`,
