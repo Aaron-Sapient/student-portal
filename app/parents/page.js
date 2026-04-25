@@ -24,6 +24,11 @@ export default function ParentsPage() {
           concern: concern.trim(),
         }),
       });
+      if (!res.ok) {
+      const errorText = await res.text();
+      console.error("DEBUG: Server returned an error page:", errorText);
+      throw new Error(`Server error (${res.status}): Check the console.`);
+    }
       const result = await res.json();
       if (!result.success) throw new Error(result.error || 'Submission failed');
       setSubmitted(true);
