@@ -38,9 +38,6 @@ async function sendBookingEmail(instructor, studentName, studentEmail, duration,
 
   const action = isReschedule ? 'rescheduled' : 'booked';
   const agendaLine = agenda ? `\nAgenda: ${agenda}` : '';
-  // Ryan's 15-minute meetings are phone calls — never share Zoom details with the student.
-  const isPhoneCall = instructor.slug === 'ryan' && duration === '15min';
-  const zoomLine = isPhoneCall ? '' : `\n\nZoom: ${instructor.zoomLink}`;
 
   await transporter.sendMail({
     from: process.env.SMTP_USER,
@@ -48,7 +45,7 @@ async function sendBookingEmail(instructor, studentName, studentEmail, duration,
     subject: isReschedule
       ? `Meeting Rescheduled: ${studentName} – ${duration} with ${instructor.displayName}`
       : `New Meeting Booked: ${studentName} – ${duration} with ${instructor.displayName}`,
-    text: `Hi,\n\n${studentName} has ${action} a ${duration} meeting with ${instructor.displayName} for ${dateLabel} (Pacific Time).${agendaLine}${zoomLine}\n\nThis is an automated message from the student portal.`,
+    text: `Hi,\n\n${studentName} has ${action} a ${duration} meeting with ${instructor.displayName} for ${dateLabel} (Pacific Time).${agendaLine}\n\nZoom: ${instructor.zoomLink}\n\nThis is an automated message from the student portal.`,
   });
 }
 
@@ -103,13 +100,9 @@ export async function POST(request) {
       ? `${titlePrefix}${studentName} – ${duration}: ${agendaTrimmed}`
       : `${titlePrefix}${studentName} – ${duration}`;
 
-    // Ryan's 15-minute meetings are phone calls — no Zoom details in the event description.
-    const isPhoneCall = instructor.slug === 'ryan' && duration === '15min';
-    const eventDescription = isPhoneCall
-      ? (agendaTrimmed ? `Agenda: ${agendaTrimmed}` : '')
-      : (agendaTrimmed
-        ? `Zoom: ${instructor.zoomLink}\nAgenda: ${agendaTrimmed}`
-        : `Zoom: ${instructor.zoomLink}`);
+    const eventDescription = agendaTrimmed
+      ? `Zoom: ${instructor.zoomLink}\nAgenda: ${agendaTrimmed}`
+      : `Zoom: ${instructor.zoomLink}`;
 
     await calendar.events.insert({
       calendarId: instructor.calendarId,

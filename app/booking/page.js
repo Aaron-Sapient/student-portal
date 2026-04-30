@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { Video, PhoneCall } from 'lucide-react';
+import { Video } from 'lucide-react';
 import { DateTime } from 'luxon';
 import { getInstructorPublic } from '@/lib/instructorPublic';
 
@@ -246,12 +246,7 @@ function BookingPageInner() {
 
   // Body text uses bodyName so ART → "Aaron" while the URL slug stays `art`.
   const bodyName = instructor.bodyName;
-
-  // Only Ryan's 15min meeting is a phone call. Every other combination is a Zoom.
-  const isPhoneCall = instructor.slug === 'ryan' && duration === '15min';
-  const meetingLabel = duration === '15min'
-    ? (isPhoneCall ? '15-Minute Call' : '15-Minute Zoom')
-    : '30-Minute Zoom';
+  const meetingLabel = duration === '15min' ? '15-Minute Zoom' : '30-Minute Zoom';
 
   if (validating) return (
     <div style={styles.page}><div style={styles.card}>
@@ -282,14 +277,10 @@ function BookingPageInner() {
       : `${studentName} – ${duration}`;
 
     const fmt = (d) => new Date(d).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-    // Ryan-15min has no Zoom — calendar entry shows agenda only (or nothing).
-    const gcalDescription = isPhoneCall
-      ? (bookedAgenda ? `Agenda: ${bookedAgenda}` : '')
-      : (bookedAgenda
-        ? `Agenda: ${bookedAgenda}\nZoom: ${instructor.zoomLink}`
-        : `Zoom: ${instructor.zoomLink}`);
-    const gcalLocation = isPhoneCall ? '' : instructor.zoomLink;
-    const gcalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(eventTitle)}&dates=${fmt(bookedSlot.start)}/${fmt(bookedSlot.end)}&details=${encodeURIComponent(gcalDescription)}&location=${encodeURIComponent(gcalLocation)}`;
+    const gcalDescription = bookedAgenda
+      ? `Agenda: ${bookedAgenda}\nZoom: ${instructor.zoomLink}`
+      : `Zoom: ${instructor.zoomLink}`;
+    const gcalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(eventTitle)}&dates=${fmt(bookedSlot.start)}/${fmt(bookedSlot.end)}&details=${encodeURIComponent(gcalDescription)}&location=${encodeURIComponent(instructor.zoomLink)}`;
 
     return (
       <div style={styles.page}>
@@ -309,13 +300,11 @@ function BookingPageInner() {
             </div>
           </div>
 
-          {!isPhoneCall && (
-            <p style={styles.zoomNote}>
-              Zoom: <a href={instructor.zoomLink} style={styles.zoomLink} target="_blank" rel="noreferrer">
-                {instructor.zoomLink.replace(/^https?:\/\//, '')}
-              </a>
-            </p>
-          )}
+          <p style={styles.zoomNote}>
+            Zoom: <a href={instructor.zoomLink} style={styles.zoomLink} target="_blank" rel="noreferrer">
+              {instructor.zoomLink.replace(/^https?:\/\//, '')}
+            </a>
+          </p>
 
           <div style={styles.confirmActions}>
             <a href={gcalUrl} target="_blank" rel="noreferrer" style={styles.calBtn} className="cal-btn">
@@ -331,7 +320,7 @@ function BookingPageInner() {
             <button
               onClick={() => downloadICal(
                 bookedSlot.start, bookedSlot.end, eventTitle,
-                bookedAgenda, isPhoneCall ? '' : instructor.zoomLink
+                bookedAgenda, instructor.zoomLink
               )}
               style={styles.calBtn}
               className="cal-btn"
@@ -364,10 +353,7 @@ function BookingPageInner() {
 
           <div style={styles.header}>
             <div style={{ ...styles.iconBox, backgroundColor: 'transparent' }}>
-              {isPhoneCall
-                ? <PhoneCall className="w-13 h-13 text-gray-700 -mt-2" strokeWidth={0.8} />
-                : <Video className="w-15 h-15 text-gray-700 -mt-4.5" strokeWidth={0.9} />
-              }
+              <Video className="w-15 h-15 text-gray-700 -mt-4.5" strokeWidth={0.9} />
             </div>
             <div>
               <h2 style={styles.title}>Book a {meetingLabel}</h2>
