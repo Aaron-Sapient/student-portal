@@ -303,14 +303,14 @@ export default function AaronUpdateForm({ onFormComplete }) {
                 <FileQuestionMark className="w-15 h-15 text-gray-700 mt-1" strokeWidth={0.8} />
               </div>
               <div>
-                <h2 style={styles.title}>Questions/Concerns</h2>
-                <p style={styles.subtitle}>This helps Aaron better assist you.</p>
+                <h2 style={styles.title}>Questions / Concerns</h2>
+                <p style={styles.subtitle}>Let Aaron know if you have any questions or concerns regarding competitions, projects, etc.</p>
               </div>
             </div>
 
             <div style={styles.concernRow}>
               <span style={styles.concernLabel}>Please select an option:</span>
-              <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
+              <div style={{ position: 'relative', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
                 <button
                   className="grade-pill"
                   style={{
@@ -599,7 +599,8 @@ const styles = {
     fontWeight: '700',
     color: 'var(--form-text, #111)',
     fontFamily: "'DM Sans', 'Poppins', sans-serif",
-    whiteSpace: 'nowrap',
+    flex: 1,
+    minWidth: 0,
   },
   evalSection: {
     marginBottom: '0.25rem',

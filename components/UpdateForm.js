@@ -62,7 +62,7 @@ export default function UpdateForm({ onFormComplete }) {
   const [concernText, setConcernText] = useState('');
 
   // Q5
-  const [academicRating, setAcademicRating] = useState(5);
+  const [academicRating, setAcademicRating] = useState(null);
   const [responsePreference, setResponsePreference] = useState(null);
 
   const [submitting, setSubmitting] = useState(false);
@@ -137,7 +137,7 @@ export default function UpdateForm({ onFormComplete }) {
           })),
           questionsCategory: concernCategory,
           questionsText: concernCategory !== 'None' ? concernText : '',
-          selfRating: academicRating,
+          selfRating: academicRating ?? '',
           responsePreference: responsePreference || '',
         }),
       });
@@ -419,14 +419,14 @@ if (status === 'done') return null;
                <FileQuestionMark className="w-15 h-15 text-gray-700 mt-1" strokeWidth={0.8} />
               </div>
               <div>
-                <h2 style={styles.title}>Questions/Concerns</h2>
-                <p style={styles.subtitle}>This helps us better assist you.</p>
+                <h2 style={styles.title}>Questions / Concerns</h2>
+                <p style={styles.subtitle}>Let Ryan know if you have any questions or concerns.</p>
               </div>
             </div>
 
             <div style={styles.concernRow}>
               <span style={styles.concernLabel}>Please select an option:</span>
-              <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
+              <div style={{ position: 'relative', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
                 <button
                   className="grade-pill"
                   style={{
@@ -504,10 +504,12 @@ if (status === 'done') return null;
                       ...styles.pill,
                       backgroundColor: openDropdown === 'rating' ? '#d8d7ce' : '#efede2',
                       minWidth: '72px',
+                      color: academicRating === null ? '#aaa' : 'var(--form-text, #111)',
+                      fontWeight: academicRating === null ? '400' : '600',
                     }}
                     onClick={() => setOpenDropdown(openDropdown === 'rating' ? null : 'rating')}
                   >
-                    {academicRating}
+                    {academicRating === null ? '#' : academicRating}
                   </button>
                   {openDropdown === 'rating' && (
                     <div style={{ ...styles.dropdown, gridTemplateColumns: 'repeat(2, 1fr)', minWidth: '100px' }}>
@@ -768,7 +770,8 @@ const styles = {
     fontWeight: '700',
     color: 'var(--form-text, #111)',
     fontFamily: "'DM Sans', 'Poppins', sans-serif",
-    whiteSpace: 'nowrap',
+    flex: 1,
+    minWidth: 0,
   },
   evalSection: {
     marginBottom: '0.25rem',
