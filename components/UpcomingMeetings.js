@@ -2,8 +2,8 @@
 import { useState, useEffect } from 'react';
 import { Calendar1 } from 'lucide-react';
 import { DateTime } from 'luxon';
+import { getInstructorPublic } from '@/lib/instructorPublic';
 
-const VALID_DAYS = [2, 3, 4, 5];
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const AGENDA_MAX = 30;
@@ -76,7 +76,8 @@ export default function UpcomingMeetings({ studentName }) {
     setLoadingSlots(true);
     const meeting = meetings.find(m => m.id === reschedulingId);
     const durationMins = meeting ? (getMeetingDuration(meeting.start, meeting.end) === '15min' ? 15 : 30) : 30;
-    fetch(`/api/getAvailableSlots?date=${formatDateStr(rescheduleDate)}&duration=${durationMins}`)
+    const instructorSlug = (meeting?.instructor || 'Ryan').toLowerCase();
+    fetch(`/api/getAvailableSlots?date=${formatDateStr(rescheduleDate)}&duration=${durationMins}&instructor=${instructorSlug}`)
       .then(r => r.json())
       .then(data => { setRescheduleSlots(data.slots || []); setLoadingSlots(false); })
       .catch(() => { setRescheduleSlots([]); setLoadingSlots(false); });
@@ -106,6 +107,8 @@ export default function UpcomingMeetings({ studentName }) {
           studentName,
           meetingTitle: meeting.title,
           meetingStart: meeting.start,
+          duration: getMeetingDuration(meeting.start, meeting.end),
+          instructor: (meeting.instructor || 'Ryan').toLowerCase(),
         }),
       });
       const result = await res.json();
@@ -123,6 +126,7 @@ export default function UpcomingMeetings({ studentName }) {
   async function handleReschedule(meeting) {
     if (!selectedSlot) return;
     setRescheduling(true);
+    const instructorSlug = (meeting.instructor || 'Ryan').toLowerCase();
     try {
       const cancelRes = await fetch('/api/cancelMeeting', {
         method: 'POST',
@@ -133,6 +137,7 @@ export default function UpcomingMeetings({ studentName }) {
           meetingTitle: meeting.title,
           meetingStart: meeting.start,
           isReschedule: true,
+          instructor: instructorSlug,
         }),
       });
       if (!(await cancelRes.json()).success) throw new Error('Failed to cancel old meeting');
@@ -148,6 +153,7 @@ export default function UpcomingMeetings({ studentName }) {
           studentName,
           agenda: rescheduleAgenda.trim(),
           isReschedule: true,
+          instructor: instructorSlug,
         }),
       });
       if (!(await bookRes.json()).success) throw new Error('Failed to book new meeting');
@@ -244,17 +250,15 @@ export default function UpcomingMeetings({ studentName }) {
 
       {/* Action Buttons (Stacked Vertically) */}
       <div style={styles.actionGroup}>
-        {meeting.instructor === 'Aaron' ? (
-          <span style={{ fontSize: '0.75rem', color: '#aaa', fontStyle: 'italic' }}>Contact Aaron</span>
-        ) : within24 ? (
+        {within24 ? (
           <span style={styles.lockedNote}>Changes locked</span>
         ) : (
           <>
-            <button className="action-btn" style={styles.actionBtn} 
+            <button className="action-btn" style={styles.actionBtn}
               onClick={() => setReschedulingId(isRescheduling ? null : meeting.id)}>
               {isRescheduling ? 'Close ✕' : 'Reschedule'}
             </button>
-            <button className="action-btn" style={styles.actionBtn} 
+            <button className="action-btn" style={styles.actionBtn}
               onClick={() => setCancellingId(isCancelling ? null : meeting.id)}>
               Cancel
             </button>
@@ -309,39 +313,41 @@ export default function UpcomingMeetings({ studentName }) {
                         {DAY_NAMES.map(d => <div key={d} style={styles.calDayHeader}>{d}</div>)}
                         {buildCalendarGrid(calYear, calMonth).flat().map((date, i) => {
                           if (!date) return <div key={i} />;
-// --- NEW LUXON LOGIC START ---
-  // Create Luxon versions of 'today' and the current calendar 'date'
+  // Per-instructor day-of-week filter (Ryan: Tue-Fri, Aaron: Mon-Fri)
+  const instructorConfig = getInstructorPublic(meeting.instructor);
   const luxonDate = DateTime.fromJSDate(date).setZone('America/Los_Angeles');
   const nowInLA = DateTime.now().setZone('America/Los_Angeles');
 
-  // isPast: Check if the day is before today in Pacific Time
   const isPast = luxonDate.startOf('day') < nowInLA.startOf('day');
-  
-  // notBookable: Check if it's Tue-Fri (2, 3, 4, 5)
-  const notBookable = !VALID_DAYS.includes(luxonDate.weekday);
-  
-  // tooSoon: Check for the 24-hour notice window
+  const notBookable = !instructorConfig.hoursByWeekday[luxonDate.weekday];
   const tooSoon = luxonDate < nowInLA.plus({ days: 1 });
 
-  // Combine them into one variable
   const disabled = isPast || notBookable || tooSoon;
-  // --- NEW LUXON LOGIC END ---
 
   const isSelected = rescheduleDate && formatDateStr(date) === formatDateStr(rescheduleDate);
-  
+  const isAvailable = !disabled;
+
   return (
-    <button 
-      key={i} 
-      disabled={disabled} 
-      onClick={() => !disabled && setRescheduleDate(date)}
-      className={disabled ? '' : 'cal-day-hover'}
-      style={{ 
-        ...styles.calDay, 
-        opacity: disabled ? 0.25 : 1, 
-        cursor: disabled ? 'default' : 'pointer',
-        backgroundColor: isSelected ? '#C6613F' : 'transparent',
-        color: isSelected ? 'white' : '#111', 
-        fontWeight: isSelected ? '700' : '400' 
+    <button
+      key={i}
+      disabled={disabled}
+      onClick={() => isAvailable && setRescheduleDate(date)}
+      className={isAvailable ? 'cal-day-hover' : ''}
+      style={{
+        ...styles.calDay,
+        cursor: isAvailable ? 'pointer' : 'default',
+        backgroundColor: isSelected
+          ? '#C6613F'
+          : isAvailable
+            ? 'rgba(198, 97, 63, 0.12)'
+            : 'transparent',
+        color: isSelected
+          ? 'white'
+          : isAvailable
+            ? '#C6613F'
+            : '#bbb',
+        fontWeight: isSelected ? '700' : isAvailable ? '600' : '400',
+        opacity: 1,
       }}
     >
       {date.getDate()}
@@ -664,7 +670,7 @@ const cssString = `
     }
   }
   .action-btn:hover { background-color: #d8d7ce !important; }
-  .cal-day-hover:hover { background-color: #efede2 !important; }
+  .cal-day-hover:hover { background-color: rgba(198, 97, 63, 0.37) !important; color: #C6613F !important; }
   .slot-btn:hover { opacity: 0.85; }
   .nav-pill-back:hover { opacity: 0.8; }
   .nav-pill-next:hover { opacity: 0.85; }

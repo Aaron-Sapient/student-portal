@@ -71,21 +71,24 @@ export async function GET() {
 return (res.data.items || [])
     .filter(e => {
       if (e.status === 'cancelled' || !e.summary) return false;
-      
-      // Clean up the names to prevent tiny typos from breaking the match
+
       const eventTitle = e.summary.toLowerCase().trim();
       const searchName = studentName.toLowerCase().trim();
-      
+
       return eventTitle.includes(searchName);
     })
-    .map(e => ({
-      id: e.id,
-      title: e.summary,
-      start: e.start.dateTime || e.start.date,
-      end: e.end.dateTime || e.end.date,
-      description: e.description || '',
-      instructor: instructorName
-    }));
+    .map(e => {
+      const isArt = e.extendedProperties?.private?.bookingType === 'art'
+        || e.summary?.startsWith('ART:');
+      return {
+        id: e.id,
+        title: e.summary,
+        start: e.start.dateTime || e.start.date,
+        end: e.end.dateTime || e.end.date,
+        description: e.description || '',
+        instructor: isArt ? 'ART' : instructorName,
+      };
+    });
 }
 
     // 3. Fetch from both calendars at the same time

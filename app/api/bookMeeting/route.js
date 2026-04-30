@@ -2,13 +2,12 @@ import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
 import nodemailer from 'nodemailer';
 import { DateTime } from 'luxon';
+import { getInstructor, validateInstructorHours } from '@/lib/instructors';
 
-const CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID_RYAN;
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
-const CHECKIN_TAB = 'CheckinForm';
-const ZOOM_LINK = 'https://us02web.zoom.us/j/8846768033';
-const RYAN_EMAIL = 'support@admissions.partners';
+const RYAN_CHECKIN_TAB = 'CheckinForm';
+const AARON_CHECKIN_TAB = 'A_CheckinForm';
 
 function getServiceAuth() {
   return new google.auth.GoogleAuth({
@@ -23,7 +22,7 @@ function getServiceAuth() {
   });
 }
 
-async function sendBookingEmail(studentName, studentEmail, duration, meetingStart, agenda, isReschedule = false) {
+async function sendBookingEmail(instructor, studentName, studentEmail, duration, meetingStart, agenda, isReschedule = false) {
   const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: parseInt(process.env.SMTP_PORT || '587'),
@@ -39,14 +38,17 @@ async function sendBookingEmail(studentName, studentEmail, duration, meetingStar
 
   const action = isReschedule ? 'rescheduled' : 'booked';
   const agendaLine = agenda ? `\nAgenda: ${agenda}` : '';
+  // Ryan's 15-minute meetings are phone calls — never share Zoom details with the student.
+  const isPhoneCall = instructor.slug === 'ryan' && duration === '15min';
+  const zoomLine = isPhoneCall ? '' : `\n\nZoom: ${instructor.zoomLink}`;
 
-await transporter.sendMail({
+  await transporter.sendMail({
     from: process.env.SMTP_USER,
-    to: `${studentEmail}, ${RYAN_EMAIL}`,
+    to: `${studentEmail}, ${instructor.bookingEmail}`,
     subject: isReschedule
-      ? `Meeting Rescheduled: ${studentName} – ${duration}`
-      : `New Meeting Booked: ${studentName} – ${duration}`,
-    text: `Hi,\n\n${studentName} has ${action} a ${duration} meeting for ${dateLabel} (Pacific Time).${agendaLine}\n\nZoom: ${ZOOM_LINK}\n\nThis is an automated message from the student portal.`,
+      ? `Meeting Rescheduled: ${studentName} – ${duration} with ${instructor.displayName}`
+      : `New Meeting Booked: ${studentName} – ${duration} with ${instructor.displayName}`,
+    text: `Hi,\n\n${studentName} has ${action} a ${duration} meeting with ${instructor.displayName} for ${dateLabel} (Pacific Time).${agendaLine}${zoomLine}\n\nThis is an automated message from the student portal.`,
   });
 }
 
@@ -56,74 +58,61 @@ export async function POST(request) {
   if (!email) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-  const { start, end, duration, studentName, agenda, isReschedule } = await request.json();
+    const body = await request.json();
+    const { start, end, duration, studentName, agenda, isReschedule, instructor: instructorSlug } = body;
+    const instructor = getInstructor(instructorSlug);
 
-  if (!start || !end || !duration || !studentName) {
-    return Response.json({ error: 'Missing required fields' }, { status: 400 });
-  }
+    if (!start || !end || !duration || !studentName) {
+      return Response.json({ error: 'Missing required fields' }, { status: 400 });
+    }
 
-  // --- NEW LUXON VALIDATION START ---
-  const startTime = DateTime.fromISO(start).setZone('America/Los_Angeles');
-  const now = DateTime.now().setZone('America/Los_Angeles');
+    const startTime = DateTime.fromISO(start).setZone('America/Los_Angeles');
+    const now = DateTime.now().setZone('America/Los_Angeles');
 
-  // 1. Security Check: 24-hour advance notice
-  if (startTime < now.plus({ days: 1 })) {
-    return Response.json({ error: 'Meetings require 24-hour advance notice.' }, { status: 400 });
-  }
+    if (startTime < now.plus({ days: 1 })) {
+      return Response.json({ error: 'Meetings require 24-hour advance notice.' }, { status: 400 });
+    }
 
-  // 2. Security Check: Valid Day (Tue=2, Wed=3, Thu=4)
-  const VALID_DAYS = [2, 3, 4, 5];
-if (!VALID_DAYS.includes(startTime.weekday)) {
-  return Response.json({ error: 'Meetings can only be booked Tue-Fri.' }, { status: 400 });
-}
+    const hoursError = validateInstructorHours(instructor, startTime);
+    if (hoursError) {
+      return Response.json({ error: hoursError }, { status: 400 });
+    }
 
-const hour = startTime.hour;
-const isFriday = startTime.weekday === 5;
+    const authClient = getServiceAuth();
+    const calendar = google.calendar({ version: 'v3', auth: authClient });
+    const sheets = google.sheets({ version: 'v4', auth: authClient });
 
-// Tue-Thu check (4-8pm)
-if (!isFriday && (hour < 16 || hour >= 20)) {
-  return Response.json({ error: 'Tue-Thu meetings must be 4–8pm.' }, { status: 400 });
-}
+    // Double-check slot is still free
+    const conflictCheck = await calendar.events.list({
+      calendarId: instructor.calendarId,
+      timeMin: start,
+      timeMax: end,
+      singleEvents: true,
+    });
 
-// Friday check (4-7pm)
-if (isFriday && (hour < 16 || hour >= 19)) {
-  return Response.json({ error: 'Friday meetings must be 4–7pm.' }, { status: 400 });
-}
-  // --- NEW LUXON VALIDATION END ---
+    const conflicts = (conflictCheck.data.items || []).filter(e => e.status !== 'cancelled');
+    if (conflicts.length > 0) {
+      return Response.json({
+        error: 'This slot was just booked by someone else. Please choose another time.',
+      }, { status: 409 });
+    }
 
-  const authClient = getServiceAuth();
-  const calendar = google.calendar({ version: 'v3', auth: authClient });
-  const sheets = google.sheets({ version: 'v4', auth: authClient });
-
-  // ── 1. Double-check slot is still free ───────────────────────────────────
-  const conflictCheck = await calendar.events.list({
-    calendarId: CALENDAR_ID,
-    timeMin: start,
-    timeMax: end,
-    singleEvents: true,
-  });
-  
-  const conflicts = (conflictCheck.data.items || []).filter(e => e.status !== 'cancelled');
-  if (conflicts.length > 0) {
-    return Response.json({
-      error: 'This slot was just booked by someone else. Please choose another time.',
-    }, { status: 409 });
-  }
-
-    // ── 2. Build event title and description ─────────────────────────────────
-    // Title: [Student Name] – 30min: [agenda]  OR  [Student Name] – 30min
     const agendaTrimmed = agenda?.trim() || '';
+    const titlePrefix = instructor.slug === 'art' ? 'ART: ' : '';
     const eventTitle = agendaTrimmed
-      ? `${studentName} – ${duration}: ${agendaTrimmed}`
-      : `${studentName} – ${duration}`;
+      ? `${titlePrefix}${studentName} – ${duration}: ${agendaTrimmed}`
+      : `${titlePrefix}${studentName} – ${duration}`;
 
-    const eventDescription = agendaTrimmed
-      ? `Zoom: ${ZOOM_LINK}\nAgenda: ${agendaTrimmed}`
-      : `Zoom: ${ZOOM_LINK}`;
+    // Ryan's 15-minute meetings are phone calls — no Zoom details in the event description.
+    const isPhoneCall = instructor.slug === 'ryan' && duration === '15min';
+    const eventDescription = isPhoneCall
+      ? (agendaTrimmed ? `Agenda: ${agendaTrimmed}` : '')
+      : (agendaTrimmed
+        ? `Zoom: ${instructor.zoomLink}\nAgenda: ${agendaTrimmed}`
+        : `Zoom: ${instructor.zoomLink}`);
 
-    // ── 3. Create the calendar event ─────────────────────────────────────────
     await calendar.events.insert({
-      calendarId: CALENDAR_ID,
+      calendarId: instructor.calendarId,
       requestBody: {
         summary: eventTitle,
         description: eventDescription,
@@ -134,12 +123,14 @@ if (isFriday && (hour < 16 || hour >= 19)) {
             source: 'student-portal',
             studentEmail: email,
             type: duration,
+            instructor: instructor.slug,
+            bookingType: instructor.slug === 'art' ? 'art' : 'standard',
           },
         },
       },
     });
 
-    // ── 4. Find student row in master sheet ──────────────────────────────────
+    // Find student row in master sheet
     const masterRes = await sheets.spreadsheets.values.get({
       spreadsheetId: MASTER_SHEET_ID,
       range: `${MASTER_TAB}!J:J`,
@@ -148,44 +139,46 @@ if (isFriday && (hour < 16 || hour >= 19)) {
     const rows = masterRes.data.values || [];
     const rowIndex = rows.findIndex(r => r[0] === email) + 1;
 
-    // ── 5. Consume booking token (skip if rescheduling) ──────────────────────
+    // Consume booking token (skip if rescheduling — token already consumed by the original booking).
+    // ART tracks the timestamp of the booking; everyone else uses a 'no' flag.
     if (!isReschedule && rowIndex > 0) {
+      const tokenValue = instructor.tokenIsTimestamp ? new Date().toISOString() : 'no';
       await sheets.spreadsheets.values.update({
         spreadsheetId: MASTER_SHEET_ID,
-        range: `${MASTER_TAB}!AZ${rowIndex}`,
+        range: `${MASTER_TAB}!${instructor.masterColumn}${rowIndex}`,
         valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [['no']] },
+        requestBody: { values: [[tokenValue]] },
       });
     }
 
-    // ── 6. Write agenda to CheckinForm col J (most recent row for this student) ──
-    // Find the last CheckinForm row where col B = studentName and update col J
+    // Write agenda back to the appropriate CheckinForm tab.
+    // Ryan's tab: col J. Aaron's tab: col H.
     if (agendaTrimmed) {
+      const checkinTab = instructor.slug === 'aaron' ? AARON_CHECKIN_TAB : RYAN_CHECKIN_TAB;
+      const agendaCol = instructor.slug === 'aaron' ? 'H' : 'J';
       const checkinRes = await sheets.spreadsheets.values.get({
         spreadsheetId: MASTER_SHEET_ID,
-        range: `${CHECKIN_TAB}!A:J`,
+        range: `${checkinTab}!A:J`,
         valueRenderOption: 'UNFORMATTED_VALUE',
       });
       const checkinRows = checkinRes.data.values || [];
-      // Find last row where col B (index 1) matches studentName
       let lastMatchIndex = -1;
       checkinRows.forEach((r, i) => {
         if (r[1] === studentName) lastMatchIndex = i;
       });
       if (lastMatchIndex > -1) {
-        const sheetRow = lastMatchIndex + 1; // 1-indexed
+        const sheetRow = lastMatchIndex + 1;
         await sheets.spreadsheets.values.update({
           spreadsheetId: MASTER_SHEET_ID,
-          range: `${CHECKIN_TAB}!J${sheetRow}`,
+          range: `${checkinTab}!${agendaCol}${sheetRow}`,
           valueInputOption: 'USER_ENTERED',
           requestBody: { values: [[agendaTrimmed]] },
         });
       }
     }
 
-    // ── 7. Email Ryan ────────────────────────────────────────────────────────
     try {
-      await sendBookingEmail(studentName, email, duration, start, agendaTrimmed, isReschedule);
+      await sendBookingEmail(instructor, studentName, email, duration, start, agendaTrimmed, isReschedule);
     } catch (emailErr) {
       console.error('Failed to send booking email:', emailErr);
     }

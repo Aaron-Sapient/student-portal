@@ -228,17 +228,19 @@ RESPONSE TYPES (with target distribution):
 DECISION RULES (apply in order of weight):
 
 TOP WEIGHT signals that strongly push to "written" and automatically disqualify "30min" regardless of any other signals:
-- Questions/Concerns text is left blank (this signals low engagement)
+- Questions/Concerns text is left blank or lazy response (i.e., just the word "meeting") (this signals low engagement)
 - ALL task updates marked as "Not Started" (this also signals low engagement)
+- NEVER escalate *above* what a student requests (i.e., never give 30min for a 15min request)
+- If a student needs a meeting, *strongly favor 15min* over 30min except in rare, exceptionally complex cases
 
-HIGH WEIGHT signals that escalate toward 30min or 15min:
+HIGH WEIGHT signals that escalate toward a meeting:
 - Grade drop of 1.0+ GPA points in any class (e.g. B to C or worse)
 - Any class currently at D or F
 - GPA below 2.0
 - Questions/Concerns category is "Need to Discuss"
 - Academic self-rating of 1, 2, or 3
 
-MEDIUM WEIGHT signals that escalate toward 30min or 15min:
+MEDIUM WEIGHT signals that escalate toward a meeting:
 - Questions/Concerns category is "Quick Question"
 - Academic self-rating of 4 or 5
 - GPA between 2.0 and 2.7

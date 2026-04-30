@@ -1,11 +1,11 @@
 import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
 import nodemailer from 'nodemailer';
+import { DateTime } from 'luxon';
+import { getInstructor } from '@/lib/instructors';
 
-const CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID_RYAN;
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
-const RYAN_EMAIL = 'ryan@admissions.partners';
 
 function getServiceAuth() {
   return new google.auth.GoogleAuth({
@@ -20,7 +20,7 @@ function getServiceAuth() {
   });
 }
 
-async function sendCancellationEmail(studentName, meetingTitle, meetingStart) {
+async function sendCancellationEmail(instructor, studentName, meetingTitle, meetingStart) {
   const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: parseInt(process.env.SMTP_PORT || '587'),
@@ -39,9 +39,9 @@ async function sendCancellationEmail(studentName, meetingTitle, meetingStart) {
 
   await transporter.sendMail({
     from: process.env.SMTP_USER,
-    to: RYAN_EMAIL,
+    to: instructor.cancelEmail,
     subject: `Meeting Cancelled: ${meetingTitle}`,
-    text: `Hi Ryan,\n\n${studentName} has cancelled their meeting scheduled for ${dateLabel} (Pacific Time).\n\nThey have been informed they can rebook at their convenience through the student portal.\n\nThis is an automated message from the student portal.`,
+    text: `Hi ${instructor.displayName},\n\n${studentName} has cancelled their meeting scheduled for ${dateLabel} (Pacific Time).\n\nThey have been informed they can rebook at their convenience through the student portal.\n\nThis is an automated message from the student portal.`,
   });
 }
 
@@ -51,12 +51,14 @@ export async function POST(request) {
   if (!email) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const { eventId, studentName, meetingTitle, meetingStart } = await request.json();
+    const { eventId, studentName, meetingTitle, meetingStart, duration, instructor: instructorSlug, isReschedule } = await request.json();
     if (!eventId) return Response.json({ error: 'Missing eventId' }, { status: 400 });
 
-    // Enforce 24-hour cancellation window server-side
-    const startTime = new Date(meetingStart);
-    if (startTime < new Date(Date.now() + 24 * 60 * 60 * 1000)) {
+    const instructor = getInstructor(instructorSlug);
+
+    const startTime = DateTime.fromISO(meetingStart).setZone('America/Los_Angeles');
+    const now = DateTime.now().setZone('America/Los_Angeles');
+    if (startTime < now.plus({ days: 1 })) {
       return Response.json({
         error: 'Meetings must be cancelled at least 24 hours in advance.',
       }, { status: 400 });
@@ -66,13 +68,12 @@ export async function POST(request) {
     const calendar = google.calendar({ version: 'v3', auth: authClient });
     const sheets = google.sheets({ version: 'v4', auth: authClient });
 
-    // 1. Delete the calendar event
     await calendar.events.delete({
-      calendarId: CALENDAR_ID,
+      calendarId: instructor.calendarId,
       eventId,
     });
 
-    // 2. Reset col AZ to 'no' in master sheet
+    // Reset the instructor's booking column to 'no'
     const masterRes = await sheets.spreadsheets.values.get({
       spreadsheetId: MASTER_SHEET_ID,
       range: `${MASTER_TAB}!J:J`,
@@ -82,20 +83,30 @@ export async function POST(request) {
     const rows = masterRes.data.values || [];
     const rowIndex = rows.findIndex(r => r[0] === email) + 1;
 
+    // Token logic:
+    //  - Reschedule (cancel half of a reschedule flow): leave token consumed; bookMeeting will not re-consume.
+    //  - Real cancel + standard tracking: restore token to the meeting's original duration ('15min' / '30min').
+    //  - Real cancel + timestamp tracking (ART): clear the column so weekly check sees no booking.
     if (rowIndex > 0) {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: MASTER_SHEET_ID,
-        range: `${MASTER_TAB}!AZ${rowIndex}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [['no']] },
-      });
+      let newValue = null;
+      if (instructor.tokenIsTimestamp) {
+        if (!isReschedule) newValue = '';
+      } else {
+        newValue = isReschedule ? 'no' : (duration || '15min');
+      }
+      if (newValue !== null) {
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: MASTER_SHEET_ID,
+          range: `${MASTER_TAB}!${instructor.masterColumn}${rowIndex}`,
+          valueInputOption: 'USER_ENTERED',
+          requestBody: { values: [[newValue]] },
+        });
+      }
     }
 
-    // 3. Email Ryan
     try {
-      await sendCancellationEmail(studentName, meetingTitle, meetingStart);
+      await sendCancellationEmail(instructor, studentName, meetingTitle, meetingStart);
     } catch (emailErr) {
-      // Don't fail the whole request if email fails
       console.error('Failed to send cancellation email:', emailErr);
     }
 

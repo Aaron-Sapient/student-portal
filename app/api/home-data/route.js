@@ -1,5 +1,6 @@
 import { auth } from '@clerk/nextjs/server'
 import { getGoogleSheetsClient } from '@/lib/google'
+import { DateTime } from 'luxon'
 
 export async function GET() {
   const { userId, sessionClaims } = await auth()
@@ -10,7 +11,7 @@ export async function GET() {
 
   const masterRes = await sheets.spreadsheets.values.get({
     spreadsheetId: process.env.MASTER_SHEET_ID,
-    range: "'👩‍🎓 All Data'!G:AZ",
+    range: "'👩‍🎓 All Data'!G:BD",
   })
 
   const masterRows = masterRes.data.values || []
@@ -62,6 +63,32 @@ export async function GET() {
   today.setHours(0, 0, 0, 0)
 
 const meetingType = studentRow[45] || null;
+const aaronLastCheckin = studentRow[46] || null;
+const aaronMeetingType = studentRow[47] || null;
+
+// ART eligibility (col BC) + token (col BD = ISO timestamp of last booking, or empty).
+// Token is "available" iff isART AND (BD empty OR BD timestamp is older than this week's Saturday).
+const isART = studentRow[48] === 'TRUE' || studentRow[48] === true;
+const artBookingTimestamp = studentRow[49] || '';
+
+let artTokenAvailable = false;
+if (isART) {
+  if (!artBookingTimestamp) {
+    artTokenAvailable = true;
+  } else {
+    const bookingDate = DateTime.fromISO(String(artBookingTimestamp)).setZone('America/Los_Angeles');
+    if (bookingDate.isValid) {
+      const now = DateTime.now().setZone('America/Los_Angeles');
+      let mostRecentSaturday = now.set({ weekday: 6 });
+      if (now.weekday < 6) mostRecentSaturday = mostRecentSaturday.minus({ weeks: 1 });
+      mostRecentSaturday = mostRecentSaturday.startOf('day');
+      artTokenAvailable = bookingDate < mostRecentSaturday;
+    } else {
+      // Couldn't parse — treat as available rather than locking the student out.
+      artTokenAvailable = true;
+    }
+  }
+}
 
   const activeProjects = projectRows
     .slice(1)
@@ -89,10 +116,14 @@ const meetingType = studentRow[45] || null;
 
   console.log('10. Active projects:', JSON.stringify(activeProjects))
 
-  return Response.json({ 
-    activeProjects, 
-    studentName, 
+  return Response.json({
+    activeProjects,
+    studentName,
     lastCheckin: studentRow[44] || null,
-    meetingType // Added this to the return object
+    meetingType,
+    aaronLastCheckin,
+    aaronMeetingType,
+    isART,
+    artTokenAvailable,
   })
 }
