@@ -51,18 +51,23 @@ function calcDaysSinceLastRequest(parentEmail, checkinRows) {
 }
 
 function buildHtmlEmail({
-  timestamp, parentEmail, studentName, studentNameFlagged,
+  timestamp, parentEmail, studentName, studentNameStatus,
   daysSinceLastRequest, purpose, deadlines, urgencyLevel, reasoning,
 }) {
   const daysSinceText = daysSinceLastRequest !== null
     ? `${daysSinceLastRequest} days`
     : 'No prior requests on record';
 
-  const flagNote = studentNameFlagged
-    ? `<p style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;font-size:11pt;margin:8px 0;">
-        ⚠️ Parent email not found in master sheet. Student name inferred or flagged as N/A.
-       </p>`
-    : '';
+  let flagNote = '';
+  if (studentNameStatus === 'inferred') {
+    flagNote = `<p style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;font-size:11pt;margin:8px 0;">
+        ⚠️ Parent email not found in master sheet. Student name was inferred from the message — please verify.
+       </p>`;
+  } else if (studentNameStatus === 'unknown') {
+    flagNote = `<p style="background:#f8d7da;border:1px solid #dc3545;border-radius:6px;padding:8px 12px;font-size:11pt;margin:8px 0;">
+        ⚠️ Parent email not found in master sheet and the student could not be identified from the message. Urgency below was assessed from the request alone — manual review recommended.
+       </p>`;
+  }
 
   return `<!DOCTYPE html>
 <html>
@@ -101,15 +106,22 @@ function buildHtmlEmail({
 }
 
 function buildPlainText({
-  timestamp, parentEmail, studentName, studentNameFlagged,
+  timestamp, parentEmail, studentName, studentNameStatus,
   daysSinceLastRequest, purpose, deadlines, urgencyLevel, reasoning,
 }) {
   const daysSinceText = daysSinceLastRequest !== null
     ? `${daysSinceLastRequest} days`
     : 'No prior requests on record';
 
+  let flagLine = '';
+  if (studentNameStatus === 'inferred') {
+    flagLine = '⚠️ Parent email not found — student name inferred from message; please verify.\n';
+  } else if (studentNameStatus === 'unknown') {
+    flagLine = '⚠️ Parent email not found and student could not be identified from message. Urgency assessed from request content alone — manual review recommended.\n';
+  }
+
   return `PROFILE INFO
-${studentNameFlagged ? '⚠️ Parent email not found — student name inferred or flagged N/A\n' : ''}
+${flagLine}
 Time submitted: ${timestamp}
 Parent email: ${parentEmail}
 Student name: ${studentName}
@@ -161,14 +173,18 @@ export async function POST(request) {
 
     // ── 2. VLOOKUP parent email against col K (index 10) and col L (index 11) ─
     // Col A=0, K=10, L=11, AL=37
-    let studentRow = masterRows.find(r =>
-      r[10]?.toLowerCase() === parentEmail.toLowerCase() ||
-      r[11]?.toLowerCase() === parentEmail.toLowerCase()
-    );
+    // String() coercion guards against numeric/non-string cells in K/L that
+    // would otherwise crash .toLowerCase() and bubble up as a 500.
+    const target = parentEmail.toLowerCase();
+    const studentRow = masterRows.find(r => {
+      const colK = String(r?.[10] ?? '').toLowerCase();
+      const colL = String(r?.[11] ?? '').toLowerCase();
+      return colK === target || colL === target;
+    });
 
     let studentName = studentRow?.[0] || null;
-    let packageType = studentRow?.[37] || '';
-    let studentNameFlagged = false;
+    const packageType = studentRow?.[37] || '';
+    let studentNameStatus = studentName ? 'matched' : 'unknown';
 
     // ── 3. Calculate days since last non-email request ───────────────────────
     const daysSinceLastRequest = calcDaysSinceLastRequest(parentEmail, checkinRows);
@@ -179,15 +195,8 @@ export async function POST(request) {
       weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
     });
 
-    // Build student list for name inference if email not found
-    const studentNames = masterRows
-      .slice(1)
-      .map(r => r[0])
-      .filter(Boolean)
-      .join(', ');
-
     const alreadyHadMeetingThisMonth = checkinRows.some(r => {
-      if (r[1]?.toLowerCase() !== parentEmail.toLowerCase()) return false;
+      if (String(r?.[1] ?? '').toLowerCase() !== target) return false;
       if (!r[0] || r[6] === 'Email only') return false;
       const rowDate = new Date(r[0]);
       return rowDate.getMonth() === today.getMonth() &&
@@ -198,7 +207,9 @@ export async function POST(request) {
 
 TODAY: ${todayStr}
 
-${!studentName ? `STUDENT NAME LOOKUP: The parent email was not found in our records. Try to infer the student's full name from the parent's message if they mention it. Known students: ${studentNames}. If you cannot confidently identify the student, return null for studentName.` : `STUDENT: ${studentName} | Package: ${packageType || 'not listed'}`}
+${studentName
+  ? `STUDENT: ${studentName} | Package: ${packageType || 'not listed'}`
+  : `STUDENT: Unknown — the parent email is not in our records. If the parent clearly names their child in the message, return that name as studentName; otherwise return null. IMPORTANT: still produce a full urgency evaluation based on the request content alone. Do not refuse or downgrade urgency simply because the student could not be identified.`}
 
 URGENCY RULES:
 Urgency signals (push toward urgent/semi-urgent):
@@ -214,7 +225,8 @@ Non-urgency signals (push toward non-urgent/email only):
 
 No-impact signals:
 - Parent emotional tone (upset, frustrated, etc.) does NOT increase urgency
-- If package type is not listed, ignore that factor entirely
+- If package type is not listed or unknown, ignore that factor entirely
+- Inability to identify the student does NOT change urgency — judge from the request itself
 
 URGENCY LEVELS (use exactly as written):
 - "Urgent: 1 biz. day"
@@ -257,13 +269,18 @@ Return ONLY a valid JSON object, no markdown, no explanation:
       };
     }
 
-    // Resolve student name
-    if (!studentName && parsed.studentName) {
-      studentName = parsed.studentName;
-      studentNameFlagged = true; // email wasn't in sheet, name was inferred
-    } else if (!studentName) {
-      studentName = 'N/A';
-      studentNameFlagged = true;
+    // Resolve student name. Three states:
+    //   'matched'  — email hit the master sheet
+    //   'inferred' — email missed, but Claude pulled a name from the message
+    //   'unknown'  — email missed and no name available
+    if (studentNameStatus !== 'matched') {
+      if (parsed.studentName && parsed.studentName !== 'null') {
+        studentName = parsed.studentName;
+        studentNameStatus = 'inferred';
+      } else {
+        studentName = 'Unknown';
+        studentNameStatus = 'unknown';
+      }
     }
 
     const timestamp = toPacificString(today);
@@ -296,13 +313,19 @@ Return ONLY a valid JSON object, no markdown, no explanation:
       timestamp,
       parentEmail,
       studentName,
-      studentNameFlagged,
+      studentNameStatus,
       daysSinceLastRequest,
       purpose: parsed.purpose || concern.slice(0, 300),
       deadlines: parsed.deadlines || 'N/A',
       urgencyLevel: parsed.urgencyLevel || 'Unknown',
       reasoning: parsed.reasoning || '',
     };
+
+    const subjectStudent = studentNameStatus === 'unknown'
+      ? '[Student unknown]'
+      : studentNameStatus === 'inferred'
+        ? `${studentName} (unverified)`
+        : studentName;
 
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
@@ -315,7 +338,7 @@ Return ONLY a valid JSON object, no markdown, no explanation:
       from: process.env.SMTP_USER,
       to: REPORT_TO,
       cc: REPORT_CC,
-      subject: `Parent Meeting Request: ${studentName} — ${parsed.urgencyLevel || 'Review needed'}`,
+      subject: `Parent Meeting Request: ${subjectStudent} — ${parsed.urgencyLevel || 'Review needed'}`,
       text: buildPlainText(emailData),
       html: buildHtmlEmail(emailData),
     });
