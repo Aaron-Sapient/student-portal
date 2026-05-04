@@ -1,7 +1,9 @@
 import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
+import { DateTime } from 'luxon';
 import Anthropic from '@anthropic-ai/sdk';
 import { triggerReportGeneration } from '@/lib/generateReport';
+import { listBlocks, isDateBlocked } from '@/lib/blocks';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -192,6 +194,20 @@ export async function POST(request) {
       ? detectGradeDrops(mostRecent.snapshot, currentSnapshot)
       : [];
 
+    // ── 5b. Block override: if Ryan is blocked off today, force "written" and skip Claude.
+    // Only applies to Ryan — Aaron's availability is unaffected by Ryan's blocks.
+    let decision = 'written';
+    let reason = '';
+    let blockOverride = false;
+
+    const today = DateTime.now().setZone('America/Los_Angeles').toFormat('yyyy-LL-dd');
+    const blocks = await listBlocks(sheets).catch(() => []);
+    if (isDateBlocked(blocks, 'ryan', today)) {
+      decision = 'written';
+      reason = 'Ryan is unavailable today — auto-routed to a written report.';
+      blockOverride = true;
+    }
+
     // ── 6. Call Claude Haiku for routing decision ────────────────────────────
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -286,31 +302,30 @@ ACADEMIC SELF-RATING: ${selfRating}/10
 
 STUDENT RESPONSE PREFERENCE: ${responsePreference || 'No preference'}`;
 
-    const aiResponse = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 150,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userMessage }],
-    });
+    if (!blockOverride) {
+      const aiResponse = await anthropic.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 150,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
+      });
 
-    let decision = 'written';
-    let reason = '';
-
-try {
-  const rawText = aiResponse.content[0]?.text || '{}';
-    console.log('AI raw response:', rawText); // ← add this
-  const cleaned = rawText
-    .replace(/```json/gi, '')
-    .replace(/```/g, '')
-    .trim();
-  const parsed = JSON.parse(cleaned);
-      decision = ['written', '15min', '30min'].includes(parsed.decision)
-        ? parsed.decision
-        : 'written';
-      reason = parsed.reason || '';
-    } catch {
-      console.error('Failed to parse AI response, defaulting to written');
-      decision = 'written';
+      try {
+        const rawText = aiResponse.content[0]?.text || '{}';
+        console.log('AI raw response:', rawText);
+        const cleaned = rawText
+          .replace(/```json/gi, '')
+          .replace(/```/g, '')
+          .trim();
+        const parsed = JSON.parse(cleaned);
+        decision = ['written', '15min', '30min'].includes(parsed.decision)
+          ? parsed.decision
+          : 'written';
+        reason = parsed.reason || '';
+      } catch {
+        console.error('Failed to parse AI response, defaulting to written');
+        decision = 'written';
+      }
     }
 
 // ── 7. Write booking decision to 👩‍🎓 All Data col AZ ───────────────────

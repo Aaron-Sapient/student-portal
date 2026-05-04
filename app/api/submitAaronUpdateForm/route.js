@@ -1,6 +1,8 @@
 import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
+import { DateTime } from 'luxon';
 import Anthropic from '@anthropic-ai/sdk';
+import { listBlocks, isDateBlocked } from '@/lib/blocks';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -76,22 +78,36 @@ export async function POST(request) {
       },
     });
 
-    // ── 4a. VIP override: skip Claude entirely if col AL = "VIP" and student requested 30min.
-    // The frontend sees an ordinary 30min decision — no flag is exposed in the response.
     let decision = '15min';
     let reason = '';
     let vipOverride = false;
+    let blockOverride = false;
 
-    const vipRes = await sheets.spreadsheets.values.get({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${MASTER_TAB}!AL${studentRowIndex}`,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
-    const vipFlag = String(vipRes.data.values?.[0]?.[0] || '').trim().toUpperCase();
-    if (vipFlag === 'VIP' && responsePreference === '30min') {
-      decision = '30min';
-      reason = 'VIP auto-routed to 30min per student request.';
-      vipOverride = true;
+    // ── 4a. Block override: if Aaron is blocked off today, force "email" and skip
+    // both the VIP check and Claude. Only applies to Aaron — Ryan's blocks don't
+    // affect Aaron's routing.
+    const today = DateTime.now().setZone('America/Los_Angeles').toFormat('yyyy-LL-dd');
+    const blocks = await listBlocks(sheets).catch(() => []);
+    if (isDateBlocked(blocks, 'aaron', today)) {
+      decision = 'email';
+      reason = 'Aaron is unavailable today — finalize over email this week.';
+      blockOverride = true;
+    }
+
+    // ── 4b. VIP override: skip Claude entirely if col AL = "VIP" and student requested 30min.
+    // The frontend sees an ordinary 30min decision — no flag is exposed in the response.
+    if (!blockOverride) {
+      const vipRes = await sheets.spreadsheets.values.get({
+        spreadsheetId: MASTER_SHEET_ID,
+        range: `${MASTER_TAB}!AL${studentRowIndex}`,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      });
+      const vipFlag = String(vipRes.data.values?.[0]?.[0] || '').trim().toUpperCase();
+      if (vipFlag === 'VIP' && responsePreference === '30min') {
+        decision = '30min';
+        reason = 'VIP auto-routed to 30min per student request.';
+        vipOverride = true;
+      }
     }
 
     // ── 4b. Call Claude for routing decision (balanced 60/35/5 distribution) ──
@@ -142,7 +158,7 @@ Details: ${questionsText || 'N/A'}
 
 STUDENT RESPONSE PREFERENCE: ${responsePreference || 'No preference'}`;
 
-    if (!vipOverride) {
+    if (!blockOverride && !vipOverride) {
       const aiResponse = await anthropic.messages.create({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 150,

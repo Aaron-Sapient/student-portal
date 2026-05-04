@@ -132,6 +132,8 @@ function BookingPageInner() {
   const { month: initMonth, year: initYear } = defaultMonth();
   const [calMonth, setCalMonth] = useState(initMonth);
   const [calYear, setCalYear] = useState(initYear);
+  const [availableDates, setAvailableDates] = useState(() => new Set());
+  const [loadingMonth, setLoadingMonth] = useState(true);
   const [selectedDate, setSelectedDate] = useState(null);
   const [recommendedSlots, setRecommendedSlots] = useState([]);
   const [slots, setSlots] = useState([]);
@@ -179,6 +181,29 @@ function BookingPageInner() {
     }
     validate();
   }, [instructor.slug, typeParam, router]);
+
+  useEffect(() => {
+    if (validating || authError) return;
+
+    let cancelled = false;
+    setLoadingMonth(true);
+    setAvailableDates(new Set());
+
+    fetch(`/api/getMonthAvailability?month=${calMonth}&year=${calYear}&duration=${durationMins}&instructor=${instructor.slug}`)
+      .then(r => r.json())
+      .then(data => {
+        if (cancelled) return;
+        setAvailableDates(new Set(data.availableDates || []));
+        setLoadingMonth(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAvailableDates(new Set());
+        setLoadingMonth(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [calMonth, calYear, durationMins, instructor.slug, validating, authError]);
 
   useEffect(() => {
     if (!selectedDate) return;
@@ -370,6 +395,9 @@ function BookingPageInner() {
               <span style={styles.calMonthLabel}>{MONTH_NAMES[calMonth]} {calYear}</span>
               <button onClick={nextMonth} style={styles.calNavBtn}>→</button>
             </div>
+            {loadingMonth && (
+              <p style={styles.monthLoadingText}>Checking {bodyName}'s availability…</p>
+            )}
 
             <div style={styles.calGrid}>
               {DAY_NAMES.map(d => <div key={d} style={styles.calDayHeader}>{d}</div>)}
@@ -380,10 +408,15 @@ function BookingPageInner() {
                 const isPast = luxonDate.startOf('day') < nowInLA.startOf('day');
                 const notBookable = !instructor.hoursByWeekday[luxonDate.weekday];
                 const tooSoon = luxonDate < nowInLA.plus({ days: 1 });
+                const dateStr = formatDateStr(date);
 
-                const disabled = isPast || notBookable || tooSoon || overflow;
-                const isSelected = selectedDate && formatDateStr(date) === formatDateStr(selectedDate);
-                const isAvailable = !disabled;
+                // While the month's availability is loading we can't yet tell which weekday-bookable
+                // days are actually free, so render none as available rather than flashing false orange.
+                const baseDisabled = isPast || notBookable || tooSoon || overflow;
+                const hasFreeSlot = availableDates.has(dateStr);
+                const isAvailable = !baseDisabled && !loadingMonth && hasFreeSlot;
+                const disabled = !isAvailable;
+                const isSelected = selectedDate && dateStr === formatDateStr(selectedDate);
 
                 return (
                   <button key={i} disabled={disabled}
@@ -549,6 +582,7 @@ const styles = {
   calNav: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' },
   calNavBtn: { background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: '#111', padding: '0.25rem 0.5rem', borderRadius: '6px' },
   calMonthLabel: { fontSize: '1rem', fontWeight: '700', color: '#111', fontFamily: "'DM Sans', 'Poppins', sans-serif" },
+  monthLoadingText: { textAlign: 'center', fontSize: '0.8rem', color: '#888', margin: '0 0 0.5rem', fontFamily: "'DM Sans', 'Poppins', sans-serif" },
   calGrid: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' },
   calDayHeader: { textAlign: 'center', fontSize: '0.75rem', fontWeight: '600', color: '#aaa', padding: '0.25rem 0', fontFamily: "'DM Sans', 'Poppins', sans-serif" },
   calDay: { textAlign: 'center', padding: '0.5rem 0', fontSize: '0.9rem', borderRadius: '8px', border: 'none', fontFamily: "'DM Sans', 'Poppins', sans-serif", transition: 'background-color 0.12s ease' },

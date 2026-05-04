@@ -67,59 +67,6 @@ function toLocalInputValue(iso) {
   return dt.isValid ? dt.toFormat("yyyy-LL-dd'T'HH:mm") : '';
 }
 
-function UsageWheel({ data }) {
-  const enabled = data?.enabled;
-  const month = data?.month ?? 0;
-  // No formal budget — render the ring proportional to a soft $50/month reference,
-  // capped at 100%, just to give a visual sense of scale.
-  const REF = 50;
-  const pct = Math.min(1, month / REF);
-  const radius = 38;
-  const circumference = 2 * Math.PI * radius;
-  const dashOffset = circumference * (1 - pct);
-
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-      <svg width="100" height="100" viewBox="0 0 100 100">
-        <circle cx="50" cy="50" r={radius} stroke="#E5E3DD" strokeWidth="8" fill="none" />
-        {enabled && (
-          <circle
-            cx="50" cy="50" r={radius}
-            stroke="#C6613F" strokeWidth="8" fill="none"
-            strokeDasharray={circumference}
-            strokeDashoffset={dashOffset}
-            strokeLinecap="round"
-            transform="rotate(-90 50 50)"
-          />
-        )}
-        <text x="50" y="48" textAnchor="middle" fontSize="14" fontWeight="700" fill="#111" fontFamily="DM Sans">
-          {enabled ? `$${month.toFixed(2)}` : '—'}
-        </text>
-        <text x="50" y="62" textAnchor="middle" fontSize="9" fill="#666" fontFamily="DM Sans">
-          this month
-        </text>
-      </svg>
-      <div style={{ fontSize: '13px', color: '#3c3c3c' }}>
-        {enabled ? (
-          <>
-            <div><strong>Today:</strong> ${data.today.toFixed(2)}</div>
-            <div><strong>Month:</strong> ${data.month.toFixed(2)}</div>
-            <div style={{ fontSize: '11px', color: '#888', marginTop: 4 }}>Ring scaled to $50/mo reference</div>
-          </>
-        ) : (
-          <div style={{ maxWidth: 260 }}>
-            <div style={{ fontWeight: 600 }}>Anthropic usage disabled</div>
-            <div style={{ fontSize: '12px', color: '#666', marginTop: 4 }}>
-              Add <code>ANTHROPIC_ADMIN_KEY</code> to <code>.env.local</code> and restart the dev server.
-              {data?.reason && <div style={{ marginTop: 4, fontStyle: 'italic' }}>{data.reason}</div>}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function BlocksSection({ blocks, onAdd, onDelete }) {
   const [instructor, setInstructor] = useState('aaron');
   const [startDate, setStartDate] = useState('');
@@ -370,7 +317,6 @@ function ComplianceSection({ students }) {
 }
 
 export default function DeveloperDashboard() {
-  const [usage, setUsage] = useState(null);
   const [blocks, setBlocks] = useState([]);
   const [meetings, setMeetings] = useState([]);
   const [students, setStudents] = useState([]);
@@ -378,13 +324,11 @@ export default function DeveloperDashboard() {
   const [error, setError] = useState(null);
 
   const refreshAll = async () => {
-    const [u, b, m, c] = await Promise.all([
-      fetch('/api/developer/anthropicUsage').then(r => r.json()).catch(() => ({ enabled: false, reason: 'Network error' })),
+    const [b, m, c] = await Promise.all([
       fetch('/api/developer/blocks').then(r => r.json()).catch(() => ({ blocks: [] })),
       fetch('/api/getUpcomingMeetings?all=true').then(r => r.json()).catch(() => ({ meetings: [] })),
       fetch('/api/developer/checkinCompliance').then(r => r.json()).catch(() => ({ students: [] })),
     ]);
-    setUsage(u);
     setBlocks(b.blocks || []);
     setMeetings(m.meetings || []);
     setStudents(c.students || []);
@@ -451,11 +395,6 @@ export default function DeveloperDashboard() {
 
         {!loading && (
           <>
-            <section style={CARD}>
-              <h2 style={H2}>Anthropic API usage</h2>
-              <UsageWheel data={usage} />
-            </section>
-
             <BlocksSection blocks={blocks} onAdd={addBlock} onDelete={deleteBlock} />
             <MeetingsSection meetings={meetings} refresh={refreshMeetings} />
             <ComplianceSection students={students} />
