@@ -76,7 +76,25 @@ export async function POST(request) {
       },
     });
 
-    // ── 4. Call Claude for routing decision (balanced 60/35/5 distribution) ──
+    // ── 4a. VIP override: skip Claude entirely if col AL = "VIP" and student requested 30min.
+    // The frontend sees an ordinary 30min decision — no flag is exposed in the response.
+    let decision = '15min';
+    let reason = '';
+    let vipOverride = false;
+
+    const vipRes = await sheets.spreadsheets.values.get({
+      spreadsheetId: MASTER_SHEET_ID,
+      range: `${MASTER_TAB}!AL${studentRowIndex}`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const vipFlag = String(vipRes.data.values?.[0]?.[0] || '').trim().toUpperCase();
+    if (vipFlag === 'VIP' && responsePreference === '30min') {
+      decision = '30min';
+      reason = 'VIP auto-routed to 30min per student request.';
+      vipOverride = true;
+    }
+
+    // ── 4b. Call Claude for routing decision (balanced 60/35/5 distribution) ──
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const systemPrompt = `You are a routing assistant for an academic counseling service.
@@ -124,37 +142,36 @@ Details: ${questionsText || 'N/A'}
 
 STUDENT RESPONSE PREFERENCE: ${responsePreference || 'No preference'}`;
 
-    const aiResponse = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 150,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userMessage }],
-    });
+    if (!vipOverride) {
+      const aiResponse = await anthropic.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 150,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
+      });
 
-    let decision = '15min';
-    let reason = '';
+      try {
+        const rawText = aiResponse.content[0]?.text || '{}';
+        console.log('Aaron AI raw response:', rawText);
+        const cleaned = rawText
+          .replace(/```json/gi, '')
+          .replace(/```/g, '')
+          .trim();
+        const parsed = JSON.parse(cleaned);
+        decision = ['15min', '30min', 'email'].includes(parsed.decision)
+          ? parsed.decision
+          : '15min';
+        reason = parsed.reason || '';
+      } catch {
+        console.error('Failed to parse Aaron AI response, defaulting to 15min');
+        decision = '15min';
+      }
 
-    try {
-      const rawText = aiResponse.content[0]?.text || '{}';
-      console.log('Aaron AI raw response:', rawText);
-      const cleaned = rawText
-        .replace(/```json/gi, '')
-        .replace(/```/g, '')
-        .trim();
-      const parsed = JSON.parse(cleaned);
-      decision = ['15min', '30min', 'email'].includes(parsed.decision)
-        ? parsed.decision
-        : '15min';
-      reason = parsed.reason || '';
-    } catch {
-      console.error('Failed to parse Aaron AI response, defaulting to 15min');
-      decision = '15min';
-    }
-
-    // Safety override: only allow "email" if student explicitly requested it
-    if (decision === 'email' && responsePreference !== 'Ready to finalize over email') {
-      decision = '15min';
-      reason = 'Student did not explicitly request email-only — defaulting to 15min.';
+      // Safety override: only allow "email" if student explicitly requested it
+      if (decision === 'email' && responsePreference !== 'Ready to finalize over email') {
+        decision = '15min';
+        reason = 'Student did not explicitly request email-only — defaulting to 15min.';
+      }
     }
 
     // ── 5. Write booking decision to 👩‍🎓 All Data col BB ──────────────────
