@@ -1,5 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
+import { DEVELOPER_EMAIL } from '@/lib/developerAuth';
 
 const RYANS_CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID_RYAN;
 const AARONS_CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID_AARON;
@@ -19,15 +20,115 @@ function getServiceAuth() {
   });
 }
 
-export async function GET() {
+// Parses event titles built by bookMeeting:
+//   "{ART: }{studentName} – {duration}{: agenda}"
+// Returns { studentName, duration } or {} if it doesn't match.
+function parseTitle(title) {
+  if (!title) return {};
+  const stripped = title.replace(/^ART:\s*/, '');
+  const m = stripped.match(/^(.+?)\s+[–-]\s+(\d+min|email)/);
+  if (!m) return {};
+  return { studentName: m[1].trim(), duration: m[2] };
+}
+
+export async function GET(request) {
   const { sessionClaims } = await auth();
   const email = sessionClaims?.email;
   if (!email) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const { searchParams } = new URL(request.url);
+  const all = searchParams.get('all') === 'true';
+  if (all && email !== DEVELOPER_EMAIL) {
+    return Response.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   try {
     const authClient = getServiceAuth();
     const sheets = google.sheets({ version: 'v4', auth: authClient });
     const calendar = google.calendar({ version: 'v3', auth: authClient });
+
+    // Admin "all meetings" branch: return events on either calendar whose title
+    // contains a known student name. Source of truth for the name list is the
+    // CheckinForm + A_CheckinForm tabs (col B), since both routes write the
+    // student's full name there at every check-in submission.
+    if (all) {
+      const now = new Date();
+      const eightWeeksOut = new Date(now.getTime() + 8 * 7 * 24 * 60 * 60 * 1000);
+
+      async function fetchAll(calendarId, instructorName) {
+        const res = await calendar.events.list({
+          calendarId,
+          timeMin: now.toISOString(),
+          timeMax: eightWeeksOut.toISOString(),
+          singleEvents: true,
+          orderBy: 'startTime',
+        });
+        return (res.data.items || [])
+          .filter(e => e.status !== 'cancelled' && e.summary)
+          .map(e => {
+            const isArt = e.extendedProperties?.private?.bookingType === 'art'
+              || e.summary?.startsWith('ART:');
+            const fromExt = e.extendedProperties?.private || {};
+            const parsed = parseTitle(e.summary);
+            const slug = isArt ? 'art' : (fromExt.instructor || instructorName.toLowerCase());
+            return {
+              id: e.id,
+              title: e.summary,
+              start: e.start.dateTime || e.start.date,
+              end: e.end.dateTime || e.end.date,
+              description: e.description || '',
+              instructor: isArt ? 'ART' : instructorName,
+              instructorSlug: slug,
+              studentEmail: fromExt.studentEmail || null,
+              studentName: parsed.studentName || null,
+              duration: fromExt.type || parsed.duration || null,
+              fromPortal: fromExt.source === 'student-portal',
+            };
+          });
+      }
+
+      async function fetchStudentNames() {
+        const [ryanRes, aaronRes] = await Promise.all([
+          sheets.spreadsheets.values.get({
+            spreadsheetId: MASTER_SHEET_ID,
+            range: 'CheckinForm!B:B',
+            valueRenderOption: 'UNFORMATTED_VALUE',
+          }),
+          sheets.spreadsheets.values.get({
+            spreadsheetId: MASTER_SHEET_ID,
+            range: 'A_CheckinForm!B:B',
+            valueRenderOption: 'UNFORMATTED_VALUE',
+          }),
+        ]);
+        const names = new Set();
+        for (const res of [ryanRes, aaronRes]) {
+          for (const row of (res.data.values || []).slice(1)) {
+            const n = (row[0] || '').trim();
+            if (n) names.add(n.toLowerCase());
+          }
+        }
+        return names;
+      }
+
+      const [ryans, aarons, studentNames] = await Promise.all([
+        fetchAll(RYANS_CALENDAR_ID, 'Ryan'),
+        fetchAll(AARONS_CALENDAR_ID, 'Aaron'),
+        fetchStudentNames(),
+      ]);
+
+      const allMeetings = [...ryans, ...aarons]
+        .filter(m => {
+          const title = (m.title || '').toLowerCase();
+          // Match the existing single-student logic: title substring match against the full name.
+          for (const name of studentNames) {
+            if (title.includes(name)) return true;
+          }
+          return false;
+        })
+        .sort((a, b) => new Date(a.start) - new Date(b.start));
+
+      return Response.json({ meetings: allMeetings });
+    }
 
     // 1. Get student name from master sheet
     const masterRes = await sheets.spreadsheets.values.get({

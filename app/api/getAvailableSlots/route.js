@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
+import { listBlocks, isDateBlocked } from '@/lib/blocks';
 
 function getServiceAuth() {
   return new google.auth.GoogleAuth({
@@ -9,7 +10,10 @@ function getServiceAuth() {
       client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
       private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
     },
-    scopes: ['https://www.googleapis.com/auth/calendar.readonly'],
+    scopes: [
+      'https://www.googleapis.com/auth/calendar.readonly',
+      'https://www.googleapis.com/auth/spreadsheets.readonly',
+    ],
   });
 }
 
@@ -76,17 +80,28 @@ export async function GET(request) {
   try {
     const authClient = getServiceAuth();
     const calendar = google.calendar({ version: 'v3', auth: authClient });
+    const sheets = google.sheets({ version: 'v4', auth: authClient });
 
     const dayStart = requestedDate.startOf('day').toISO();
     const dayEnd = requestedDate.endOf('day').toISO();
 
-    const eventsRes = await calendar.events.list({
-      calendarId: instructor.calendarId,
-      timeMin: dayStart,
-      timeMax: dayEnd,
-      singleEvents: true,
-      orderBy: 'startTime',
-    });
+    // ART books on Aaron's calendar, so an Aaron block also blocks ART.
+    const blockSlugs = instructor.slug === 'art' ? ['art', 'aaron'] : [instructor.slug];
+
+    const [eventsRes, blocks] = await Promise.all([
+      calendar.events.list({
+        calendarId: instructor.calendarId,
+        timeMin: dayStart,
+        timeMax: dayEnd,
+        singleEvents: true,
+        orderBy: 'startTime',
+      }),
+      listBlocks(sheets).catch(() => []),
+    ]);
+
+    if (blockSlugs.some(slug => isDateBlocked(blocks, slug, dateStr))) {
+      return Response.json({ slots: [], recommendations: [], blocked: true });
+    }
 
     const busyWindows = (eventsRes.data.items || [])
       .filter(e => e.status !== 'cancelled')
