@@ -326,6 +326,21 @@ STUDENT RESPONSE PREFERENCE: ${responsePreference || 'No preference'}`;
         console.error('Failed to parse AI response, defaulting to written');
         decision = 'written';
       }
+
+      // Hard cap: never escalate above the student's requested response type.
+      // Tiers: written (0) < 15min (1) < 30min (2). "No preference" / empty => no cap.
+      // Frontend strings ('Written report', '15-min call', '30-min Zoom') map to tiers.
+      const tier = { written: 0, '15min': 1, '30min': 2 };
+      const requestedTier =
+        responsePreference === 'Written report' ? 0 :
+        responsePreference === '15-min call' ? 1 :
+        responsePreference === '30-min Zoom' ? 2 :
+        null;
+      if (requestedTier !== null && tier[decision] > requestedTier) {
+        const capped = requestedTier === 0 ? 'written' : requestedTier === 1 ? '15min' : '30min';
+        reason = `Capped at student's requested ${capped} (Claude suggested ${decision}: ${reason || 'no reason'}).`;
+        decision = capped;
+      }
     }
 
 // ── 7. Write booking decision to 👩‍🎓 All Data col AZ ───────────────────

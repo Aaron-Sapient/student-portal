@@ -125,19 +125,27 @@ DECISION RULES:
 
 HARD RULE: Return "email" ONLY if the student's response preference is exactly "Ready to finalize over email". Otherwise, never return "email".
 
+HARD RULE: NEVER escalate above what the student requests. If response preference is "15min", you must return "15min" or "email" — never "30min". If response preference is "Ready to finalize over email", you must return "email". Downgrades are always allowed; escalations are not.
+
+HARD DISQUALIFIER for "30min" (return "15min" instead, even when category is "Need to Discuss" or the student requested 30min):
+- Questions text is blank, whitespace, or a lazy non-answer that doesn't describe an actual topic. Examples of lazy non-answers: "need to discuss", "meeting", "talk", "tbd", "n/a", "stuff", or just rephrasing the category. Selecting "Need to Discuss" without substantive text describing WHAT they need to discuss is NOT enough — the text must name a concrete topic.
+- All task updates are "Not Started", OR there are no meaningful task entries at all.
+- Judge only what the student literally wrote. Do NOT invent complexity from subtext, "behavioral patterns", student attitude, or what the student "must really mean". A student who writes nothing substantive gets 15min, full stop.
+
 Between "15min" and "30min", weigh these signals:
 
-Push toward "30min":
-- Questions/Concerns category is "Need to Discuss"
+Push toward "30min" (only when the Hard Disqualifier above does not apply):
+- Questions/Concerns category is "Need to Discuss" AND the text concretely describes the topic to discuss
 - Questions text describes multiple distinct topics or a complex decision
 - Three or more substantive task updates (especially if any are "Not Started" or "In Progress" with blockers)
-- Student's response preference is "30min"
 
 Push toward "15min" (the default):
 - Questions/Concerns category is "Quick Question" or "None"
 - Questions text is short, focused, or empty
 - Tasks are largely "Completed" or routine
-- Student's response preference is "15min"
+
+LOW WEIGHT (tiebreaker only, does not override stronger signals):
+- Student's response preference. A "30min" preference is a hint, not a justification — it does NOT by itself warrant 30min. Only escalate to 30min when complexity signals above support it.
 
 DEFAULT: Lean toward "15min". Only escalate to "30min" when there are real signals of complexity. Aaron expects most students to be "15min" — that's the healthy baseline.
 
@@ -187,6 +195,20 @@ STUDENT RESPONSE PREFERENCE: ${responsePreference || 'No preference'}`;
       if (decision === 'email' && responsePreference !== 'Ready to finalize over email') {
         decision = '15min';
         reason = 'Student did not explicitly request email-only — defaulting to 15min.';
+      }
+
+      // Hard cap: never escalate above the student's requested meeting type.
+      // Tiers: email (0) < 15min (1) < 30min (2). No preference => no cap.
+      const tier = { email: 0, '15min': 1, '30min': 2 };
+      const requestedTier =
+        responsePreference === 'Ready to finalize over email' ? 0 :
+        responsePreference === '15min' ? 1 :
+        responsePreference === '30min' ? 2 :
+        null;
+      if (requestedTier !== null && tier[decision] > requestedTier) {
+        const capped = requestedTier === 0 ? 'email' : requestedTier === 1 ? '15min' : '30min';
+        reason = `Capped at student's requested ${capped} (Claude suggested ${decision}: ${reason || 'no reason'}).`;
+        decision = capped;
       }
     }
 
