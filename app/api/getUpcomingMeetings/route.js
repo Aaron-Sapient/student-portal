@@ -48,9 +48,9 @@ export async function GET(request) {
     const calendar = google.calendar({ version: 'v3', auth: authClient });
 
     // Admin "all meetings" branch: return events on either calendar whose title
-    // contains a known student name. Source of truth for the name list is the
-    // CheckinForm + A_CheckinForm tabs (col B), since both routes write the
-    // student's full name there at every check-in submission.
+    // contains a known student name. The directory is built from the master sheet
+    // (col A name, col J email) so we can resolve a student's full name and email
+    // even when an admin types the title freeform like "Aaron-Christine Oh".
     if (all) {
       const now = new Date();
       const eightWeeksOut = new Date(now.getTime() + 8 * 7 * 24 * 60 * 60 * 1000);
@@ -87,44 +87,45 @@ export async function GET(request) {
           });
       }
 
-      async function fetchStudentNames() {
-        const [ryanRes, aaronRes] = await Promise.all([
-          sheets.spreadsheets.values.get({
-            spreadsheetId: MASTER_SHEET_ID,
-            range: 'CheckinForm!B:B',
-            valueRenderOption: 'UNFORMATTED_VALUE',
-          }),
-          sheets.spreadsheets.values.get({
-            spreadsheetId: MASTER_SHEET_ID,
-            range: 'A_CheckinForm!B:B',
-            valueRenderOption: 'UNFORMATTED_VALUE',
-          }),
-        ]);
-        const names = new Set();
-        for (const res of [ryanRes, aaronRes]) {
-          for (const row of (res.data.values || []).slice(1)) {
-            const n = (row[0] || '').trim();
-            if (n) names.add(n.toLowerCase());
-          }
+      // Returns [{ name, normalized, email }, ...] sorted longest-name-first
+      // so longer matches win during title scanning (e.g. "Anna Lee" beats "Anna").
+      async function fetchStudentDirectory() {
+        const res = await sheets.spreadsheets.values.get({
+          spreadsheetId: MASTER_SHEET_ID,
+          range: `${MASTER_TAB}!A:J`,
+          valueRenderOption: 'UNFORMATTED_VALUE',
+        });
+        const rows = (res.data.values || []).slice(1); // drop header
+        const dir = [];
+        for (const r of rows) {
+          const name = (r[0] || '').trim();
+          const email = (r[9] || '').trim();
+          if (!name) continue;
+          dir.push({ name, normalized: name.toLowerCase(), email: email || null });
         }
-        return names;
+        dir.sort((a, b) => b.normalized.length - a.normalized.length);
+        return dir;
       }
 
-      const [ryans, aarons, studentNames] = await Promise.all([
+      const [ryans, aarons, directory] = await Promise.all([
         fetchAll(RYANS_CALENDAR_ID, 'Ryan'),
         fetchAll(AARONS_CALENDAR_ID, 'Aaron'),
-        fetchStudentNames(),
+        fetchStudentDirectory(),
       ]);
 
       const allMeetings = [...ryans, ...aarons]
-        .filter(m => {
-          const title = (m.title || '').toLowerCase();
-          // Match the existing single-student logic: title substring match against the full name.
-          for (const name of studentNames) {
-            if (title.includes(name)) return true;
-          }
-          return false;
+        .map(m => {
+          const titleLower = (m.title || '').toLowerCase();
+          // Longest-first scan: first hit is the best (most specific) match.
+          const hit = directory.find(s => titleLower.includes(s.normalized));
+          if (!hit) return null; // not a student meeting — drop it
+          return {
+            ...m,
+            studentName: hit.name,
+            studentEmail: m.studentEmail || hit.email,
+          };
         })
+        .filter(Boolean)
         .sort((a, b) => new Date(a.start) - new Date(b.start));
 
       return Response.json({ meetings: allMeetings });

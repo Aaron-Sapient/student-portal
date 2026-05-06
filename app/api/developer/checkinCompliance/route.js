@@ -35,7 +35,8 @@ export async function GET() {
     const sheets = google.sheets({ version: 'v4', auth: getServiceAuth() });
 
     // Pull the whole master block in one call. Indices (0-based, range starts at A):
-    //   A=0, B=1 (likely student name), J=9 (email), AY=50 (Ryan last check-in), BA=52 (Aaron last check-in)
+    //   A=0 (student name), B=1 (year — do NOT use as name), J=9 (email),
+    //   AY=50 (Ryan last check-in), BA=52 (Aaron last check-in)
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: MASTER_SHEET_ID,
       range: `${MASTER_TAB}!A:BD`,
@@ -51,7 +52,7 @@ export async function GET() {
     const students = dataRows
       .map(r => {
         const email = r[9] || '';
-        const name = r[1] || r[0] || '';
+        const name = r[0] || '';
         if (!email) return null;
         const ryanDt = parseTimestamp(r[50]);
         const aaronDt = parseTimestamp(r[52]);
