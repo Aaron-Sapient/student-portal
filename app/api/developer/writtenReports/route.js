@@ -155,7 +155,7 @@ export async function GET() {
     const sheets = google.sheets({ version: 'v4', auth: getServiceAuth() });
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: MASTER_SHEET_ID,
-      range: `${REPORTS_TAB}!A:G`,
+      range: `${REPORTS_TAB}!A:H`,
       valueRenderOption: 'UNFORMATTED_VALUE',
     });
     const rows = res.data.values || [];
@@ -169,6 +169,7 @@ export async function GET() {
         strategy: r[4] || '',
         parentRequests: r[5] || '',
         status: r[6] === true || r[6] === 'TRUE' || r[6] === 'true',
+        parentNotified: r[7] === true || r[7] === 'TRUE' || r[7] === 'true',
       }))
       .filter(r => r.student)
       .sort((a, b) => String(b.date).localeCompare(String(a.date)));
@@ -406,9 +407,10 @@ export async function POST(request) {
       : (date || DateTime.now().toISO());
 
     // 2. Look up the student sheet ID by name (col A) → URL (col G).
+    //    Also pull col J (student email) for the parent-notifier ping.
     const masterRes = await sheets.spreadsheets.values.get({
       spreadsheetId: MASTER_SHEET_ID,
-      range: `${MASTER_TAB}!A:G`,
+      range: `${MASTER_TAB}!A:J`,
       valueRenderOption: 'UNFORMATTED_VALUE',
     });
     const masterRows = masterRes.data.values || [];
@@ -422,6 +424,7 @@ export async function POST(request) {
       return Response.json({ error: `Could not parse sheet URL for "${student}"` }, { status: 400 });
     }
     const studentSheetId = sheetIdMatch[1];
+    const studentEmail = String(studentRow[9] ?? '').trim();
 
     // 3. Tab + header (creates with hidden gridlines + frozen header + styled header).
     const { sheetId: tabSheetId, isNew } = await ensureStudentReportsTab(sheets, studentSheetId);
@@ -448,6 +451,27 @@ export async function POST(request) {
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [[true]] },
     });
+
+    // 7. Fire-and-forget the parent-notifier webhook. The Apps Script
+    //    (deployed under support@admissions.partners) does its own
+    //    idempotency check against col H of WrittenReports, so re-uploads
+    //    won't double-notify and a failed first ping naturally retries
+    //    on the next upload.
+    const webhookUrl = process.env.PARENT_NOTIFIER_WEBAPP_URL;
+    const webhookToken = process.env.PARENT_NOTIFIER_TOKEN;
+    if (webhookUrl && webhookToken && studentEmail) {
+      const url = `${webhookUrl}?token=${encodeURIComponent(webhookToken)}`
+        + `&email=${encodeURIComponent(studentEmail)}`
+        + `&gid=${encodeURIComponent(tabSheetId)}`
+        + `&rowIndex=${encodeURIComponent(rowIndex)}`;
+      fetch(url, { method: 'GET' }).catch(e => {
+        console.error('parent-notifier ping failed:', e);
+      });
+    } else if (!webhookUrl || !webhookToken) {
+      console.warn('parent-notifier env vars missing — skipping ping');
+    } else if (!studentEmail) {
+      console.warn(`parent-notifier: no email in col J for "${student}" — skipping ping`);
+    }
 
     return Response.json({ success: true });
   } catch (err) {

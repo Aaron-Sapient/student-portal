@@ -374,8 +374,8 @@ function MeetingsSection({ meetings, refresh }) {
   );
 }
 
-// Auto-grows to fit its content so cells never show an internal vertical scrollbar.
-// Resizes on every value change and on initial mount.
+const MAX_TEXTAREA_HEIGHT = 220;
+
 function AutoResizingTextarea({ value, onChange, onBlur, style }) {
   const ref = useRef(null);
 
@@ -383,19 +383,20 @@ function AutoResizingTextarea({ value, onChange, onBlur, style }) {
     const el = ref.current;
     if (!el) return;
     el.style.height = 'auto';
-    el.style.height = `${el.scrollHeight}px`;
+    el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_HEIGHT)}px`;
   }, [value]);
 
   return (
     <textarea
       ref={ref}
+      rows={2}
       value={value}
       onChange={onChange}
       onBlur={onBlur}
       style={{
         width: '100%',
-        minHeight: 120,
-        overflow: 'hidden',
+        maxHeight: MAX_TEXTAREA_HEIGHT,
+        overflow: 'auto',
         resize: 'none',
         padding: 8,
         border: '1px solid #E5E3DD',
@@ -457,6 +458,17 @@ function ReportRow({ report, onPatch, onUpload, busy }) {
       {cell('needsAttention')}
       {cell('strategy')}
       {cell('parentRequests')}
+      <td style={{
+        padding: '8px 4px',
+        verticalAlign: 'top',
+        whiteSpace: 'nowrap',
+        fontSize: 12,
+        textAlign: 'center',
+        color: report.parentNotified ? '#2F5034' : '#999',
+        fontWeight: report.parentNotified ? 600 : 400,
+      }}>
+        {report.parentNotified ? 'Notified' : (report.status ? 'Pending' : '—')}
+      </td>
       <td style={{ padding: '8px 4px', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
         <button
           onClick={() => onUpload(report)}
@@ -586,6 +598,7 @@ function WrittenReportsSection({ reports, refresh }) {
               <col />
               <col />
               <col />
+              <col style={{ width: 90 }} />
               <col style={{ width: 130 }} />
             </colgroup>
             <thead>
@@ -596,6 +609,7 @@ function WrittenReportsSection({ reports, refresh }) {
                 <th style={{ padding: '6px 4px' }}>Needs Attention</th>
                 <th style={{ padding: '6px 4px' }}>Strategy &amp; Recs</th>
                 <th style={{ padding: '6px 4px' }}>Parent Requests</th>
+                <th style={{ padding: '6px 4px', textAlign: 'center' }}>Parents</th>
                 <th></th>
               </tr>
             </thead>
