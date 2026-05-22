@@ -49,3 +49,6 @@ next-env.d.ts
 
 # Google Apps Scripts (deployed separately, may contain webhook tokens)
 /Google Apps Scripts/
+
+# Local task notes / plans (Aaron's working files, not part of the app)
+/tasks/

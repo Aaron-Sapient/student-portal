@@ -411,7 +411,7 @@ function AutoResizingTextarea({ value, onChange, onBlur, style }) {
   );
 }
 
-function ReportRow({ report, onPatch, onUpload, busy }) {
+function ReportRow({ report, onPatch, onUpload, busy, busyMode }) {
   // Local state lets us debounce sheet writes to blur and avoid re-rendering the
   // textarea every keystroke from parent state. We sync from props on rowIndex change.
   const [local, setLocal] = useState({
@@ -442,9 +442,12 @@ function ReportRow({ report, onPatch, onUpload, busy }) {
     </td>
   );
 
-  const buttonLabel = busy
+  const primaryLabel = busy && busyMode === 'normal'
     ? (report.status ? 'Re-uploading…' : 'Uploading…')
     : (report.status ? 'Revise' : 'Upload');
+  const silentLabel = busy && busyMode === 'silent'
+    ? 'Sending…'
+    : 'Silent';
 
   return (
     <tr style={{ borderBottom: '1px solid #F0EEE8' }}>
@@ -470,19 +473,36 @@ function ReportRow({ report, onPatch, onUpload, busy }) {
         {report.parentNotified ? 'Notified' : (report.status ? 'Pending' : '—')}
       </td>
       <td style={{ padding: '8px 4px', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
-        <button
-          onClick={() => onUpload(report)}
-          disabled={busy}
-          style={{
-            backgroundColor: '#C6613F', color: '#fff',
-            padding: '8px 18px', borderRadius: '999px', border: 'none',
-            fontWeight: 600, cursor: busy ? 'wait' : 'pointer',
-            fontFamily: "'DM Sans', sans-serif", fontSize: 13,
-            opacity: busy ? 0.7 : 1,
-          }}
-        >
-          {buttonLabel}
-        </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'stretch' }}>
+          <button
+            onClick={() => onUpload(report, { silent: false })}
+            disabled={busy}
+            style={{
+              backgroundColor: '#C6613F', color: '#fff',
+              padding: '8px 18px', borderRadius: '999px', border: 'none',
+              fontWeight: 600, cursor: busy ? 'wait' : 'pointer',
+              fontFamily: "'DM Sans', sans-serif", fontSize: 13,
+              opacity: busy ? 0.7 : 1,
+            }}
+          >
+            {primaryLabel}
+          </button>
+          <button
+            onClick={() => onUpload(report, { silent: true })}
+            disabled={busy}
+            title="Upload to the student's sheet without emailing parents"
+            style={{
+              backgroundColor: 'transparent', color: '#666',
+              padding: '4px 10px', borderRadius: '999px',
+              border: '1px solid #C9C5BA',
+              fontWeight: 500, cursor: busy ? 'wait' : 'pointer',
+              fontFamily: "'DM Sans', sans-serif", fontSize: 11,
+              opacity: busy ? 0.7 : 1,
+            }}
+          >
+            {silentLabel}
+          </button>
+        </div>
       </td>
     </tr>
   );
@@ -490,6 +510,7 @@ function ReportRow({ report, onPatch, onUpload, busy }) {
 
 function WrittenReportsSection({ reports, refresh }) {
   const [busyRow, setBusyRow] = useState(null);
+  const [busyMode, setBusyMode] = useState(null); // 'normal' | 'silent'
   const [unsentOnly, setUnsentOnly] = useState(false);
   const [search, setSearch] = useState('');
 
@@ -505,21 +526,24 @@ function WrittenReportsSection({ reports, refresh }) {
     }
   };
 
-  const upload = async (report) => {
+  const upload = async (report, { silent = false } = {}) => {
     const verb = report.status ? 'Re-upload to' : 'Upload to';
-    if (!confirm(`${verb} ${report.student}'s Google Sheet?`)) return;
+    const suffix = silent ? ' WITHOUT emailing parents?' : '?';
+    if (!confirm(`${verb} ${report.student}'s Google Sheet${suffix}`)) return;
     setBusyRow(report.rowIndex);
+    setBusyMode(silent ? 'silent' : 'normal');
     try {
       const res = await fetch('/api/developer/writtenReports', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rowIndex: report.rowIndex }),
+        body: JSON.stringify({ rowIndex: report.rowIndex, silent }),
       });
       const data = await res.json();
       if (!res.ok) alert('Upload failed: ' + (data.error || 'unknown'));
       await refresh();
     } finally {
       setBusyRow(null);
+      setBusyMode(null);
     }
   };
 
@@ -621,6 +645,7 @@ function WrittenReportsSection({ reports, refresh }) {
                   onPatch={patch}
                   onUpload={upload}
                   busy={busyRow === r.rowIndex}
+                  busyMode={busyRow === r.rowIndex ? busyMode : null}
                 />
               ))}
             </tbody>

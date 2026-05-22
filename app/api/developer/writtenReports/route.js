@@ -385,7 +385,7 @@ export async function POST(request) {
   if (!gate.ok) return gate.response;
 
   try {
-    const { rowIndex } = await request.json();
+    const { rowIndex, silent } = await request.json();
     if (!rowIndex || rowIndex < 2) return Response.json({ error: 'Invalid rowIndex' }, { status: 400 });
 
     const sheets = google.sheets({ version: 'v4', auth: getServiceAuth() });
@@ -398,13 +398,12 @@ export async function POST(request) {
     });
     const row = reportRes.data.values?.[0];
     if (!row) return Response.json({ error: 'Report row not found' }, { status: 404 });
-    const [date, student, onTarget, needsAttention, strategy, parentRequests] = row;
+    const [, student, onTarget, needsAttention, strategy, parentRequests] = row;
     if (!student) return Response.json({ error: 'Report row has no student name' }, { status: 400 });
 
-    // Master sheet stores serial dates; convert back to ISO for the student sheet.
-    const dateIso = (typeof date === 'number')
-      ? DateTime.fromMillis((date - 25569) * 86400 * 1000).toISO()
-      : (date || DateTime.now().toISO());
+    // Column A on the student sheet should reflect when the report was actually
+    // uploaded, not when Claude originally drafted it. Force LA per project rules.
+    const dateIso = DateTime.now().setZone('America/Los_Angeles').toISO();
 
     // 2. Look up the student sheet ID by name (col A) → URL (col G).
     //    Also pull col J (student email) for the parent-notifier ping.
@@ -457,9 +456,13 @@ export async function POST(request) {
     //    idempotency check against col H of WrittenReports, so re-uploads
     //    won't double-notify and a failed first ping naturally retries
     //    on the next upload.
+    //    Silent mode skips the ping entirely — used when we want the report
+    //    in the student sheet without nudging parents.
     const webhookUrl = process.env.PARENT_NOTIFIER_WEBAPP_URL;
     const webhookToken = process.env.PARENT_NOTIFIER_TOKEN;
-    if (webhookUrl && webhookToken && studentEmail) {
+    if (silent) {
+      console.log(`writtenReports: silent upload for "${student}" — skipping parent ping`);
+    } else if (webhookUrl && webhookToken && studentEmail) {
       const url = `${webhookUrl}?token=${encodeURIComponent(webhookToken)}`
         + `&email=${encodeURIComponent(studentEmail)}`
         + `&gid=${encodeURIComponent(tabSheetId)}`
