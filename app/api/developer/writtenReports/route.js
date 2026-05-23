@@ -463,8 +463,12 @@ export async function POST(request) {
     if (silent) {
       console.log(`writtenReports: silent upload for "${student}" — skipping parent ping`);
     } else if (webhookUrl && webhookToken && studentEmail) {
+      // sheetId + gid let the Apps Script build a deep link straight to the
+      // Written Reports tab, e.g.
+      //   https://docs.google.com/spreadsheets/d/<sheetId>/edit?gid=<gid>#gid=<gid>
       const url = `${webhookUrl}?token=${encodeURIComponent(webhookToken)}`
         + `&email=${encodeURIComponent(studentEmail)}`
+        + `&sheetId=${encodeURIComponent(studentSheetId)}`
         + `&gid=${encodeURIComponent(tabSheetId)}`
         + `&rowIndex=${encodeURIComponent(rowIndex)}`;
       fetch(url, { method: 'GET' }).catch(e => {
