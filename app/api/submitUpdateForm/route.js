@@ -194,18 +194,38 @@ export async function POST(request) {
       ? detectGradeDrops(mostRecent.snapshot, currentSnapshot)
       : [];
 
-    // ── 5b. Block override: if Ryan is blocked off today, force "written" and skip Claude.
-    // Only applies to Ryan — Aaron's availability is unaffected by Ryan's blocks.
-    let decision = 'written';
+    // ── 5b. Deterministic overrides (skip Claude entirely when they apply):
+    //   • Block override — Ryan unavailable today → written.
+    //   • Student explicitly requested "Written report" → written.
+    //   • VIP student requested "30-min Zoom" → honor 30min, no judgment.
+    // Otherwise default to 15min (Ryan's healthy baseline) and let Claude
+    // decide whether to escalate to 30min.
+    let decision = '15min';
     let reason = '';
-    let blockOverride = false;
+    let skipClaude = false;
 
     const today = DateTime.now().setZone('America/Los_Angeles').toFormat('yyyy-LL-dd');
     const blocks = await listBlocks(sheets).catch(() => []);
     if (isDateBlocked(blocks, 'ryan', today)) {
       decision = 'written';
       reason = 'Ryan is unavailable today — auto-routed to a written report.';
-      blockOverride = true;
+      skipClaude = true;
+    } else if (responsePreference === 'Written report') {
+      decision = 'written';
+      reason = 'Student explicitly requested a written report.';
+      skipClaude = true;
+    } else if (responsePreference === '30-min Zoom') {
+      const vipRes = await sheets.spreadsheets.values.get({
+        spreadsheetId: MASTER_SHEET_ID,
+        range: `${MASTER_TAB}!AL${studentRowIndex}`,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      });
+      const vipFlag = String(vipRes.data.values?.[0]?.[0] || '').trim().toUpperCase();
+      if (vipFlag === 'VIP') {
+        decision = '30min';
+        reason = 'VIP auto-routed to 30min per student request.';
+        skipClaude = true;
+      }
     }
 
     // ── 6. Call Claude Haiku for routing decision ────────────────────────────
@@ -233,48 +253,44 @@ const gradeDropText = gradeDrops.length
       ? Object.entries(currentSnapshot).map(([cls, g]) => `${cls}: ${g}`).join(', ')
       : 'No grade data submitted (MS student or summer).';
 
-    const systemPrompt = `You are a routing assistant for an academic counseling service. 
-Your job is to decide which response a student should receive after their weekly check-in.
+    const systemPrompt = `You are a routing assistant for an academic counseling service.
+Your job is to decide which response a student should receive after their weekly check-in with Ryan.
 
 RESPONSE TYPES (with target distribution):
-- "written": A written report is sent. Target 60% of weeks. Default unless escalation signals are present.
-- "15min": A 15-minute phone call. Target 20% of weeks. For specific questions or minor concerns.
-- "30min": A 30-minute Zoom meeting. Target 10% of weeks. For critical decisions or major concerns.
+- "15min": A 15-minute phone call. Target ~90% of weeks. This is the healthy default — most students benefit from a quick live check-in regardless of how the week went.
+- "30min": A 30-minute Zoom meeting. Target ~10% of weeks. Reserved for GENUINE urgency only.
 
-DECISION RULES (apply in order of weight):
+DEFAULT BIAS — START AT 15min:
+Begin every decision assuming "15min". Only escalate to "30min" if multiple genuine red flags are present at the same time. A quiet week, a blank Questions/Concerns box, all tasks "Not Started", or low engagement signals are NOT reasons to demote or escalate — they still get 15min.
 
-TOP WEIGHT signals that strongly push to "written" and automatically disqualify "30min" regardless of any other signals:
-- Questions/Concerns text is left blank or lazy response (i.e., just the word "meeting") (this signals low engagement)
-- ALL task updates marked as "Not Started" (this also signals low engagement)
-- NEVER escalate *above* what a student requests (i.e., never give 30min for a 15min request)
-- If a student needs a meeting, *strongly favor 15min* over 30min except in rare, exceptionally complex cases
-
-HIGH WEIGHT signals that escalate toward a meeting:
+ESCALATION TO 30min requires GENUINE urgency. Look for these high-weight signals:
 - Grade drop of 1.0+ GPA points in any class (e.g. B to C or worse)
 - Any class currently at D or F
 - GPA below 2.0
 - Questions/Concerns category is "Need to Discuss"
 - Academic self-rating of 1, 2, or 3
+- A complex, multi-part question in the text that genuinely cannot be addressed in 15 minutes
 
-MEDIUM WEIGHT signals that escalate toward a meeting:
-- Questions/Concerns category is "Quick Question"
-- Academic self-rating of 4 or 5
-- GPA between 2.0 and 2.7
+A SINGLE high-weight signal is NOT sufficient — give 15min. Escalate to 30min only when:
+  (a) at least two of the above co-occur, OR
+  (b) one signal is so severe (e.g., a current F combined with GPA < 2.0, or an explicit crisis described in the question text) that 15 minutes truly cannot cover it.
 
-LOW WEIGHT (tiebreaker only, do not override stronger signals):
-- Student's response preference
+DO NOT escalate to 30min for:
+- "Quick Question" category alone
+- Self-rating in the 4–7 range alone
+- A single grade slip without other context
+- A blank or terse Questions/Concerns box (give 15min, do not demote and do not escalate)
 
-DEFAULT BIAS: If no medium or high signals are present, return "written".
-You must lean heavily toward "written" — only escalate when signals genuinely warrant it.
+NEVER escalate above the student's requested response type:
+- If the student requested "15-min call", never return "30min".
+- "Written report" requests are handled before you are called — you will never see them.
 
 GPA CONVERSION TABLE (for reference):
 A+/A = 4.0, A- = 3.7, B+ = 3.3, B = 3.0, B- = 2.7
 C+ = 2.3, C = 2.0, C- = 1.7, D+ = 1.3, D = 1.0, D- = 0.7, F = 0.0
 
-IMPORTANT: If a student has multiple HIGH WEIGHT signals simultaneously (e.g. D/F grades AND "Need to Discuss" AND self-rating ≤ 3), this should almost certainly be 30min. Do not default to written when multiple serious signals are present.
-
 Respond with ONLY a JSON object. No explanation, no markdown, no extra text:
-{"decision": "written"|"15min"|"30min", "reason": "one sentence explanation"}`;
+{"decision": "15min"|"30min", "reason": "one sentence explanation"}`;
 
     const userMessage = `Student: ${studentName}
 
@@ -302,7 +318,7 @@ ACADEMIC SELF-RATING: ${selfRating}/10
 
 STUDENT RESPONSE PREFERENCE: ${responsePreference || 'No preference'}`;
 
-    if (!blockOverride) {
+    if (!skipClaude) {
       const aiResponse = await anthropic.messages.create({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 150,
@@ -318,28 +334,23 @@ STUDENT RESPONSE PREFERENCE: ${responsePreference || 'No preference'}`;
           .replace(/```/g, '')
           .trim();
         const parsed = JSON.parse(cleaned);
-        decision = ['written', '15min', '30min'].includes(parsed.decision)
+        // Only 15min/30min are valid here — "written" is gated on an explicit
+        // student request and handled before the Claude call.
+        decision = ['15min', '30min'].includes(parsed.decision)
           ? parsed.decision
-          : 'written';
+          : '15min';
         reason = parsed.reason || '';
       } catch {
-        console.error('Failed to parse AI response, defaulting to written');
-        decision = 'written';
+        console.error('Failed to parse AI response, defaulting to 15min');
+        decision = '15min';
       }
 
       // Hard cap: never escalate above the student's requested response type.
-      // Tiers: written (0) < 15min (1) < 30min (2). "No preference" / empty => no cap.
-      // Frontend strings ('Written report', '15-min call', '30-min Zoom') map to tiers.
-      const tier = { written: 0, '15min': 1, '30min': 2 };
-      const requestedTier =
-        responsePreference === 'Written report' ? 0 :
-        responsePreference === '15-min call' ? 1 :
-        responsePreference === '30-min Zoom' ? 2 :
-        null;
-      if (requestedTier !== null && tier[decision] > requestedTier) {
-        const capped = requestedTier === 0 ? 'written' : requestedTier === 1 ? '15min' : '30min';
-        reason = `Capped at student's requested ${capped} (Claude suggested ${decision}: ${reason || 'no reason'}).`;
-        decision = capped;
+      // Tiers: 15min (1) < 30min (2). "Written report" requests never reach
+      // this branch (handled by the skipClaude fast path above).
+      if (responsePreference === '15-min call' && decision === '30min') {
+        reason = `Capped at student's requested 15min (Claude suggested 30min: ${reason || 'no reason'}).`;
+        decision = '15min';
       }
     }
 

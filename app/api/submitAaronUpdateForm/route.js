@@ -1,7 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
 import { DateTime } from 'luxon';
-import Anthropic from '@anthropic-ai/sdk';
 import { listBlocks, isDateBlocked } from '@/lib/blocks';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
@@ -56,7 +55,7 @@ export async function POST(request) {
     // ── 3. Append new row to A_CheckinForm ───────────────────────────────────
     // Column order: A=Timestamp, B=Name, C=Task Updates, D=Upcoming Deadlines,
     // E=Questions Category, F=Questions Text, G=Response Preference,
-    // H=Agenda (filled later by bookMeeting), I=Claude Reason, J=Booking Decision
+    // H=Agenda (filled later by bookMeeting), I=Routing Reason, J=Booking Decision
     await sheets.spreadsheets.values.append({
       spreadsheetId: MASTER_SHEET_ID,
       range: `${CHECKIN_TAB}!A:J`,
@@ -72,144 +71,29 @@ export async function POST(request) {
           questionsText || '',        // F: Questions Text
           responsePreference || '',   // G: Response Preference
           '',                         // H: Agenda (filled by bookMeeting)
-          '',                         // I: Claude Reason (filled below)
+          '',                         // I: Routing Reason (filled below)
           '',                         // J: Booking Decision (filled below)
         ]],
       },
     });
 
-    let decision = '15min';
-    let reason = '';
-    let vipOverride = false;
-    let blockOverride = false;
+    // ── 4. Routing: honor the student's explicit choice exactly.
+    // Aaron's flow is deterministic — no Claude, no judgment, no escalation.
+    // The only override is a real calendar constraint (Aaron blocked today).
+    const PREFERENCE_TO_DECISION = {
+      '15min': '15min',
+      '30min': '30min',
+      'Ready to finalize over email': 'email',
+    };
 
-    // ── 4a. Block override: if Aaron is blocked off today, force "email" and skip
-    // both the VIP check and Claude. Only applies to Aaron — Ryan's blocks don't
-    // affect Aaron's routing.
+    let decision = PREFERENCE_TO_DECISION[responsePreference] || '15min';
+    let reason = `Student selected ${responsePreference || '15min (default)'}.`;
+
     const today = DateTime.now().setZone('America/Los_Angeles').toFormat('yyyy-LL-dd');
     const blocks = await listBlocks(sheets).catch(() => []);
     if (isDateBlocked(blocks, 'aaron', today)) {
       decision = 'email';
       reason = 'Aaron is unavailable today — finalize over email this week.';
-      blockOverride = true;
-    }
-
-    // ── 4b. VIP override: skip Claude entirely if col AL = "VIP" and student requested 30min.
-    // The frontend sees an ordinary 30min decision — no flag is exposed in the response.
-    if (!blockOverride) {
-      const vipRes = await sheets.spreadsheets.values.get({
-        spreadsheetId: MASTER_SHEET_ID,
-        range: `${MASTER_TAB}!AL${studentRowIndex}`,
-        valueRenderOption: 'UNFORMATTED_VALUE',
-      });
-      const vipFlag = String(vipRes.data.values?.[0]?.[0] || '').trim().toUpperCase();
-      if (vipFlag === 'VIP' && responsePreference === '30min') {
-        decision = '30min';
-        reason = 'VIP auto-routed to 30min per student request.';
-        vipOverride = true;
-      }
-    }
-
-    // ── 4b. Call Claude for routing decision (balanced 60/35/5 distribution) ──
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-    const systemPrompt = `You are a routing assistant for an academic counseling service.
-Your job is to decide which response a student should receive after their weekly check-in with Aaron.
-
-RESPONSE TYPES (with target distribution):
-- "15min": A 15-minute phone call. Target ~60% of weeks. The default for most students.
-- "30min": A 30-minute Zoom meeting. Target ~35% of weeks. For complex tasks, multiple open questions, or when a student needs deeper guidance.
-- "email": Finalize over email — no live meeting. Target ~5% of weeks. ONLY when the student explicitly requests "Ready to finalize over email".
-
-DECISION RULES:
-
-HARD RULE: Return "email" ONLY if the student's response preference is exactly "Ready to finalize over email". Otherwise, never return "email".
-
-HARD RULE: NEVER escalate above what the student requests. If response preference is "15min", you must return "15min" or "email" — never "30min". If response preference is "Ready to finalize over email", you must return "email". Downgrades are always allowed; escalations are not.
-
-HARD DISQUALIFIER for "30min" (return "15min" instead, even when category is "Need to Discuss" or the student requested 30min):
-- Questions text is blank, whitespace, or a lazy non-answer that doesn't describe an actual topic. Examples of lazy non-answers: "need to discuss", "meeting", "talk", "tbd", "n/a", "stuff", or just rephrasing the category. Selecting "Need to Discuss" without substantive text describing WHAT they need to discuss is NOT enough — the text must name a concrete topic.
-- All task updates are "Not Started", OR there are no meaningful task entries at all.
-- Judge only what the student literally wrote. Do NOT invent complexity from subtext, "behavioral patterns", student attitude, or what the student "must really mean". A student who writes nothing substantive gets 15min, full stop.
-
-Between "15min" and "30min", weigh these signals:
-
-Push toward "30min" (only when the Hard Disqualifier above does not apply):
-- Questions/Concerns category is "Need to Discuss" AND the text concretely describes the topic to discuss
-- Questions text describes multiple distinct topics or a complex decision
-- Three or more substantive task updates (especially if any are "Not Started" or "In Progress" with blockers)
-
-Push toward "15min" (the default):
-- Questions/Concerns category is "Quick Question" or "None"
-- Questions text is short, focused, or empty
-- Tasks are largely "Completed" or routine
-
-LOW WEIGHT (tiebreaker only, does not override stronger signals):
-- Student's response preference. A "30min" preference is a hint, not a justification — it does NOT by itself warrant 30min. Only escalate to 30min when complexity signals above support it.
-
-DEFAULT: Lean toward "15min". Only escalate to "30min" when there are real signals of complexity. Aaron expects most students to be "15min" — that's the healthy baseline.
-
-Respond with ONLY a JSON object. No explanation, no markdown, no extra text:
-{"decision": "15min"|"30min"|"email", "reason": "one sentence explanation"}`;
-
-    const userMessage = `Student: ${studentName}
-
-TASK UPDATES:
-${taskUpdates?.map(({ task, status }) => `- ${task}: ${status}`).join('\n') || 'None reported'}
-
-UPCOMING DEADLINES:
-${upcomingDeadlines || 'None reported'}
-
-QUESTIONS/CONCERNS:
-Category: ${questionsCategory || 'None'}
-Details: ${questionsText || 'N/A'}
-
-STUDENT RESPONSE PREFERENCE: ${responsePreference || 'No preference'}`;
-
-    if (!blockOverride && !vipOverride) {
-      const aiResponse = await anthropic.messages.create({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 150,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userMessage }],
-      });
-
-      try {
-        const rawText = aiResponse.content[0]?.text || '{}';
-        console.log('Aaron AI raw response:', rawText);
-        const cleaned = rawText
-          .replace(/```json/gi, '')
-          .replace(/```/g, '')
-          .trim();
-        const parsed = JSON.parse(cleaned);
-        decision = ['15min', '30min', 'email'].includes(parsed.decision)
-          ? parsed.decision
-          : '15min';
-        reason = parsed.reason || '';
-      } catch {
-        console.error('Failed to parse Aaron AI response, defaulting to 15min');
-        decision = '15min';
-      }
-
-      // Safety override: only allow "email" if student explicitly requested it
-      if (decision === 'email' && responsePreference !== 'Ready to finalize over email') {
-        decision = '15min';
-        reason = 'Student did not explicitly request email-only — defaulting to 15min.';
-      }
-
-      // Hard cap: never escalate above the student's requested meeting type.
-      // Tiers: email (0) < 15min (1) < 30min (2). No preference => no cap.
-      const tier = { email: 0, '15min': 1, '30min': 2 };
-      const requestedTier =
-        responsePreference === 'Ready to finalize over email' ? 0 :
-        responsePreference === '15min' ? 1 :
-        responsePreference === '30min' ? 2 :
-        null;
-      if (requestedTier !== null && tier[decision] > requestedTier) {
-        const capped = requestedTier === 0 ? 'email' : requestedTier === 1 ? '15min' : '30min';
-        reason = `Capped at student's requested ${capped} (Claude suggested ${decision}: ${reason || 'no reason'}).`;
-        decision = capped;
-      }
     }
 
     // ── 5. Write booking decision to 👩‍🎓 All Data col BB ──────────────────
@@ -220,7 +104,7 @@ STUDENT RESPONSE PREFERENCE: ${responsePreference || 'No preference'}`;
       requestBody: { values: [[decision]] },
     });
 
-    // ── 6. Backfill AI reason (col I) and decision (col J) on the appended row ──
+    // ── 6. Backfill routing reason (col I) and decision (col J) on the appended row ──
     const allRowsRes = await sheets.spreadsheets.values.get({
       spreadsheetId: MASTER_SHEET_ID,
       range: `${CHECKIN_TAB}!A:J`,
