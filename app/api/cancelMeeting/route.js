@@ -58,9 +58,14 @@ export async function POST(request) {
 
     const startTime = DateTime.fromISO(meetingStart).setZone('America/Los_Angeles');
     const now = DateTime.now().setZone('America/Los_Angeles');
-    if (startTime < now.plus({ days: 1 })) {
+    // Rescheduling still requires 24h notice (the cancel-half of a reschedule flow);
+    // a standalone cancellation only requires 2h notice.
+    const noticeHours = isReschedule ? 24 : 2;
+    if (startTime < now.plus({ hours: noticeHours })) {
       return Response.json({
-        error: 'Meetings must be cancelled at least 24 hours in advance.',
+        error: isReschedule
+          ? 'Meetings must be rescheduled at least 24 hours in advance.'
+          : 'Meetings must be cancelled at least 2 hours in advance.',
       }, { status: 400 });
     }
 

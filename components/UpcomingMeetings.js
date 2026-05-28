@@ -33,8 +33,8 @@ function getMeetingDuration(start, end) {
   return mins <= 15 ? '15min' : '30min';
 }
 
-function isWithin24Hours(dateStr) {
-  return new Date(dateStr) < new Date(Date.now() + 24 * 60 * 60 * 1000);
+function isWithinHours(dateStr, hours) {
+  return new Date(dateStr) < new Date(Date.now() + hours * 60 * 60 * 1000);
 }
 
 // Parse agenda from event description
@@ -220,7 +220,9 @@ export default function UpcomingMeetings({ studentName }) {
 {meetings.map(meeting => {
   const start = new Date(meeting.start);
   const end = new Date(meeting.end);
-  const within24 = isWithin24Hours(meeting.start);
+  // Reschedule requires 24h notice; cancel only requires 2h notice.
+  const within24 = isWithinHours(meeting.start, 24);
+  const within2 = isWithinHours(meeting.start, 2);
   const isRescheduling = reschedulingId === meeting.id;
   const isCancelling = cancellingId === meeting.id;
   
@@ -250,14 +252,16 @@ export default function UpcomingMeetings({ studentName }) {
 
       {/* Action Buttons (Stacked Vertically) */}
       <div style={styles.actionGroup}>
-        {within24 ? (
+        {within2 ? (
           <span style={styles.lockedNote}>Changes locked</span>
         ) : (
           <>
-            <button className="action-btn" style={styles.actionBtn}
-              onClick={() => setReschedulingId(isRescheduling ? null : meeting.id)}>
-              {isRescheduling ? 'Close ✕' : 'Reschedule'}
-            </button>
+            {!within24 && (
+              <button className="action-btn" style={styles.actionBtn}
+                onClick={() => setReschedulingId(isRescheduling ? null : meeting.id)}>
+                {isRescheduling ? 'Close ✕' : 'Reschedule'}
+              </button>
+            )}
             <button className="action-btn" style={styles.actionBtn}
               onClick={() => setCancellingId(isCancelling ? null : meeting.id)}>
               Cancel
