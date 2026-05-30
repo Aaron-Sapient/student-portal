@@ -12,6 +12,29 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* ── Portal redesign tokens (app/(portal)/*) ──────────────────────────────
+   Scoped by usage, not by selector: only the new portal surfaces reference
+   these. /dashboard and other legacy pages are untouched. */
+@theme {
+  --color-terracotta: #c6613f;
+  --color-terracotta-deep: #a8492a;
+  --color-terracotta-soft: #e3a288;
+  --color-cream: #faf9f4;
+  --color-cream-dim: #f3f1e8;
+  --color-sand: #ece6d8;
+  --color-ink: #2c2620;
+  --color-ink-soft: #6f665a;
+  --color-ink-faint: #a89e8f;
+  --color-moss: #5e6b4f;
+  --color-clay-50: #fbf3ee;
+
+  --font-display: var(--font-fraunces);
+  --font-body: var(--font-hanken);
+
+  --shadow-card: 0 1px 2px rgba(44, 38, 32, 0.04), 0 8px 24px -12px rgba(44, 38, 32, 0.18);
+  --shadow-lift: 0 2px 4px rgba(44, 38, 32, 0.06), 0 18px 40px -16px rgba(168, 73, 42, 0.28);
+}
+
 html {
   scroll-behavior: smooth;
 }
@@ -20,4 +43,26 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* ── Portal load orchestration (single staggered reveal, no layout shift) ── */
+@keyframes portalRise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: none; }
+}
+.portal-rise { animation: portalRise 0.62s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+
+@keyframes portalShimmer {
+  0%   { background-position: -160% 0; }
+  100% { background-position: 160% 0; }
+}
+.portal-skeleton {
+  background: linear-gradient(90deg, var(--color-sand) 25%, var(--color-cream-dim) 50%, var(--color-sand) 75%);
+  background-size: 200% 100%;
+  animation: portalShimmer 1.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .portal-rise { animation: none; }
+  .portal-skeleton { animation: none; }
 }
