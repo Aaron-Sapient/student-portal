@@ -412,7 +412,9 @@ function BookingPageInner() {
 
                 // While the month's availability is loading we can't yet tell which weekday-bookable
                 // days are actually free, so render none as available rather than flashing false orange.
-                const baseDisabled = isPast || notBookable || tooSoon || overflow;
+                // Overflow (adjacent-month) days stay clickable when free — June 1–5 must be bookable
+                // from the May grid. Past leading days are already excluded by isPast/tooSoon.
+                const baseDisabled = isPast || notBookable || tooSoon;
                 const hasFreeSlot = availableDates.has(dateStr);
                 const isAvailable = !baseDisabled && !loadingMonth && hasFreeSlot;
                 const disabled = !isAvailable;

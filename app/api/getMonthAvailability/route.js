@@ -41,6 +41,13 @@ export async function GET(request) {
   );
   const monthEnd = monthStart.endOf('month');
 
+  // The booking grid renders trailing/leading days from adjacent months (e.g. June 1–5
+  // shown in the May view), so compute availability across the whole visible grid —
+  // the Sunday on/before the 1st through the Saturday on/after the last day. Luxon
+  // weekdays are Mon=1…Sun=7; the calendar week starts on Sunday.
+  const gridStart = monthStart.minus({ days: monthStart.weekday % 7 });
+  const gridEnd = monthEnd.plus({ days: (6 - monthEnd.weekday + 7) % 7 });
+
   const now = DateTime.now().setZone(zone);
   const earliestAllowed = now.plus({ days: 1 });
 
@@ -55,8 +62,8 @@ export async function GET(request) {
     const [eventsRes, blocks] = await Promise.all([
       calendar.events.list({
         calendarId: instructor.calendarId,
-        timeMin: monthStart.startOf('day').toISO(),
-        timeMax: monthEnd.endOf('day').toISO(),
+        timeMin: gridStart.startOf('day').toISO(),
+        timeMax: gridEnd.endOf('day').toISO(),
         singleEvents: true,
         orderBy: 'startTime',
       }),
@@ -71,8 +78,8 @@ export async function GET(request) {
       }));
 
     const availableDates = [];
-    let cursor = monthStart;
-    while (cursor <= monthEnd) {
+    let cursor = gridStart;
+    while (cursor <= gridEnd) {
       const dateStr = cursor.toFormat('yyyy-LL-dd');
       const hours = instructor.hoursByWeekday[cursor.weekday];
 
