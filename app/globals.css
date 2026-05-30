@@ -10,6 +10,9 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  /* inline so the next/font runtime var resolves at the element, not :root */
+  --font-display: var(--font-fraunces);
+  --font-body: var(--font-hanken);
 }
 
 /* ── Portal redesign tokens (app/(portal)/*) ──────────────────────────────
@@ -27,9 +30,6 @@
   --color-ink-faint: #a89e8f;
   --color-moss: #5e6b4f;
   --color-clay-50: #fbf3ee;
-
-  --font-display: var(--font-fraunces);
-  --font-body: var(--font-hanken);
 
   --shadow-card: 0 1px 2px rgba(44, 38, 32, 0.04), 0 8px 24px -12px rgba(44, 38, 32, 0.18);
   --shadow-lift: 0 2px 4px rgba(44, 38, 32, 0.06), 0 18px 40px -16px rgba(168, 73, 42, 0.28);

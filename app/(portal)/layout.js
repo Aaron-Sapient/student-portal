@@ -1,5 +1,6 @@
 import { Fraunces, Hanken_Grotesk } from 'next/font/google';
 import PortalTabBar from './PortalTabBar';
+import PortalDataProvider from './PortalDataContext';
 
 // Display: characterful optical serif. Body/UI: clean, friendly grotesque.
 const fraunces = Fraunces({
@@ -43,14 +44,16 @@ export default function PortalLayout({ children }) {
         }}
       />
 
-      {/* Desktop top nav lives inside the tab bar component; on mobile it
-          renders the thumb-reachable bottom bar instead. */}
-      <PortalTabBar />
+      <PortalDataProvider>
+        {/* Desktop top nav lives inside the tab bar component; on mobile it
+            renders the thumb-reachable bottom bar instead. */}
+        <PortalTabBar />
 
-      {/* Content column. Bottom padding clears the mobile tab bar. */}
-      <main className="relative z-10 mx-auto w-full max-w-2xl px-5 pb-28 pt-6 sm:px-7 md:pb-16 md:pt-10">
-        {children}
-      </main>
+        {/* Content column. Bottom padding clears the mobile tab bar. */}
+        <main className="relative z-10 mx-auto w-full max-w-2xl px-5 pb-28 pt-6 sm:px-7 md:pb-16 md:pt-10">
+          {children}
+        </main>
+      </PortalDataProvider>
     </div>
   );
 }
