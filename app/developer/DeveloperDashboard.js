@@ -69,25 +69,53 @@ function toLocalInputValue(iso) {
 
 function BlocksSection({ blocks, onAdd, onDelete }) {
   const [instructor, setInstructor] = useState('aaron');
+  const [mode, setMode] = useState('full'); // 'full' = whole day, 'times' = a time window
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
     if (!startDate) return;
+    if (mode === 'times') {
+      if (!startTime || !endTime) { alert('Pick a start and end time, or switch to “Full day”.'); return; }
+      if (endTime <= startTime) { alert('End time must be after start time.'); return; }
+    }
     setSubmitting(true);
-    await onAdd({ instructor, startDate, endDate: endDate || startDate, reason });
+    await onAdd({
+      instructor,
+      startDate,
+      endDate: endDate || startDate,
+      reason,
+      startTime: mode === 'times' ? startTime : '',
+      endTime: mode === 'times' ? endTime : '',
+    });
     setStartDate('');
     setEndDate('');
+    setStartTime('');
+    setEndTime('');
     setReason('');
     setSubmitting(false);
   };
 
   return (
     <section style={CARD}>
-      <h2 style={H2}>Block off dates</h2>
+      <h2 style={H2}>Block off availability</h2>
+      <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.75rem' }}>
+        {[['full', 'Full day'], ['times', 'Specific times']].map(([val, label]) => (
+          <button
+            key={val}
+            type="button"
+            onClick={() => setMode(val)}
+            style={mode === val ? { ...BTN_DARK, padding: '6px 14px' } : { ...BTN_GHOST, padding: '6px 14px' }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       <form onSubmit={submit} style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem' }}>
         <select value={instructor} onChange={e => setInstructor(e.target.value)} style={INPUT}>
           <option value="aaron">Aaron</option>
@@ -96,6 +124,13 @@ function BlocksSection({ blocks, onAdd, onDelete }) {
         <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} required style={INPUT} />
         <span style={{ fontSize: '13px', color: '#666' }}>to</span>
         <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} style={INPUT} placeholder="(same)" />
+        {mode === 'times' && (
+          <>
+            <input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} required style={INPUT} />
+            <span style={{ fontSize: '13px', color: '#666' }}>–</span>
+            <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} required style={INPUT} />
+          </>
+        )}
         <input type="text" value={reason} onChange={e => setReason(e.target.value)} placeholder="Reason (optional)" style={{ ...INPUT, flex: 1, minWidth: 180 }} />
         <button type="submit" disabled={submitting} style={BTN_DARK}>
           {submitting ? 'Adding…' : 'Add block'}
@@ -120,6 +155,9 @@ function BlocksSection({ blocks, onAdd, onDelete }) {
                 <td style={{ padding: '8px 4px', textTransform: 'capitalize' }}>{b.instructor}</td>
                 <td style={{ padding: '8px 4px' }}>
                   {b.startDate}{b.endDate && b.endDate !== b.startDate ? ` → ${b.endDate}` : ''}
+                  {b.startTime && b.endTime
+                    ? <span style={{ color: '#666' }}>{`  ·  ${b.startTime}–${b.endTime}`}</span>
+                    : <span style={{ color: '#999' }}>{'  ·  all day'}</span>}
                 </td>
                 <td style={{ padding: '8px 4px', color: '#666' }}>{b.reason || '—'}</td>
                 <td style={{ padding: '8px 4px', textAlign: 'right' }}>

@@ -2,7 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
-import { listBlocks, isDateBlocked } from '@/lib/blocks';
+import { listBlocks, isDateBlocked, blockedWindowsForDate } from '@/lib/blocks';
 
 function getServiceAuth() {
   return new google.auth.GoogleAuth({
@@ -109,6 +109,11 @@ export async function GET(request) {
         start: DateTime.fromISO(e.start.dateTime || e.start.date),
         end: DateTime.fromISO(e.end.dateTime || e.end.date),
       }));
+
+    // Merge any partial-time blocks for this date so their windows filter out slots.
+    for (const slug of blockSlugs) {
+      busyWindows.push(...blockedWindowsForDate(blocks, slug, dateStr));
+    }
 
     const candidates = generateSlots(dateStr, duration, instructor);
     const available = candidates.filter(slot => {
