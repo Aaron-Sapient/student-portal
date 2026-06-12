@@ -2,7 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
-import { listBlocks, isDateBlocked } from '@/lib/blocks';
+import { listBlocks, isDateBlocked, blockedWindowsForDate } from '@/lib/blocks';
 
 function getServiceAuth() {
   return new google.auth.GoogleAuth({
@@ -88,6 +88,12 @@ export async function GET(request) {
         cursor.endOf('day') >= earliestAllowed &&
         !blockSlugs.some(slug => isDateBlocked(blocks, slug, dateStr))
       ) {
+        // Partial-time blocks apply per-day, so fold them into this day's busy set.
+        const dayBusy = [...busyWindows];
+        for (const slug of blockSlugs) {
+          dayBusy.push(...blockedWindowsForDate(blocks, slug, dateStr));
+        }
+
         let pointer = cursor.set({ hour: hours.start, minute: 0, second: 0, millisecond: 0 });
         const limit = cursor.set({ hour: hours.end, minute: 0, second: 0, millisecond: 0 });
 
@@ -95,7 +101,7 @@ export async function GET(request) {
           const slotEnd = pointer.plus({ minutes: duration });
           if (slotEnd > limit) break;
           if (pointer >= earliestAllowed) {
-            const conflict = busyWindows.some(b => pointer < b.end && slotEnd > b.start);
+            const conflict = dayBusy.some(b => pointer < b.end && slotEnd > b.start);
             if (!conflict) {
               availableDates.push(dateStr);
               break;

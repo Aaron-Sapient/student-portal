@@ -31,12 +31,18 @@ export async function POST(request) {
   if (!gate.ok) return gate.response;
 
   try {
-    const { instructor, startDate, endDate, reason } = await request.json();
+    const { instructor, startDate, endDate, reason, startTime, endTime } = await request.json();
     if (!instructor || !startDate) {
       return Response.json({ error: 'Missing instructor or startDate' }, { status: 400 });
     }
+    if ((startTime && !endTime) || (!startTime && endTime)) {
+      return Response.json({ error: 'A time block needs both a start and end time' }, { status: 400 });
+    }
+    if (startTime && endTime && endTime <= startTime) {
+      return Response.json({ error: 'End time must be after start time' }, { status: 400 });
+    }
     const sheets = google.sheets({ version: 'v4', auth: getServiceAuth() });
-    await addBlock(sheets, { instructor, startDate, endDate, reason });
+    await addBlock(sheets, { instructor, startDate, endDate, reason, startTime, endTime });
     return Response.json({ success: true });
   } catch (err) {
     console.error('blocks POST error:', err);
