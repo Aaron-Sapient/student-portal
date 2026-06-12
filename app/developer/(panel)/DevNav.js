@@ -17,12 +17,12 @@ const DEV_TABS = [
   { href: '/developer/scoring', label: 'Scoring', sym: 'tune' },
 ];
 
-function DesktopRail() {
+function DesktopRail({ tabs }) {
   const pathname = usePathname() || '';
   const navRef = useRef(null);
   const tabRefs = useRef({});
   const [lens, setLens] = useState(null);
-  const activeHref = DEV_TABS.find((t) => isActive(pathname, t.href))?.href;
+  const activeHref = tabs.find((t) => isActive(pathname, t.href))?.href;
 
   useLayoutEffect(() => {
     const nav = navRef.current;
@@ -87,7 +87,7 @@ function DesktopRail() {
         )}
 
         <nav ref={navRef} className="relative z-[2] flex w-full flex-col items-stretch gap-1 p-1.5">
-          {DEV_TABS.map(({ href, label, sym }) => {
+          {tabs.map(({ href, label, sym }) => {
             const active = isActive(pathname, href);
             return (
               <Link
@@ -118,13 +118,14 @@ function DesktopRail() {
   );
 }
 
-export default function DevNav() {
+// `tabs` defaults to the full /developer set; /dev passes its own two-tab list.
+export default function DevNav({ tabs = DEV_TABS }) {
   return (
     <>
-      <DesktopRail />
+      <DesktopRail tabs={tabs} />
       {/* Phone: the standard bottom glass dock. */}
       <div className="md:hidden">
-        <TabDock tabs={DEV_TABS} />
+        <TabDock tabs={tabs} />
       </div>
     </>
   );

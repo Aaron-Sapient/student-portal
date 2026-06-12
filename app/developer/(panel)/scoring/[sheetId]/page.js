@@ -441,9 +441,11 @@ export default function StudentScorePage() {
   };
 
   // Back to wherever this page was opened from — the Scoring tab when under
-  // /developer/scoring/<id>, the simplified list when under /dev/<id>.
+  // /developer/scoring/<id>, the Students tab when under /dev/students/<id>.
   const pathname = usePathname() || '';
   const backHref = pathname.slice(0, pathname.lastIndexOf('/')) || '/developer/scoring';
+  const backSeg = backHref.split('/').pop() || 'scoring';
+  const backLabel = backSeg.charAt(0).toUpperCase() + backSeg.slice(1);
 
   const back = (
     <Link
@@ -451,7 +453,7 @@ export default function StudentScorePage() {
       className="mb-4 inline-flex items-center gap-1 text-[13px] font-semibold text-ink-soft transition-opacity active:opacity-70"
     >
       <ChevronLeft className="h-4 w-4" strokeWidth={2.2} />
-      Scoring
+      {backLabel}
     </Link>
   );
 

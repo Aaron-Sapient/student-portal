@@ -1,5 +1,6 @@
-import ScoringTab from '@/app/developer/(panel)/scoring/ScoringTab';
+import { redirect } from 'next/navigation';
 
-export default function DevScoringPage() {
-  return <ScoringTab />;
+// /dev → the Scoring tab (the layout has already gated by ADMIN_EMAILS).
+export default function DevIndexPage() {
+  redirect('/dev/scoring');
 }
