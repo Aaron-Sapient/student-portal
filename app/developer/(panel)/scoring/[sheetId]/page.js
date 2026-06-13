@@ -6,7 +6,7 @@ import { useParams, usePathname } from 'next/navigation';
 import { DateTime } from 'luxon';
 import { ChevronLeft } from 'lucide-react';
 import { Halo } from '@/app/(portal)/neu';
-import { curveScore, gradeFromClass } from '@/lib/scores';
+import { curveScore, gradeFromClass, PIVOT } from '@/lib/scores';
 import { useDevData } from '../../DevDataContext';
 import {
   Badge,
@@ -86,7 +86,7 @@ function ScoreChart({ sessions, checkins }) {
   const ciStep = Math.max(1, Math.ceil(visCheckins.length / 8));
   const gridLines = [
     { v: 100, dash: '', label: '100' },
-    { v: 70, dash: '4 4', label: '70 avg' },
+    { v: PIVOT, dash: '4 4', label: `${PIVOT} avg` },
     { v: 40, dash: '', label: '40' },
   ];
 
