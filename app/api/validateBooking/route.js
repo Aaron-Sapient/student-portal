@@ -86,6 +86,12 @@ export async function GET(request) {
     const decision = studentRow[COLUMN_INDEX[instructor.slug]] || null;
     const nonBookable = NON_BOOKABLE_VALUE[instructor.slug];
 
+    // 'pending' = checked in, awaiting Ryan's approval. Not bookable until he
+    // grants a token (which flips AZ to '15min'/'30min').
+    if (decision === 'pending') {
+      return Response.json({ allowed: false, reason: 'pending' });
+    }
+
     if (!decision || decision === 'no' || decision === nonBookable) {
       return Response.json({
         allowed: false,

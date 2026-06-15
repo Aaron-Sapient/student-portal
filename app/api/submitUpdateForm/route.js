@@ -4,6 +4,8 @@ import { DateTime } from 'luxon';
 import Anthropic from '@anthropic-ai/sdk';
 import { triggerReportGeneration } from '@/lib/generateReport';
 import { listBlocks, isDateBlocked } from '@/lib/blocks';
+import { makeApprovalToken } from '@/lib/checkinApproval';
+import { sendRyanMeetingRequestEmail } from '@/lib/checkinEmails';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -194,211 +196,200 @@ export async function POST(request) {
       ? detectGradeDrops(mostRecent.snapshot, currentSnapshot)
       : [];
 
-    // ── 5b. Deterministic overrides (skip Claude entirely when they apply):
-    //   • Block override — Ryan unavailable today → written.
-    //   • Student explicitly requested "Written report" → written.
-    //   • VIP student requested "30-min Zoom" → honor 30min, no judgment.
-    // Otherwise default to 15min (Ryan's healthy baseline) and let Claude
-    // decide whether to escalate to 30min.
-    let decision = '15min';
+    // ── 5b. Summer-timeline context ─────────────────────────────────────────
+    // The student's active 🏆 Comps & Projects (deadlines / % complete) are the
+    // in-sheet mirror of their summer timeline, so Claude can weigh urgency
+    // against where their projects actually stand. Best-effort: eval proceeds
+    // without it if the read fails.
+    let timelineText = 'No active projects on record.';
+    let behindSchedule = [];
+    try {
+      if (studentSheetId) {
+        const projRes = await sheets.spreadsheets.values.get({
+          spreadsheetId: studentSheetId,
+          range: '🏆 Comps & Projects!E:L',
+          valueRenderOption: 'UNFORMATTED_VALUE',
+        });
+        const fmtDate = (raw) => {
+          if (raw === '' || raw == null) return '';
+          const d = typeof raw === 'number' ? new Date((raw - 25569) * 86400 * 1000) : new Date(raw);
+          return isNaN(d) ? String(raw) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        };
+        const pct = (raw) => {
+          if (raw === '' || raw == null) return null;
+          const n = typeof raw === 'number' ? raw : parseFloat(String(raw).replace('%', ''));
+          if (!Number.isFinite(n)) return null;
+          return n > 0 && n <= 1 ? Math.round(n * 100) : Math.round(n);
+        };
+        const active = (projRes.data.values || [])
+          .slice(1)
+          .filter((r) => r[6] === '🟢' || r[6] === '✅')
+          .map((r) => ({ activity: r[0] || '', deadline: fmtDate(r[3]), pct: pct(r[4]), status: r[6] || '' }))
+          .filter((p) => p.activity);
+        if (active.length) {
+          timelineText = active
+            .map((p) => `- ${p.activity}: ${p.pct == null ? '?' : p.pct}% complete${p.deadline ? `, deadline ${p.deadline}` : ''} (${p.status})`)
+            .join('\n');
+          behindSchedule = active.filter((p) => p.pct != null && p.pct < 50 && p.deadline);
+        }
+      }
+    } catch (projErr) {
+      console.error('submitUpdateForm: project context fetch failed', projErr);
+    }
+
+    // ── 6. Urgency evaluation ────────────────────────────────────────────────
+    // Outcome is 'written' (no meeting — generate a report) or 'pending' (a
+    // meeting MAY be warranted → email Ryan to approve/reject). We NO LONGER
+    // auto-grant a booking token; the student cannot book until Ryan grants one.
+    let outcome = 'written';
+    let suggestedLength = '15min';
     let reason = '';
     let skipClaude = false;
 
+    // Block override: Ryan unavailable today → straight to a written report.
     const today = DateTime.now().setZone('America/Los_Angeles').toFormat('yyyy-LL-dd');
     const blocks = await listBlocks(sheets).catch(() => []);
     if (isDateBlocked(blocks, 'ryan', today)) {
-      decision = 'written';
-      reason = 'Ryan is unavailable today — auto-routed to a written report.';
+      outcome = 'written';
+      reason = 'Ryan is unavailable today — routed to a written report.';
       skipClaude = true;
-    } else if (responsePreference === 'Written report') {
-      decision = 'written';
-      reason = 'Student explicitly requested a written report.';
-      skipClaude = true;
-    } else if (responsePreference === '30-min Zoom') {
-      const vipRes = await sheets.spreadsheets.values.get({
-        spreadsheetId: MASTER_SHEET_ID,
-        range: `${MASTER_TAB}!AL${studentRowIndex}`,
-        valueRenderOption: 'UNFORMATTED_VALUE',
-      });
-      const vipFlag = String(vipRes.data.values?.[0]?.[0] || '').trim().toUpperCase();
-      if (vipFlag === 'VIP') {
-        decision = '30min';
-        reason = 'VIP auto-routed to 30min per student request.';
-        skipClaude = true;
-      }
     }
-
-    // ── 6. Call Claude Haiku for routing decision ────────────────────────────
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-    const gradeHistoryText = gradeHistory.length
-      ? gradeHistory.map((h, i) => {
-          const gpa = calculateGPA(h.snapshot);
-          const entries = Object.entries(h.snapshot)
-            .map(([cls, g]) => `${cls}: ${g}`)
-            .join(', ');
-          return `Submission ${i + 1} (${h.timestamp?.split('T')[0] || 'unknown'}): GPA ${gpa ?? 'N/A'} — ${entries}`;
-        }).join('\n')
-      : 'No previous submissions on record.';
-
-const gradeDropText = gradeDrops.length
-  ? gradeDrops.map(d =>
-      `${d.class}: ${d.from} → ${d.to} (${d.drop} point drop${d.isSignificant ? ', SIGNIFICANT' : ''}${d.isDanger ? ', DANGER ZONE (D/F)' : ''})`
-    ).join('\n')
-  : gradeHistory.length === 0
-    ? 'No previous submissions to compare against — evaluate current grades directly.'
-    : 'No grade drops detected since last submission.';
 
     const currentGradesText = Object.entries(currentSnapshot).length
       ? Object.entries(currentSnapshot).map(([cls, g]) => `${cls}: ${g}`).join(', ')
-      : 'No grade data submitted (MS student or summer).';
+      : 'No grade data (summer / MS student).';
 
-    const systemPrompt = `You are a routing assistant for an academic counseling service.
-Your job is to decide which response a student should receive after their weekly check-in with Ryan.
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-RESPONSE TYPES (with target distribution):
-- "15min": A 15-minute phone call. Target ~90% of weeks. This is the healthy default — most students benefit from a quick live check-in regardless of how the week went.
-- "30min": A 30-minute Zoom meeting. Target ~10% of weeks. Reserved for GENUINE urgency only.
+    const systemPrompt = `You decide whether a student's WEEKLY SUMMER check-in genuinely warrants a live meeting with their counselor Ryan.
 
-DEFAULT BIAS — START AT 15min:
-Begin every decision assuming "15min". Only escalate to "30min" if multiple genuine red flags are present at the same time. A quiet week, a blank Questions/Concerns box, all tasks "Not Started", or low engagement signals are NOT reasons to demote or escalate — they still get 15min.
+CONTEXT — IT IS SUMMER. Meetings are AS-NEEDED, not weekly. Most check-ins do NOT need a meeting; a written update is the healthy default. Students are used to a weekly meeting cadence and will over-request out of habit — do not cater to habit. Weigh urgency against where the student's summer projects actually stand (the deadlines and % complete given below).
 
-ESCALATION TO 30min requires GENUINE urgency. Look for these high-weight signals:
-- Grade drop of 1.0+ GPA points in any class (e.g. B to C or worse)
-- Any class currently at D or F
-- GPA below 2.0
-- Questions/Concerns category is "Need to Discuss"
-- Academic self-rating of 1, 2, or 3
-- A complex, multi-part question in the text that genuinely cannot be addressed in 15 minutes
+DEFAULT: meeting = false (written report). Only set meeting = true when there is GENUINE, time-sensitive need that writing cannot resolve, such as:
+- The student explicitly flags "Need to Discuss" AND the concern text describes a real, substantive problem.
+- A very low self-rating (1–3) paired with a concrete stressor in their answers.
+- An active project clearly BEHIND schedule (well under 50% with a deadline coming up) where the student signals they are stuck or off-track.
+- A complex, multi-part question that genuinely cannot be handled in writing.
 
-A SINGLE high-weight signal is NOT sufficient — give 15min. Escalate to 30min only when:
-  (a) at least two of the above co-occur, OR
-  (b) one signal is so severe (e.g., a current F combined with GPA < 2.0, or an explicit crisis described in the question text) that 15 minutes truly cannot cover it.
+Do NOT set meeting = true for: a quiet week, a blank or "None" concern box, a generic "Quick Question", a mid-to-high self-rating (4–10), tasks merely "Not Started", or simply because the student is used to weekly meetings.
 
-DO NOT escalate to 30min for:
-- "Quick Question" category alone
-- Self-rating in the 4–7 range alone
-- A single grade slip without other context
-- A blank or terse Questions/Concerns box (give 15min, do not demote and do not escalate)
+If meeting = true, set suggestedLength: "30min" only for genuinely complex or multi-issue situations; otherwise "15min". (Ryan makes the final call regardless.)
 
-NEVER escalate above the student's requested response type:
-- If the student requested "15-min call", never return "30min".
-- "Written report" requests are handled before you are called — you will never see them.
-
-GPA CONVERSION TABLE (for reference):
-A+/A = 4.0, A- = 3.7, B+ = 3.3, B = 3.0, B- = 2.7
-C+ = 2.3, C = 2.0, C- = 1.7, D+ = 1.3, D = 1.0, D- = 0.7, F = 0.0
-
-Respond with ONLY a JSON object. No explanation, no markdown, no extra text:
-{"decision": "15min"|"30min", "reason": "one sentence explanation"}`;
+Respond with ONLY a JSON object — no markdown, no extra text:
+{"meeting": true|false, "suggestedLength": "15min"|"30min", "reason": "one-sentence justification addressed to Ryan"}`;
 
     const userMessage = `Student: ${studentName}
 
-CURRENT GRADES (this week):
-${currentGradesText}
-Current GPA: ${currentGPA ?? 'N/A'}
-
-GRADE HISTORY (previous submissions):
-${gradeHistoryText}
-
-GRADE CHANGES SINCE LAST SUBMISSION:
-${gradeDropText}
-
-TESTS & DEADLINES THIS WEEK:
-${testsAndDeadlines || 'None reported'}
-
-ACTION ITEMS:
-${actionItemStatuses?.map(({ task, status }) => `- ${task}: ${status}`).join('\n') || 'None reported'}
+WEEK SELF-RATING (how'd the week go, 1-10): ${selfRating}/10
 
 QUESTIONS/CONCERNS:
 Category: ${questionsCategory || 'None'}
 Details: ${questionsText || 'N/A'}
 
-ACADEMIC SELF-RATING: ${selfRating}/10
+TESTS & DEADLINES THEY REPORTED:
+${testsAndDeadlines || 'None reported'}
 
-STUDENT RESPONSE PREFERENCE: ${responsePreference || 'No preference'}`;
+TASK UPDATES:
+${actionItemStatuses?.map(({ task, status }) => `- ${task}: ${status}`).join('\n') || 'None reported'}
+
+SUMMER PROJECT TIMELINE (active Comps & Projects — weigh urgency against these):
+${timelineText}
+
+CURRENT GRADES (usually none in summer): ${currentGradesText}`;
 
     if (!skipClaude) {
-      const aiResponse = await anthropic.messages.create({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 150,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userMessage }],
-      });
-
       try {
+        const aiResponse = await anthropic.messages.create({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 150,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userMessage }],
+        });
         const rawText = aiResponse.content[0]?.text || '{}';
         console.log('AI raw response:', rawText);
-        const cleaned = rawText
-          .replace(/```json/gi, '')
-          .replace(/```/g, '')
-          .trim();
+        const cleaned = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
         const parsed = JSON.parse(cleaned);
-        // Only 15min/30min are valid here — "written" is gated on an explicit
-        // student request and handled before the Claude call.
-        decision = ['15min', '30min'].includes(parsed.decision)
-          ? parsed.decision
-          : '15min';
-        reason = parsed.reason || '';
-      } catch {
-        console.error('Failed to parse AI response, defaulting to 15min');
-        decision = '15min';
-      }
-
-      // Hard cap: never escalate above the student's requested response type.
-      // Tiers: 15min (1) < 30min (2). "Written report" requests never reach
-      // this branch (handled by the skipClaude fast path above).
-      if (responsePreference === '15-min call' && decision === '30min') {
-        reason = `Capped at student's requested 15min (Claude suggested 30min: ${reason || 'no reason'}).`;
-        decision = '15min';
+        outcome = parsed.meeting === true ? 'pending' : 'written';
+        suggestedLength = parsed.suggestedLength === '30min' ? '30min' : '15min';
+        reason = parsed.reason || reason;
+      } catch (aiErr) {
+        // Fail safe: on any model/parse failure, default to a written report
+        // rather than emailing Ryan an unjustified meeting request.
+        console.error('submitUpdateForm: eval failed, defaulting to written', aiErr);
+        outcome = 'written';
+        reason = reason || 'Could not evaluate urgency — defaulted to a written report.';
       }
     }
 
-// ── 7. Write booking decision to 👩‍🎓 All Data col AZ ───────────────────
-await sheets.spreadsheets.values.update({
-  spreadsheetId: MASTER_SHEET_ID,
-  range: `${MASTER_TAB}!AZ${studentRowIndex}`,
-  valueInputOption: 'USER_ENTERED',
-  requestBody: { values: [[decision]] },
-});
+    // AZ value: 'pending' = awaiting Ryan's approval (un-bookable); 'written' =
+    // no meeting. A real booking token ('15min'/'30min') is written ONLY when
+    // Ryan grants, in /api/checkinDecision.
+    const decision = outcome === 'pending' ? 'pending' : 'written';
 
-// ── 8. Write AI reason to CheckinForm col K and decision to col L ────────
-// We renamed this from 'checkinRes' to 'allRowsRes' to avoid the "already defined" error
-const allRowsRes = await sheets.spreadsheets.values.get({
-  spreadsheetId: MASTER_SHEET_ID,
-  range: `${CHECKIN_TAB}!A:L`,
-  valueRenderOption: 'UNFORMATTED_VALUE',
-});
-
-const checkinRows = allRowsRes.data.values || [];
-let lastMatchIndex = -1;
-
-// Find the row we JUST appended for this student
-checkinRows.forEach((r, i) => {
-  if (r[1] === studentName) lastMatchIndex = i;
-});
-
-if (lastMatchIndex > -1) {
-  const sheetRow = lastMatchIndex + 1;
-  await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId: MASTER_SHEET_ID,
-    requestBody: {
+    // ── 7. Write decision to 👩‍🎓 All Data col AZ ────────────────────────────
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: MASTER_SHEET_ID,
+      range: `${MASTER_TAB}!AZ${studentRowIndex}`,
       valueInputOption: 'USER_ENTERED',
-      data: [
-        { range: `${CHECKIN_TAB}!K${sheetRow}`, values: [[reason || '']] },
-        { range: `${CHECKIN_TAB}!L${sheetRow}`, values: [[decision]] },
-      ],
-    },
-  });
-}
+      requestBody: { values: [[decision]] },
+    });
 
-if (decision === 'written') {
-  const start = Date.now();
-  await triggerReportGeneration(studentName, studentSheetId);
-  console.log('Report generation took', Date.now() - start, 'ms');
-}
+    // ── 8. Stamp the just-appended CheckinForm row: K=reason, L=status ────────
+    const allRowsRes = await sheets.spreadsheets.values.get({
+      spreadsheetId: MASTER_SHEET_ID,
+      range: `${CHECKIN_TAB}!A:L`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const checkinRows = allRowsRes.data.values || [];
+    let lastMatchIndex = -1;
+    checkinRows.forEach((r, i) => { if (r[1] === studentName) lastMatchIndex = i; });
+    const checkinRow = lastMatchIndex + 1; // 1-based sheet row of this submission
 
-return Response.json({ success: true, decision, reason });
+    if (lastMatchIndex > -1) {
+      await sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: MASTER_SHEET_ID,
+        requestBody: {
+          valueInputOption: 'USER_ENTERED',
+          data: [
+            { range: `${CHECKIN_TAB}!K${checkinRow}`, values: [[reason || '']] },
+            { range: `${CHECKIN_TAB}!L${checkinRow}`, values: [[decision]] },
+          ],
+        },
+      });
+    }
+
+    // ── 9. Act on the outcome ────────────────────────────────────────────────
+    if (outcome === 'pending' && lastMatchIndex > -1) {
+      // Email Ryan to approve/reject. Signed tokens carry everything the grant
+      // endpoint needs (Ryan clicks from his inbox, with no Clerk session).
+      const tokenBase = { masterRow: studentRowIndex, checkinRow, studentSheetId, studentName };
+      const tokens = {
+        grant15: makeApprovalToken({ ...tokenBase, action: 'grant15' }),
+        grant30: makeApprovalToken({ ...tokenBase, action: 'grant30' }),
+        reject: makeApprovalToken({ ...tokenBase, action: 'reject' }),
+      };
+      const signals = [
+        `Self-rating: ${selfRating}/10`,
+        questionsCategory && questionsCategory !== 'None'
+          ? `Concern (${questionsCategory}): ${questionsText || '—'}`
+          : null,
+        testsAndDeadlines ? `Tests/deadlines: ${testsAndDeadlines}` : null,
+        behindSchedule.length
+          ? `Behind schedule: ${behindSchedule.map((p) => `${p.activity} (${p.pct}%)`).join('; ')}`
+          : null,
+      ];
+      try {
+        await sendRyanMeetingRequestEmail({ studentName, reason, suggestedLength, signals, tokens });
+      } catch (mailErr) {
+        console.error('submitUpdateForm: failed to email Ryan', mailErr);
+      }
+    } else if (outcome === 'written') {
+      const start = Date.now();
+      await triggerReportGeneration(studentName, studentSheetId);
+      console.log('Report generation took', Date.now() - start, 'ms');
+    }
+
+    return Response.json({ success: true, outcome, decision, reason });
 
   } catch (err) {
     console.error('submitUpdateForm error:', err);
