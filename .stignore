@@ -1,0 +1,35 @@
+# Syncthing ignores for the NAS dev-server mirror.
+# House convention: SYNC .git (so devbox-Claude commits round-trip), exclude only
+# locks, platform junk, per-arch/build artifacts, and secrets.
+# A matching copy of this file lives on the NAS peer (per-device, not auto-shared).
+
+# --- AI / editor / OS junk ---
+.claude
+.DS_Store
+**/.DS_Store
+**/.vscode
+**/.idea
+**/*.swp
+
+# --- git internals that must not sync (cause conflicts) ---
+**/.git/index.lock
+**/.git/HEAD.lock
+**/.git/**/*.lock
+**/.git/objects/tmp_*
+**/.git/refs/heads/.tmp_*
+**/.git/COMMIT_EDITMSG
+
+# --- per-arch / build artifacts (Mac arm64 vs NAS x86_64; rebuilt natively on NAS) ---
+**/node_modules
+.next
+out
+build
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+
+# --- secrets: NEVER sync to peers. Hand-placed directly on the NAS instead. ---
+.env
+.env.*
+.clerk
+Google Apps Scripts

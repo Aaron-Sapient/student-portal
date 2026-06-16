@@ -52,3 +52,23 @@ next-env.d.ts
 
 # Local task notes / plans (Aaron's working files, not part of the app)
 /tasks/
+
+# NAS scoring run logs (regenerated artifacts, not app code)
+scripts/nas/logs/
+
+# parent credential exports — never commit
+scripts/out/
+
+# scratch design references & CLI temp state (not app code)
+/college tab design inspiration/
+supabase/.temp/
+
+# internal video scripts / onboarding talking points (Aaron's working files)
+/senior-essay-onboarding-script.md
+/senior-essay-onboarding-deck.html
+
+# working/planning docs — kept local (tasks.md syncs via Syncthing); superseded
+# specs & the unratified migration draft don't belong in the app repo
+/tasks.md
+/senior_tab.md
+/supabase-migration.md
