@@ -22,7 +22,7 @@ export default async function ParentLayout({ children }) {
   const email = sessionEmail(sessionClaims);
   const identity = await resolveIdentity(getGoogleSheetsClient(email), email);
   if (identity.role !== 'parent' || !identity.children.length) {
-    redirect(identity.role === 'student' ? '/home' : '/dashboard');
+    redirect('/dashboard');
   }
 
   // Only serializable, non-sensitive child fields cross to the client.

@@ -321,7 +321,7 @@ export default function BookingFlow({ slug }) {
 
         <button
           type="button"
-          onClick={() => router.push('/home')}
+          onClick={() => router.push('/dashboard')}
           className="mt-6 w-full rounded-full bg-ink px-5 py-3 text-sm font-semibold text-paper transition active:scale-[0.98]"
         >
           Done

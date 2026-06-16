@@ -17,7 +17,7 @@
 
 /* ── Portal redesign tokens (app/(portal)/*) ──────────────────────────────
    Scoped by usage, not by selector: only the new portal surfaces reference
-   these. /dashboard and other legacy pages are untouched. */
+   these. Non-portal routes (booking, sign-in, etc.) are untouched. */
 @theme {
   --color-terracotta: #c6613f;
   --color-terracotta-deep: #a8492a;
@@ -42,8 +42,8 @@
 }
 
 /* ── Dark mode ────────────────────────────────────────────────────────────
-   Scoped to `.portal-root` so only the redesigned portal flips; legacy
-   /dashboard keeps its own light styling. Follows the OS appearance setting
+   Scoped to `.portal-root` so only the redesigned portal flips; non-portal
+   pages keep their own light styling. Follows the OS appearance setting
    (desktop + mobile). Because every portal surface references these tokens via
    var(), remapping the palette here re-themes the whole portal — no per-element
    `dark:` classes needed. `--color-paper` deliberately stays light. */

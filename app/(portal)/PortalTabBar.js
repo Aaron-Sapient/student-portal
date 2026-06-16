@@ -8,7 +8,7 @@ import TabDock from '@/components/portal/TabDock';
 // Student tab list + gating/alert logic. The dock mechanics (glass lens,
 // viewport handling) live in components/portal/TabDock.
 const BASE_TABS = [
-  { href: '/home', label: 'Home', sym: 'home' },
+  { href: '/dashboard', label: 'Home', sym: 'home' },
   { href: '/check-ins', label: 'Check-Ins', sym: 'fact_check', alert: 'checkin' },
   { href: '/meetings', label: 'Meetings', sym: 'calendar_month', alert: 'book' },
   { href: '/files', label: 'Files', sym: 'folder_open' },
