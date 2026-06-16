@@ -1,0 +1,254 @@
+/* ============================================================================
+   md-editor.css — styles for the project-agnostic live-markdown editor.
+   AUTO-GENERATED CONSUMERS: this file is the source of truth. See README.md.
+
+   THEME: every visual value resolves to a --mde-* custom property. The defaults
+   below reproduce Helthy HQ's exact palette, so dropping the editor into any
+   page looks "Helthy" out of the box. A host overrides the look by re-declaring
+   any --mde-* var on :root (or on an ancestor of BOTH .md-surface AND the
+   body-mounted .at-menu / .grid-pop popovers).
+
+   People accent colors are NOT in CSS — each person in opts.people may carry
+   { accent, accentBg, accentBorder } and the JS sets per-chip --mde-chip-accent*.
+   ============================================================================ */
+
+:root {
+  --mde-green:       #386840;
+  --mde-green-deep:  #2a5232;
+  --mde-green-soft:  #5a9a6f;
+  --mde-leaf:        #F2FCE2;
+  --mde-leaf-line:   #dcedc8;
+  --mde-paper:       #fbfaf7;
+  --mde-card:        #ffffff;
+  --mde-ink:         #25291f;
+  --mde-ink-soft:    #6b7263;
+  --mde-ink-faint:   #9aa191;
+  --mde-hairline:    #e6e4dc;
+  --mde-amber:       #a87b2d;
+  --mde-amber-soft:  #f7efdd;
+  --mde-serif: "Fraunces", Georgia, serif;
+  --mde-sans:  "Instrument Sans", -apple-system, "Helvetica Neue", sans-serif;
+  --mde-mono:  "Fragment Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* warm clay / neumorphic surface */
+  --mde-clay-card:    #fcfbf7;
+  --mde-clay-dark:    rgba(123, 112, 88, .22);
+  --mde-clay-light:   rgba(255, 255, 255, .95);
+  --mde-clay-raise:   6px 6px 15px var(--mde-clay-dark), -6px -6px 15px var(--mde-clay-light);
+  --mde-clay-raise-sm:3px 3px 8px var(--mde-clay-dark), -3px -3px 8px var(--mde-clay-light);
+  --mde-clay-sink:    inset 3px 3px 7px var(--mde-clay-dark), inset -3px -3px 7px var(--mde-clay-light);
+  --mde-clay-sink-sm: inset 2px 2px 5px var(--mde-clay-dark), inset -2px -2px 5px var(--mde-clay-light);
+  --mde-clay-ease:    cubic-bezier(.22, .7, .3, 1);
+
+  --mde-cal-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3.5' y='5' width='17' height='16' rx='2.5'/%3E%3Cpath d='M3.5 9.5h17M8 3.5v3M16 3.5v3'/%3E%3C/svg%3E");
+}
+
+  /* the editing surface */
+  .md-surface {
+    outline: none; font-family: var(--mde-sans); font-size: 16.5px; line-height: 1.7;
+    color: var(--mde-ink); caret-color: var(--mde-green); -webkit-font-smoothing: antialiased;
+    word-break: break-word;
+  }
+  .md-surface .ln { white-space: pre-wrap; min-height: 1.7em; }
+  .md-surface .ln.blank { min-height: 1.7em; }
+
+  /* headings */
+  .md-surface .ln.h { font-family: var(--mde-serif); font-weight: 600; color: var(--mde-green-deep);
+    letter-spacing: -.01em; line-height: 1.3; }
+  .md-surface .ln.h1 { font-size: 30px; margin: .5em 0 .15em; }
+  .md-surface .ln.h2 { font-size: 24px; margin: .5em 0 .15em; }
+  .md-surface .ln.h3 { font-size: 20px; margin: .4em 0 .1em; }
+  .md-surface .ln.h4 { font-size: 17.5px; margin: .4em 0 .1em; }
+  .md-surface .ln.h5, .md-surface .ln.h6 { font-size: 16px; color: var(--mde-ink-soft); margin: .3em 0 .1em; }
+
+  /* list lines */
+  .md-surface .ln.li { padding-left: 1.5em; position: relative; }
+  .md-surface .ln.li::before { content: "•"; position: absolute; left: .5em;
+    color: var(--mde-green-soft); font-weight: 700; }
+  .md-surface .ln.li.active::before { content: none; }
+  .md-surface .ln.ol { padding-left: 1.7em; }
+  .md-surface .ln.ol::before { content: none; }
+
+  /* blockquote */
+  .md-surface .ln.bq { padding-left: 1.1em; position: relative; color: var(--mde-ink-soft); font-style: italic; }
+  .md-surface .ln.bq::before { content: ""; position: absolute; left: 0; top: .15em; bottom: .15em;
+    width: 3px; border-radius: 2px; background: var(--mde-leaf-line); }
+
+  /* horizontal rule */
+  .md-surface .ln.hr { text-align: center; }
+  .md-surface .ln.hr::before { content: ""; display: inline-block; width: 60%; vertical-align: middle;
+    border-top: 1px solid var(--mde-hairline); }
+  .md-surface .ln.hr.active::before { content: none; }
+  .md-surface .ln.hr > .seg { display: none; color: var(--mde-ink-faint); }
+  .md-surface .ln.hr.active > .seg { display: inline; }
+
+  /* inline tokens */
+  .md-surface .tok.b { font-weight: 700; color: var(--mde-ink); }
+  .md-surface .tok.em { font-style: italic; }
+  .md-surface .tok.del { text-decoration: line-through; text-decoration-color: var(--mde-ink-faint); color: var(--mde-ink-soft); }
+  .md-surface .tok.code { font-family: var(--mde-mono); font-size: .88em;
+    background: var(--mde-leaf); border: 1px solid var(--mde-leaf-line); border-radius: 5px; padding: .05em .35em; }
+  .md-surface .tok.a > .ltext { color: var(--mde-green); text-decoration: underline; text-decoration-color: var(--mde-leaf-line);
+    text-underline-offset: 2px; cursor: pointer; }
+  .md-surface .tok.a > .url, .md-surface .tok.a.on > .ltext { color: var(--mde-green-soft); }
+
+  /* markers — hidden until their span/line is active */
+  .md-surface .mk { color: var(--mde-ink-faint); font-weight: 400; }
+  .md-surface .blockmk { display: none; }
+  .md-surface .ln.active > .blockmk { display: inline; color: var(--mde-ink-faint); }
+  .md-surface .ln.ol > .blockmk { display: inline; color: var(--mde-green-soft); font-family: var(--mde-mono); font-size: .85em; }
+  .md-surface .tok > .mk, .md-surface .tok.a > .url { display: none; }
+  .md-surface .tok.on > .mk, .md-surface .tok.on > .url { display: inline; }
+
+  /* ---------- %%…%% comments (ignored by render; round-trip as plain text) ---------- */
+  /* inline %%…%%: hidden until the caret is on the same line, then shown dim */
+  .md-surface .tok.cm { display: none; }
+  .md-surface .ln.active .tok.cm { display: inline; color: var(--mde-ink-faint); font-style: italic; opacity: .72; }
+  .md-surface .ln.active .tok.cm > .mk { display: inline; }
+  /* a line that is ONLY a %% comment collapses to nothing unless the caret is on it */
+  .md-surface .ln.meta { min-height: 0; line-height: 0; overflow: hidden; opacity: 0; margin: 0; }
+  .md-surface .ln.meta.active { min-height: 1.7em; line-height: 1.7; overflow: visible; opacity: 1; }
+  .md-surface .ln.meta.active .tok.cm, .md-surface .ln.meta.active .tok.cm > .mk { display: inline; }
+
+  /* ---------- smart chips (people / dates) ---------- */
+  .md-surface .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: var(--mde-sans); font-size: .9em; font-weight: 500; line-height: 1.3;
+    color: var(--mde-green-deep); background: var(--mde-leaf); border: 1px solid var(--mde-leaf-line);
+    border-radius: 7px; padding: 0 8px; margin: 0 1px; white-space: nowrap;
+    cursor: default; user-select: none; vertical-align: middle;
+    transition: box-shadow .15s, background .15s;
+  }
+  .md-surface .chip:hover { background: color-mix(in srgb, var(--mde-leaf) 70%, var(--mde-green-soft)); }
+  .md-surface .chip-person::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%; flex: none;
+    background: var(--mde-chip-accent, var(--mde-green-soft));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--mde-chip-accent, var(--mde-green-soft)) 30%, transparent);
+  }
+  /* a person with an accent (opts.people[].accent) recolors the whole pill; the
+     dot above already reads --mde-chip-accent so it follows automatically. */
+  .md-surface .chip-person.chip-accent {
+    color: var(--mde-chip-accent);
+    background: var(--mde-chip-accent-bg, color-mix(in srgb, var(--mde-chip-accent) 14%, var(--mde-card)));
+    border-color: var(--mde-chip-accent-border, color-mix(in srgb, var(--mde-chip-accent) 30%, var(--mde-leaf-line)));
+  }
+  .md-surface .chip-date::before {
+    content: ""; width: 12px; height: 12px; flex: none; opacity: .65;
+    background: currentColor; -webkit-mask: var(--mde-cal-ico) center/contain no-repeat; mask: var(--mde-cal-ico) center/contain no-repeat;
+  }
+
+  /* ---------- @ autocomplete menu ---------- */
+  .at-menu {
+    position: fixed; z-index: 300; min-width: 286px; max-width: 360px;
+    background: var(--mde-clay-card); border: 1px solid var(--mde-hairline); border-radius: 14px;
+    box-shadow: 0 14px 38px rgba(42,82,50,.17), 0 3px 10px rgba(0,0,0,.06);
+    padding: 6px; max-height: 332px; overflow-y: auto; display: none;
+  }
+  .at-menu.open { display: block; animation: atIn .14s var(--mde-clay-ease) both; }
+  @keyframes atIn { from { opacity: 0; transform: translateY(-5px); } }
+  .at-group { font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--mde-ink-faint); padding: 9px 10px 4px; }
+  .at-item { display: flex; align-items: center; gap: 11px; padding: 7px 10px; border-radius: 10px; cursor: pointer; }
+  .at-item.sel { background: var(--mde-leaf); }
+  .at-avatar { width: 30px; height: 30px; border-radius: 50%; flex: none; display: grid; place-items: center; font-size: 12px; font-weight: 700; color: #fff; background: var(--mde-green-soft); }
+  .at-ico { width: 30px; height: 30px; flex: none; display: grid; place-items: center; color: var(--mde-ink-soft); border-radius: 9px; background: var(--mde-paper); box-shadow: var(--mde-clay-sink-sm); }
+  .at-ico svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .at-tw { min-width: 0; flex: 1; }
+  .at-lab { font-size: 14px; font-weight: 500; color: var(--mde-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .at-sub { font-size: 12px; color: var(--mde-ink-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .at-empty { padding: 14px 12px; font-size: 13px; color: var(--mde-ink-faint); text-align: center; }
+
+  /* ---------- table grid picker ---------- */
+  .grid-pop {
+    position: fixed; z-index: 310; background: var(--mde-clay-card); border: 1px solid var(--mde-hairline);
+    border-radius: 16px; box-shadow: 0 14px 38px rgba(42,82,50,.17); padding: 16px; display: none;
+  }
+  .grid-pop.open { display: block; animation: atIn .14s var(--mde-clay-ease) both; }
+  .grid-cells { display: grid; grid-template-columns: repeat(10, 17px); gap: 4px; }
+  .grid-cell { width: 17px; height: 17px; border-radius: 4px; background: var(--mde-paper); box-shadow: var(--mde-clay-sink-sm); transition: background .08s, box-shadow .08s; }
+  .grid-cell.on { background: var(--mde-green-soft); box-shadow: none; }
+  .grid-label { text-align: center; margin-top: 12px; font-size: 13px; color: var(--mde-ink-soft); font-family: var(--mde-mono); }
+
+  /* ---------- tables (house style) ---------- */
+  .md-surface .mtable-wrap { position: relative; margin: .7em 0; }
+  .md-surface .mtable {
+    border-collapse: separate; border-spacing: 0; width: 100%; font-size: .95em;
+    border-radius: 11px; overflow: hidden; box-shadow: var(--mde-clay-raise-sm); background: var(--mde-card);
+  }
+  .md-surface .mtable th, .md-surface .mtable td {
+    padding: 8px 13px; text-align: left; vertical-align: top; line-height: 1.45;
+    border-bottom: 1px solid var(--mde-hairline); border-right: 1px solid var(--mde-hairline);
+  }
+  .md-surface .mtable th:last-child, .md-surface .mtable td:last-child { border-right: none; }
+  .md-surface .mtable tbody tr:last-child td { border-bottom: none; }
+  .md-surface .mtable thead th {
+    background: var(--mde-green); color: #fff; font-weight: 600; font-family: var(--mde-sans);
+    border-bottom: none; border-right-color: rgba(255,255,255,.2);
+  }
+  .md-surface .mtable tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--mde-leaf) 55%, var(--mde-card)); }
+  .md-surface .mcell { outline: none; min-width: 26px; }
+  .md-surface .mcell:empty::after { content: "\200b"; color: transparent; }
+  .md-surface .mcell:focus { box-shadow: inset 0 0 0 2px var(--mde-green-soft); border-radius: 3px; }
+  .md-surface .mtable-tools {
+    position: absolute; top: -13px; right: 4px; display: flex; gap: 5px; opacity: 0;
+    transition: opacity .15s; pointer-events: none;
+  }
+  .md-surface .mtable-wrap:hover .mtable-tools, .md-surface .mtable-wrap:focus-within .mtable-tools { opacity: 1; pointer-events: auto; }
+  .md-surface .mtt {
+    appearance: none; cursor: pointer; border: 0; font-family: var(--mde-sans); font-size: 11px; font-weight: 600;
+    color: var(--mde-green-deep); background: var(--mde-clay-card); border-radius: 999px; padding: 4px 10px;
+    box-shadow: var(--mde-clay-raise-sm); display: inline-flex; align-items: center; gap: 4px;
+  }
+  .md-surface .mtt:hover { color: var(--mde-green); }
+  .md-surface .mtt:active { box-shadow: var(--mde-clay-sink-sm); }
+  .md-surface .mtt.danger { color: var(--mde-amber); }
+  .md-surface .mtt svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  /* fixed layout (when columns have explicit widths) wraps long content instead of blowing out */
+  .md-surface .mtable[style*="fixed"] th, .md-surface .mtable[style*="fixed"] td { overflow-wrap: anywhere; }
+  /* ---------- column resize grips (overlay the column boundaries) ---------- */
+  .md-surface .mcol-grips { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
+  .md-surface .mcol-grip { position: absolute; width: 11px; transform: translateX(-50%); cursor: col-resize; pointer-events: auto; touch-action: none; }
+  .md-surface .mcol-grip::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; transform: translateX(-50%); background: transparent; border-radius: 2px; transition: background .12s; }
+  .md-surface .mtable-wrap:hover .mcol-grip::before { background: color-mix(in srgb, var(--mde-green-soft) 45%, transparent); }
+  .md-surface .mcol-grip:hover::before, .md-surface .mcol-grip.dragging::before { background: var(--mde-green); }
+
+  /* ---------- document tabs (MarkdownTabs wrapper) ---------- */
+  /* Defaults reproduce the Helthy clay look; a host re-skins via --mde-tab-*. */
+  :root {
+    --mde-tab-gap:           6px;
+    --mde-tab-radius:        10px;
+    --mde-tab-bg:            var(--mde-paper);
+    --mde-tab-fg:            var(--mde-ink-soft);
+    --mde-tab-active-bg:     var(--mde-card);
+    --mde-tab-active-fg:     var(--mde-green-deep);
+    --mde-tab-shadow:        var(--mde-clay-raise-sm);
+    --mde-tab-active-shadow: var(--mde-clay-sink-sm);
+    --mde-tab-add-fg:        var(--mde-green-soft);
+    --mde-tab-stage-gap:     14px;
+  }
+  .mde-tabs { display: flex; flex-direction: column; gap: var(--mde-tab-stage-gap); min-height: 0; }
+  .mde-tabrail {
+    display: flex; flex-wrap: nowrap; gap: var(--mde-tab-gap); overflow-x: auto;
+    padding: 4px 2px; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .mde-tabrail::-webkit-scrollbar { height: 0; width: 0; }
+  .mde-tab {
+    flex: 0 0 auto; appearance: none; border: 0; cursor: pointer; font-family: var(--mde-sans);
+    font-size: 13.5px; font-weight: 600; color: var(--mde-tab-fg); background: var(--mde-tab-bg);
+    border-radius: var(--mde-tab-radius); padding: 7px 14px; box-shadow: var(--mde-tab-shadow);
+    white-space: nowrap; max-width: 230px; transition: color .15s, box-shadow .18s var(--mde-clay-ease), background .15s, opacity .15s;
+  }
+  .mde-tab:hover { color: var(--mde-tab-active-fg); }
+  .mde-tab.active { color: var(--mde-tab-active-fg); background: var(--mde-tab-active-bg); box-shadow: var(--mde-tab-active-shadow); }
+  .mde-tab.dim { opacity: .5; }
+  .mde-tab-label { display: inline-block; outline: none; overflow: hidden; text-overflow: ellipsis; max-width: 100%; vertical-align: bottom; }
+  .mde-tab-label[contenteditable="true"] { cursor: text; min-width: 2ch; text-overflow: clip; }
+  .mde-tab-add {
+    flex: 0 0 auto; appearance: none; border: 0; cursor: pointer; width: 34px; height: 34px;
+    border-radius: var(--mde-tab-radius); background: var(--mde-tab-bg); color: var(--mde-tab-add-fg);
+    font-size: 21px; line-height: 1; box-shadow: var(--mde-tab-shadow); display: grid; place-items: center;
+    transition: box-shadow .18s var(--mde-clay-ease), color .15s;
+  }
+  .mde-tab-add:hover { color: var(--mde-tab-active-fg); }
+  .mde-tab-add:active { box-shadow: var(--mde-tab-active-shadow); }
+  .mde-tab-empty { font-family: var(--mde-sans); font-size: 13px; color: var(--mde-ink-faint); padding: 8px 4px; }
+  .mde-tab-stage { min-height: 0; }

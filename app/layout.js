@@ -17,6 +17,15 @@ export const metadata = {
   description: "Student portal",
 };
 
+// viewport-fit=cover: without it iOS letterboxes the page away from the notch
+// in landscape (gray side strip) and zeroes every env(safe-area-inset-*).
+// Safe-area padding lives in PortalShell / TabDock.
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
+
 export default function RootLayout({ children }) {
   return (
     <ClerkProvider>

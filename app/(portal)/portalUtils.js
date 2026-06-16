@@ -42,8 +42,8 @@ export function relativeLabel(days) {
 }
 
 export function bookingHref(instructor, type) {
-  const t = type === '30min' ? '30' : type === '15min' ? '15' : null;
-  return t ? `/booking?instructor=${instructor}&type=${t}` : null;
+  const t = type === '30min' || type === '15min';
+  return t ? `/meetings/${instructor}` : null;
 }
 
 // True when the student has any meeting they're currently entitled to book.

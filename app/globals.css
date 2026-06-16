@@ -29,10 +29,66 @@
   --color-ink-soft: #6f665a;
   --color-ink-faint: #a89e8f;
   --color-moss: #5e6b4f;
+  /* Third score hue (EC ring on Home) — muted honey, warm like the palette. */
+  --color-ochre: #ab8136;
   --color-clay-50: #fbf3ee;
+  /* "paper" = an always-light foreground for text/icons that sit ON an accent
+     fill (terracotta/moss). Stays light in dark mode so those labels stay legible
+     — unlike `cream`, which flips to a dark surface. */
+  --color-paper: #faf9f4;
 
   --shadow-card: 0 1px 2px rgba(44, 38, 32, 0.04), 0 8px 24px -12px rgba(44, 38, 32, 0.18);
   --shadow-lift: 0 2px 4px rgba(44, 38, 32, 0.06), 0 18px 40px -16px rgba(168, 73, 42, 0.28);
+}
+
+/* ── Dark mode ────────────────────────────────────────────────────────────
+   Scoped to `.portal-root` so only the redesigned portal flips; legacy
+   /dashboard keeps its own light styling. Follows the OS appearance setting
+   (desktop + mobile). Because every portal surface references these tokens via
+   var(), remapping the palette here re-themes the whole portal — no per-element
+   `dark:` classes needed. `--color-paper` deliberately stays light. */
+.portal-root {
+  /* Opt the portal into both schemes so native controls (inputs, scrollbars) and
+     the GlassSurface `light-dark()` styles follow the OS appearance. */
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  /* Paint the page canvas (incl. iOS overscroll) dark, but only on portal pages. */
+  html:has(.portal-root) { background: #19191b; }
+
+  .portal-root {
+    /* Neutral dark gray (a hair warm, not brown) so the terracotta accent reads
+       cleanly instead of competing with the surface. */
+    --color-cream: #19191b;       /* page background (darkest) */
+    --color-cream-dim: #252528;   /* card surfaces (used at /60 → reads as a lift) */
+    --color-sand: #37373c;        /* hairline borders, visible on dark */
+    --color-ink: #ededec;         /* primary text (near-white) */
+    --color-ink-soft: #b4b3b2;    /* secondary text */
+    --color-ink-faint: #807f7e;   /* muted text */
+    --color-clay-50: #2a211d;     /* faintly-warm alert/“due” surface */
+    --color-moss: #93a279;        /* lifted so green reads as text on dark */
+    --color-ochre: #cfa75e;       /* honey lifted for dark surfaces */
+    --color-terracotta: #d4734f;  /* slightly brighter brand for dark fills */
+    --color-terracotta-deep: #e8926f; /* INVERTS: a light terracotta for text on dark */
+    --color-terracotta-soft: #b9613f;
+
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+    --shadow-lift: 0 2px 6px rgba(0, 0, 0, 0.4), 0 22px 46px -16px rgba(0, 0, 0, 0.7);
+  }
+
+  /* The glass lens fallback (iPhone Safari) ships a bright warm-white glass; on a
+     dark dock that reads as a glowing white pill. Retune to a subtle light-on-dark
+     glass so the active icon still reads as the indicator. */
+  .portal-root .glass-surface--fallback {
+    background: rgba(255, 255, 255, 0.07);
+    backdrop-filter: blur(12px) saturate(1.4) brightness(1.15);
+    -webkit-backdrop-filter: blur(12px) saturate(1.4) brightness(1.15);
+    border-color: rgba(255, 255, 255, 0.16);
+    box-shadow:
+      0 10px 26px -10px rgba(0, 0, 0, 0.6),
+      inset 0 1px 1px rgba(255, 255, 255, 0.22),
+      inset 0 -10px 20px -12px rgba(255, 255, 255, 0.06);
+  }
 }
 
 html {
@@ -62,7 +118,343 @@ body {
   animation: portalShimmer 1.5s ease-in-out infinite;
 }
 
+/* The bottom tab dock — a warm frosted bar the glass lens floats over. Kept
+   translucent so the lens (and the bar itself) refract the page scrolling behind. */
+.portal-dock {
+  border-radius: 34px;
+  background: rgba(250, 249, 244, 0.72);
+  backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow:
+    0 12px 30px -8px rgba(40, 25, 15, 0.22),
+    0 2px 8px -2px rgba(40, 25, 15, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+@supports not (backdrop-filter: blur(10px)) {
+  .portal-dock { background: rgba(250, 249, 244, 0.96); }
+}
+@media (prefers-color-scheme: dark) {
+  .portal-root .portal-dock {
+    background: rgba(37, 37, 41, 0.72);
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow:
+      0 14px 34px -8px rgba(0, 0, 0, 0.65),
+      0 2px 8px -2px rgba(0, 0, 0, 0.5),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  }
+}
+@supports not (backdrop-filter: blur(10px)) {
+  @media (prefers-color-scheme: dark) {
+    .portal-root .portal-dock { background: rgba(37, 37, 41, 0.97); }
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .portal-rise { animation: none; }
   .portal-skeleton { animation: none; }
+}
+
+/* ── Colleges tab: neumorphic surfaces ────────────────────────────────────
+   Soft-extruded panels "carved" from the cream canvas: one consistent light
+   source (top-left), raised vs. pressed-in states. Tokens live on .portal-root
+   so the whole set re-themes with the OS appearance like everything else. */
+.portal-root {
+  --neu-bg: linear-gradient(145deg, #fefdf9 0%, #f0ede1 100%);
+  --neu-hi: rgba(255, 255, 255, 0.9);
+  --neu-lo: rgba(63, 53, 41, 0.16);
+  --neu-inset-bg: #f2efe4;
+}
+@media (prefers-color-scheme: dark) {
+  .portal-root {
+    --neu-bg: linear-gradient(145deg, #242428 0%, #1b1b1d 100%);
+    --neu-hi: rgba(255, 255, 255, 0.05);
+    --neu-lo: rgba(0, 0, 0, 0.55);
+    --neu-inset-bg: #1d1d20;
+  }
+}
+.neu-raised {
+  background: var(--neu-bg);
+  box-shadow: 6px 6px 14px var(--neu-lo), -6px -6px 14px var(--neu-hi);
+}
+.neu-chip {
+  background: var(--neu-bg);
+  box-shadow: 3px 3px 7px var(--neu-lo), -3px -3px 7px var(--neu-hi);
+}
+.neu-inset {
+  background: var(--neu-inset-bg);
+  box-shadow: inset 3px 3px 7px var(--neu-lo), inset -3px -3px 7px var(--neu-hi);
+}
+
+/* ── Word processor (md-editor) — claymorphic skin ────────────────────────
+   The vendored editor (public/md-editor, synced from Claude/Utils/md-editor)
+   themes entirely through --mde-* custom properties. Scoping them on
+   .portal-root — not :root — makes the editor track the portal palette AND flip
+   with dark mode for free, and wins over the editor's own :root defaults for
+   everything inside the portal. Per project CLAUDE.md: only this SKIN lives
+   here; editor behavior changes go in canonical Utils/md-editor, then sync. */
+.portal-root {
+  --mde-green: var(--color-terracotta);
+  --mde-green-deep: var(--color-terracotta-deep);
+  --mde-green-soft: var(--color-terracotta-soft);
+  --mde-leaf: var(--color-clay-50);
+  --mde-leaf-line: var(--color-sand);
+  --mde-paper: var(--color-cream);
+  --mde-card: var(--color-cream-dim);
+  --mde-ink: var(--color-ink);
+  --mde-ink-soft: var(--color-ink-soft);
+  --mde-ink-faint: var(--color-ink-faint);
+  --mde-hairline: var(--color-sand);
+  --mde-amber: var(--color-ochre);
+  --mde-amber-soft: var(--color-clay-50);
+  --mde-serif: var(--font-fraunces), Georgia, serif;
+  --mde-sans: var(--font-hanken), ui-sans-serif, system-ui, sans-serif;
+  --mde-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* clay shadow base colors → reuse the portal's own neu light/dark tokens */
+  --mde-clay-card: var(--neu-inset-bg);
+  --mde-clay-dark: var(--neu-lo);
+  --mde-clay-light: var(--neu-hi);
+
+  /* document tab rail → raised clay chips; the active doc is a terracotta pill */
+  --mde-tab-bg: var(--color-cream-dim);
+  --mde-tab-fg: var(--color-ink-soft);
+  --mde-tab-active-bg: var(--color-terracotta);
+  --mde-tab-active-fg: var(--color-paper);
+  --mde-tab-shadow: 3px 3px 7px var(--neu-lo), -3px -3px 7px var(--neu-hi);
+  --mde-tab-active-shadow: var(--shadow-lift);
+  --mde-tab-add-fg: var(--color-terracotta);
+}
+/* The writing page itself: comfortable measure + room to write. */
+.portal-root .mde-host .md-surface { min-height: 54vh; font-size: 17px; }
+
+/* ── Check-in "How'd the week go?" clay blob ──────────────────────────────
+   Ported from the habit tracker's check-in ritual: a pressable lump of clay
+   that morphs with the slider — plum lump under a thumbprint at the low end,
+   resting linen clay at neutral, terracotta bloom with orbiting petals at the
+   top. Colors are computed in JS (WeekFeel.js); these are the static shells. */
+@keyframes feelBreathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.04); }
+}
+.feel-breathe {
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 100%;
+  animation: feelBreathe 4.6s ease-in-out infinite;
+}
+.feel-breathe.heavy { animation-duration: 6.8s; } /* the bad-week lump breathes slow */
+@keyframes feelOrbit { to { transform: rotate(360deg); } }
+.feel-petal-ring {
+  position: absolute; inset: 0;
+  transform-origin: 50% 50%;
+  animation: feelOrbit 30s linear infinite;
+  pointer-events: none;
+}
+.feel-petal {
+  position: absolute; left: 50%; top: 50%;
+  width: 64px; height: 78px; margin: -39px 0 0 -32px;
+  border-radius: 52% 48% 50% 50% / 62% 62% 38% 38%;
+  background: radial-gradient(circle at 38% 26%, #e3b45f, var(--color-terracotta) 75%);
+  box-shadow: inset 1.5px 2px 3px rgba(255, 255, 255, 0.45), 4px 6px 12px var(--neu-lo);
+  transition: transform 0.55s cubic-bezier(0.34, 1.45, 0.64, 1), opacity 0.4s;
+}
+@keyframes feelRipple {
+  0%   { transform: scale(0.86); opacity: 0; }
+  14%  { opacity: 0.3; }
+  100% { transform: scale(2.35); opacity: 0; }
+}
+.feel-ripple {
+  position: absolute; left: 50%; top: 50%;
+  width: 130px; height: 130px; margin: -65px 0 0 -65px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--color-ink-soft) 25%, transparent);
+  opacity: 0; pointer-events: none;
+  animation: feelRipple 7.2s cubic-bezier(0.17, 0.55, 0.4, 1) infinite;
+}
+.feel-core {
+  position: relative;
+  width: 110px; height: 110px;
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: inset 2px 3px 5px rgba(255, 255, 255, 0.5),
+    inset -4px -6px 10px rgba(80, 60, 40, 0.28), 8px 12px 24px var(--neu-lo);
+  transition: border-radius 0.4s ease, transform 0.4s ease;
+}
+/* the thumbprint: a crater pressed into the crown at the low end */
+.feel-dent {
+  position: absolute; left: 50%; top: 8%;
+  width: 54px; height: 40px; margin-left: -27px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at 50% 46%,
+    rgba(45, 34, 51, 0.43), rgba(51, 39, 57, 0.16) 58%, transparent 100%);
+  box-shadow: inset 0 12px 15px rgba(40, 30, 46, 0.35),
+    inset 0 -5px 12px rgba(255, 250, 240, 0.13);
+  transition: transform 0.4s ease, opacity 0.3s ease;
+  pointer-events: none;
+  filter: blur(2.5px);
+}
+/* groove lives on the neu-inset rail so the neutral notch sits behind the thumb */
+.feel-range {
+  -webkit-appearance: none; appearance: none;
+  display: block;
+  width: 100%; height: 26px; border-radius: 999px;
+  background: transparent;
+  outline: none; cursor: pointer;
+  position: relative; z-index: 2;
+}
+.feel-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 34px; height: 34px; border-radius: 50%; border: 0;
+  background: var(--neu-bg);
+  box-shadow: inset 1px 1.5px 2px var(--neu-hi), 3px 5px 10px var(--neu-lo);
+}
+.feel-range::-moz-range-thumb {
+  width: 34px; height: 34px; border-radius: 50%; border: 0;
+  background: var(--neu-bg);
+  box-shadow: inset 1px 1.5px 2px var(--neu-hi), 3px 5px 10px var(--neu-lo);
+}
+/* hollow dimple engraved at dead-center — the thumb nests into it at neutral */
+.feel-notch {
+  position: absolute; left: 50%; top: 50%;
+  width: 21px; height: 21px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  box-shadow: inset 1.5px 2.5px 4px var(--neu-lo), inset -1.5px -1.5px 3px var(--neu-hi);
+  pointer-events: none; z-index: 0;
+}
+
+/* ── Clay peaks (session frequency, Movement-style ridge) ───────────────── */
+@keyframes clayGrow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+.clay-peak {
+  border-radius: 999px 999px 5px 5px;
+  background: linear-gradient(165deg, var(--color-terracotta-soft),
+    var(--color-terracotta) 55%, color-mix(in srgb, var(--color-terracotta) 70%, #3c1505));
+  box-shadow: inset 1.5px 2px 3px rgba(255, 255, 255, 0.4),
+    inset -2px -3px 6px rgba(120, 50, 20, 0.25);
+  transform-origin: bottom;
+  animation: clayGrow 0.8s cubic-bezier(0.34, 1.45, 0.64, 1) both;
+}
+
+/* ── Clay hero emblems (check, sun, cam, folder) ──────────────────────────
+   Ripped 1:1 from the habit tracker's check-in header mark: a molded clay
+   chip with a gradient glyph and three soft blobs drifting around it on a
+   slow orbit. Deliberately keeps the habit tracker's own linen palette
+   (light + dark) rather than the portal's neu vars — mapped onto the flatter
+   portal surfaces the clay washed out. Geometry is fixed at the original
+   58px frame; heroes scale up via transform in the ClayMark component. */
+.clay-mark {
+  /* span host: must be block or width/height (and the hero scale transform)
+     are ignored entirely and the mark collapses to its 0×0 content box */
+  display: block;
+  position: relative; width: 58px; height: 58px; flex-shrink: 0;
+  --ck-clay-a: #f8f2e7; --ck-clay-b: #e7dbc6;
+  --ck-hi: rgba(255, 252, 243, 0.95);
+  --ck-lo: rgba(141, 113, 84, 0.38);
+  --ck-drop: rgba(116, 90, 64, 0.24);
+  --ck-plum: #7d639b; --ck-plum-lite: #ad96c6;
+  --ck-terra: #c9694a; --ck-terra-lite: #e5a287;
+  --ck-sage: #88996b; --ck-sage-lite: #b0be95; --ck-sage-deep: #66794c;
+  --ck-butter: #e3b45f; --ck-butter-deep: #c2913c;
+}
+@media (prefers-color-scheme: dark) {
+  .portal-root .clay-mark {
+    --ck-clay-a: #2f2922; --ck-clay-b: #261f19;
+    --ck-hi: rgba(255, 255, 255, 0.06);
+    --ck-lo: rgba(0, 0, 0, 0.55);
+    --ck-drop: rgba(0, 0, 0, 0.45);
+    --ck-plum: #a98fc4; --ck-plum-lite: #7d639b;
+    --ck-terra: #d87e5b; --ck-terra-lite: #a64b2d;
+    --ck-sage: #9fb37e; --ck-sage-lite: #66794c; --ck-sage-deep: #b8cb97;
+    --ck-butter: #d9ae62; --ck-butter-deep: #e7c383;
+  }
+}
+.clay-mark-chip {
+  position: absolute; inset: 4px;
+  border-radius: 38%;
+  background: linear-gradient(150deg, var(--ck-clay-a), var(--ck-clay-b));
+  box-shadow: inset 1.5px 2px 3px var(--ck-hi),
+    inset -3px -4px 8px color-mix(in srgb, var(--ck-lo) 50%, transparent),
+    5px 8px 16px var(--ck-drop);
+  display: flex; align-items: center; justify-content: center;
+}
+.clay-mark-chip svg {
+  width: 62%; height: 62%;
+  overflow: visible;
+  filter: drop-shadow(2px 3px 2.5px var(--ck-drop));
+}
+.clay-mark-blobs { position: absolute; inset: -7px; animation: clayOrbit 70s linear infinite; }
+.clay-blob {
+  position: absolute;
+  border-radius: 52% 46% 56% 48% / 55% 50% 46% 52%;
+  box-shadow: inset 1px 1.5px 2px rgba(255, 255, 255, 0.4), 2px 3px 5px var(--ck-drop);
+  animation: clayBreathe 8s ease-in-out infinite alternate;
+}
+.clay-blob-1 { width: 13px; height: 12px; top: -1px; right: 9px;
+  background: radial-gradient(circle at 35% 30%, var(--ck-plum-lite), var(--ck-plum)); opacity: 0.6; }
+.clay-blob-2 { width: 10px; height: 9px; bottom: 3px; right: -2px;
+  background: radial-gradient(circle at 35% 30%, var(--ck-terra-lite), var(--ck-terra));
+  opacity: 0.55; animation-delay: -3s; }
+.clay-blob-3 { width: 11px; height: 10px; bottom: 12px; left: -4px;
+  background: radial-gradient(circle at 35% 30%, var(--ck-sage-lite), var(--ck-sage));
+  opacity: 0.6; animation-delay: -6s; }
+@keyframes clayOrbit { to { transform: rotate(360deg); } }
+@keyframes clayBreathe {
+  from { transform: scale(0.92); border-radius: 52% 46% 56% 48% / 55% 50% 46% 52%; }
+  to   { transform: scale(1.12); border-radius: 46% 55% 47% 54% / 49% 46% 55% 50%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feel-breathe, .feel-petal-ring, .feel-ripple, .clay-peak,
+  .clay-mark-blobs, .clay-blob { animation: none; }
+  .feel-core, .feel-dent, .feel-petal { transition: none; }
+}
+
+/* Breathing halo for the "you are here" marker on the season timeline. */
+@keyframes neuPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(198, 97, 63, 0.4); }
+  60%      { box-shadow: 0 0 0 7px rgba(198, 97, 63, 0); }
+}
+.neu-pulse { animation: neuPulse 2.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .neu-pulse { animation: none; }
+}
+
+/* ── Landscape phones ──────────────────────────────────────────────────────
+   A landscape phone is a ~390px-tall viewport: the portrait masthead (two-line
+   2rem display title + clay glyph) plus the column's pt-8/pb-32 would own the
+   whole screen. Compact the hero band and column padding so content wins.
+   Scoped to .portal-root so legacy pages are untouched; heroes are the
+   `header.portal-rise h1` pattern shared by every tab (student + parent). */
+@media (orientation: landscape) and (max-height: 520px) {
+  .portal-root main {
+    padding-top: 1.25rem;
+    padding-bottom: 6.5rem;
+  }
+  .portal-root header.portal-rise h1 {
+    font-size: 1.6rem;
+    line-height: 1.15;
+  }
+  /* Landscape has the width — let the title sit on one line. The JSX keeps an
+     explicit space after each <br> so words don't fuse when it's hidden. */
+  .portal-root header.portal-rise h1 br {
+    display: none;
+  }
+}
+
+/* ── Developer portal accent (.dev-root rides on .portal-root) ─────────────
+   Remaps only the terracotta trio to the moss family so the dev portal is
+   instantly distinguishable at a glance while reusing every portal token and
+   primitive (neu surfaces, dock, badges all key off these vars). */
+.portal-root.dev-root {
+  --color-terracotta: #5e6b4f;
+  --color-terracotta-deep: #46523a;
+  --color-terracotta-soft: #94a37e;
+}
+@media (prefers-color-scheme: dark) {
+  .portal-root.dev-root {
+    --color-terracotta: #8ba06d;
+    --color-terracotta-deep: #a9bd8c; /* keeps the "deep inverts to light text" convention */
+    --color-terracotta-soft: #6d7f54;
+  }
 }

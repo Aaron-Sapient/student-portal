@@ -1,13 +1,15 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 
 const PortalDataContext = createContext({
   data: null,
   meeting: null,
+  meetings: [],
   coach: null,
   loading: true,
   error: null,
+  refreshMeetings: () => {},
 });
 
 export const usePortalData = () => useContext(PortalDataContext);
@@ -18,10 +20,24 @@ export default function PortalDataProvider({ children }) {
   const [state, setState] = useState({
     data: null,
     meeting: null,
+    meetings: [],
     coach: null,
     loading: true,
     error: null,
   });
+
+  // After a cancel/reschedule, every surface showing meetings (Home Today +
+  // Meetings subtab) re-syncs from one refetch.
+  const refreshMeetings = useCallback(async () => {
+    try {
+      const res = await fetch('/api/getUpcomingMeetings');
+      const data = await res.json();
+      const meetings = data?.meetings || [];
+      setState((s) => ({ ...s, meetings, meeting: meetings[0] || null }));
+    } catch {
+      /* keep current list */
+    }
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -30,14 +46,16 @@ export default function PortalDataProvider({ children }) {
       fetch('/api/getUpcomingMeetings').then((r) => r.json()).catch(() => ({})),
       fetch('/api/coach').then((r) => r.json()).catch(() => ({})),
     ])
-      .then(([home, meetings, coach]) => {
+      .then(([home, meetingsRes, coach]) => {
         if (!alive) return;
         if (home?.error) {
-          setState({ data: null, meeting: null, coach: null, loading: false, error: home.error });
+          setState((s) => ({ ...s, loading: false, error: home.error }));
         } else {
+          const meetings = meetingsRes?.meetings || [];
           setState({
             data: home,
-            meeting: meetings?.meetings?.[0] || null,
+            meeting: meetings[0] || null,
+            meetings,
             coach: coach?.coach || null,
             loading: false,
             error: null,
@@ -46,13 +64,11 @@ export default function PortalDataProvider({ children }) {
       })
       .catch(() => {
         if (!alive) return;
-        setState({
-          data: null,
-          meeting: null,
-          coach: null,
+        setState((s) => ({
+          ...s,
           loading: false,
           error: 'We couldn’t load your portal. Try again shortly.',
-        });
+        }));
       });
     return () => {
       alive = false;
@@ -60,6 +76,8 @@ export default function PortalDataProvider({ children }) {
   }, []);
 
   return (
-    <PortalDataContext.Provider value={state}>{children}</PortalDataContext.Provider>
+    <PortalDataContext.Provider value={{ ...state, refreshMeetings }}>
+      {children}
+    </PortalDataContext.Provider>
   );
 }
