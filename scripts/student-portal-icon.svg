@@ -1,0 +1,38 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- Student Portal.app icon: terracotta squircle + cream mortarboard.
+       Build: sips -s format png → iconset → iconutil -c icns (see scripts/build-app-icon.sh) -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d97a55"/>
+      <stop offset="1" stop-color="#a8492a"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- macOS icon grid: 824px squircle centered in 1024 canvas -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <rect x="100" y="100" width="824" height="412" rx="185" fill="url(#sheen)"/>
+
+  <!-- soft shadow copy of the glyph for depth -->
+  <g fill="#581f0d" opacity="0.28" transform="translate(0,16)">
+    <polygon points="512,340 812,470 512,600 212,470"/>
+    <path d="M392 545 L392 640 Q512 730 632 640 L632 545 Z"/>
+  </g>
+
+  <!-- mortarboard -->
+  <g fill="#faf9f4">
+    <path d="M392 545 L392 640 Q512 730 632 640 L632 545 Z"/>
+    <polygon points="512,340 812,470 512,600 212,470"/>
+  </g>
+
+  <!-- tassel: cord from center button over the right edge, knot + fringe -->
+  <g stroke="#faf9f4" stroke-width="18" stroke-linecap="round" fill="none">
+    <path d="M512 462 L788 545 L788 660"/>
+  </g>
+  <circle cx="512" cy="462" r="20" fill="#faf9f4"/>
+  <circle cx="788" cy="664" r="22" fill="#faf9f4"/>
+  <rect x="770" y="672" width="36" height="64" rx="16" fill="#faf9f4"/>
+</svg>
