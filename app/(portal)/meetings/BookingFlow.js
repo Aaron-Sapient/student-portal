@@ -98,8 +98,11 @@ export default function BookingFlow({ slug }) {
   const [routedKind, setRoutedKind] = useState(null); // 'written' | 'email'
   const [studentName, setStudentName] = useState('');
   const [duration, setDuration] = useState('30min');
-  const durationMins = duration === '15min' ? 15 : 30;
-  const meetingLabel = duration === '15min' ? '15-min Zoom' : '30-min Zoom';
+  // Seniors: the package's bookable lengths, e.g. ['40min','20min'] (Essential) or
+  // ['30min'] (VIP/Comprehensive). null for underclassmen (15/30 token flow).
+  const [seniorDurations, setSeniorDurations] = useState(null);
+  const durationMins = parseInt(duration, 10) || 30;
+  const meetingLabel = `${durationMins}-min Zoom`;
 
   const today = getToday();
   const [calMonth, setCalMonth] = useState(today.getMonth());
@@ -133,8 +136,13 @@ export default function BookingFlow({ slug }) {
           setValidating(false);
           return;
         }
-        const d = data.decision === '15min' ? '15min' : data.decision === '30min' ? '30min' : '30min';
-        setDuration(d);
+        if (data.senior) {
+          const ds = (data.durations && data.durations.length ? data.durations : [30]).map((n) => `${n}min`);
+          setSeniorDurations(ds);
+          setDuration(ds[0]);
+        } else {
+          setDuration(data.decision === '15min' ? '15min' : '30min');
+        }
         setStudentName(data.studentName || '');
         // jump to the first month that actually has bookable weekdays
         if (!monthHasBookableSlots(today.getFullYear(), today.getMonth(), instructor)) {
@@ -351,8 +359,38 @@ export default function BookingFlow({ slug }) {
             </h1>
           </div>
         </div>
-        <p className="mt-2 pl-[3.75rem] text-sm text-ink-soft">Pick a day, then choose a time.</p>
+        <p className="mt-2 pl-[3.75rem] text-sm text-ink-soft">
+          {seniorDurations && seniorDurations.length > 1
+            ? 'Choose a length, then pick a day and time.'
+            : 'Pick a day, then choose a time.'}
+        </p>
       </header>
+
+      {/* Essential seniors choose 1×40 or 2×20 each week */}
+      {seniorDurations && seniorDurations.length > 1 && (
+        <div className="mb-4 flex gap-2">
+          {seniorDurations.map((d) => {
+            const mins = parseInt(d, 10);
+            const active = d === duration;
+            return (
+              <button
+                key={d}
+                type="button"
+                onClick={() => {
+                  setDuration(d);
+                  setSelectedDate(null);
+                  setSelectedSlot(null);
+                }}
+                className={`flex-1 rounded-2xl px-4 py-3 text-sm font-semibold transition active:scale-[0.98] ${
+                  active ? 'bg-terracotta text-paper shadow-sm' : 'neu-chip text-ink'
+                }`}
+              >
+                {mins}-min
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* calendar */}
       <div className="neu-raised rounded-3xl p-5">

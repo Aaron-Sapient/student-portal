@@ -3,6 +3,7 @@ import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
 import { listBlocks, isDateBlocked, blockedWindowsForDate } from '@/lib/blocks';
+import { getSeniorByEmail, canBook, countBookedForWeek, PACKAGE_RULES } from '@/lib/seniors';
 
 function getServiceAuth() {
   return new google.auth.GoogleAuth({
@@ -81,6 +82,19 @@ export async function GET(request) {
     const authClient = getServiceAuth();
     const calendar = google.calendar({ version: 'v3', auth: authClient });
     const sheets = google.sheets({ version: 'v4', auth: authClient });
+
+    // Senior gate: the requested length must be on their package, and the teacher
+    // + per-week cap + secondary-first must allow a meeting on THIS date's week.
+    const senior = await getSeniorByEmail(sessionClaims.email);
+    if (senior) {
+      if (!PACKAGE_RULES[senior.package].denominations.includes(duration)) {
+        return Response.json({ slots: [], recommendations: [], unavailable: true });
+      }
+      const booked = await countBookedForWeek(calendar, senior, requestedDate);
+      if (!canBook(senior, requestedDate, instructor.slug, duration, booked).ok) {
+        return Response.json({ slots: [], recommendations: [], unavailable: true });
+      }
+    }
 
     const dayStart = requestedDate.startOf('day').toISO();
     const dayEnd = requestedDate.endOf('day').toISO();

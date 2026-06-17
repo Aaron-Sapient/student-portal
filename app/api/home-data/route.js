@@ -4,6 +4,15 @@ import { getStudentScores, gradeFromClass } from '@/lib/scores'
 import { hasRecentGrades, TRANSCRIPT_GRADE_RANGE } from '@/lib/gradeData'
 import { normEmail, sessionEmail } from '@/lib/identity'
 import { activeProjectsFromRows } from '@/lib/projects'
+import {
+  getSeniorBySheetId,
+  weekSummary,
+  fetchSeniorMeetings,
+  bookedForWeekOf,
+  startOfSaturdayWeek,
+  checkedInThisWeek,
+  PACKAGE_RULES,
+} from '@/lib/seniors'
 import { DateTime } from 'luxon'
 
 const ZONE = 'America/Los_Angeles'
@@ -271,6 +280,48 @@ if (isART) {
     }
   }
 
+  // Senior essay-program context. When present, the portal swaps the underclassman
+  // check-in/15-30 booking UI for the deterministic senior flow. Everything the
+  // client needs to render that (without importing the server-only seniors lib).
+  const senior = await getSeniorBySheetId(studentSheetId)
+  let seniorContext = null
+  if (senior) {
+    const ws = startOfSaturdayWeek(nowLA)
+    const meetings = await fetchSeniorMeetings(
+      calendar,
+      senior,
+      ws.toISO(),
+      ws.plus({ weeks: 1 }).toISO()
+    )
+    const booked = bookedForWeekOf(meetings, nowLA)
+    const summary = weekSummary(senior, nowLA, booked)
+    const rule = PACKAGE_RULES[senior.package]
+    const totalCount = summary.booked[summary.primarySlug].count + summary.booked[summary.secondarySlug].count
+    const totalMin = summary.booked[summary.primarySlug].minutes + summary.booked[summary.secondarySlug].minutes
+    const remaining =
+      senior.package === 'essential'
+        ? Math.max(0, Math.floor((rule.budgetMin - totalMin) / 20))
+        : Math.max(0, rule.maxPerWeek - totalCount)
+    seniorContext = {
+      package: senior.package,
+      packageLabel: rule.label,
+      packageNote: rule.note,
+      phase: senior.phase,
+      isPhaseWeek: summary.isPhaseWeek,
+      secondaryRequired: summary.secondaryRequired,
+      primarySlug: summary.primarySlug,
+      secondarySlug: summary.secondarySlug,
+      primaryName: summary.primaryName,
+      secondaryName: summary.secondaryName,
+      bookable: summary.bookable, // { aaron:[durations], ryan:[durations] }
+      booked: summary.booked,
+      denominations: rule.denominations,
+      maxPerWeek: rule.maxPerWeek,
+      checkedIn: checkedInThisWeek(studentRow[50], nowLA),
+      remaining,
+    }
+  }
+
   return Response.json({
     activeProjects,
     studentName,
@@ -284,5 +335,6 @@ if (isART) {
     scores,
     progress,
     sessions,
+    senior: seniorContext,
   })
 }

@@ -89,8 +89,34 @@ drop trigger if exists scl_set_updated on student_college_lists;
 create trigger scl_set_updated before update on student_college_lists
   for each row execute function set_updated_at();
 
+-- Senior essay-program roster (Class of 2027). One row per senior, mirrored from
+-- the Master "Class of 2027 Table" tab by scripts/ingestSeniors.cjs. The portal
+-- detects "is this student a senior?" by presence here (keyed on the same
+-- student_sheet_id used everywhere) and drives DETERMINISTIC, token-free booking:
+-- package -> meetings/week + length, primary_teacher + phase -> who they book each
+-- week (phase week = ONE meeting with the other teacher, booked first). name/email
+-- carried for readability. meetings_per_week / meeting_minutes mirror the package
+-- rules into SQL; lib/seniors.js PACKAGE_RULES is the authoritative source.
+create table if not exists seniors (
+  student_sheet_id  text     primary key,
+  student_email     text     not null,
+  student_name      text     not null,
+  package           text     not null check (package in ('essential','comprehensive','vip')),
+  meetings_per_week int      not null,            -- 2 (vip/comp); 2 for essential (40-min budget, see meeting_minutes)
+  meeting_minutes   int,                          -- 30 (vip/comp); null for essential (variable 40 or 20)
+  primary_teacher   text     not null check (primary_teacher in ('aaron','ryan')),
+  phase             smallint not null check (phase between 1 and 4),
+  active            boolean  not null default true,
+  updated_at        timestamptz not null default now()
+);
+create index if not exists seniors_email_idx on seniors (lower(student_email));
+drop trigger if exists seniors_set_updated on seniors;
+create trigger seniors_set_updated before update on seniors
+  for each row execute function set_updated_at();
+
 alter table md_documents          enable row level security;
 alter table md_tabs               enable row level security;
 alter table md_tab_revisions      enable row level security;
 alter table student_college_lists enable row level security;
+alter table seniors               enable row level security;
 -- No policies on purpose: only the service role reaches these tables.

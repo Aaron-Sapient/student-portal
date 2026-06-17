@@ -422,6 +422,26 @@ function Schools({ data, writing }) {
       </section>
     );
 
+  // Nothing on the list yet (typical early summer) — reassure rather than show a
+  // blank tab. Schools, UCs and recommenders all populate from the College List sheet.
+  if (schools.length === 0 && ucs.length === 0 && recommenders.length === 0) {
+    return (
+      <div
+        className="portal-rise flex min-h-[40vh] flex-col items-center justify-center text-center"
+        style={{ animationDelay: '90ms' }}
+      >
+        <span className="neu-raised flex h-16 w-16 items-center justify-center rounded-3xl text-terracotta">
+          <Landmark className="h-7 w-7" strokeWidth={1.8} />
+        </span>
+        <p className="mt-5 font-display text-xl font-semibold text-ink">Your school list is on the way</p>
+        <p className="mt-1.5 max-w-xs text-sm text-ink-soft">
+          You’ll build your college list with Aaron and Ryan this summer. As schools are added,
+          they’ll appear here with deadlines and supplement progress.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {group('Round 1 · essays due Oct 15', r1, 90)}
@@ -499,7 +519,7 @@ function TaskCard({ task, delay, href }) {
         {openHref && <DocLink href={openHref} label={`Open your ${task.name} doc`} />}
       </div>
       <div className="mt-4 flex items-center gap-3">
-        <Bar value={task.pct} />
+        <Bar value={task.pct ?? 0} />
         <span className="w-9 shrink-0 text-right text-xs font-semibold text-ink-soft">
           {Math.round((task.pct || 0) * 100)}%
         </span>
@@ -511,28 +531,48 @@ function TaskCard({ task, delay, href }) {
 function Essays({ data, writing }) {
   const { tasks, piqs } = data;
   const chosen = piqs.filter((p) => p.chosen).length;
+
+  // The Common App main essay + UC PIQs are the two anchor essays EVERY senior has
+  // from day 1 (their writing docs are seeded up front), so they always render —
+  // even before the College List sheet is filled in. College List tasks/piqs
+  // enrich them with progress; dedup so the anchors aren't also listed as tasks.
+  const isCa = (t) => writing.commonAppHref && taskWritingHref(t, writing) === writing.commonAppHref;
+  const isPiq = (t) => writing.ucPiqHref && taskWritingHref(t, writing) === writing.ucPiqHref;
+  const caTask = tasks.find(isCa);
+  const otherTasks = tasks.filter((t) => !isCa(t) && !isPiq(t));
+  const caCard = {
+    name: caTask?.name || 'Common App · Main Essay',
+    pct: caTask?.pct ?? null,
+    notes: caTask?.notes,
+  };
+  const piqDelay = 90 + (1 + otherTasks.length) * 60;
+
   return (
     <div className="space-y-4">
       <div className="space-y-3.5">
-        {tasks.map((t, i) => (
-          <TaskCard key={t.name} task={t} delay={90 + i * 60} href={taskWritingHref(t, writing)} />
+        {/* Anchor 1 — always shown */}
+        <TaskCard task={caCard} delay={90} href={writing.commonAppHref} />
+        {/* other College List tasks (activities list, additional info, …) */}
+        {otherTasks.map((t, i) => (
+          <TaskCard key={t.name} task={t} delay={150 + i * 60} href={taskWritingHref(t, writing)} />
         ))}
       </div>
 
-      {piqs.length > 0 && (
-        <section
-          className="portal-rise neu-raised rounded-[2rem] p-6"
-          style={{ animationDelay: `${90 + tasks.length * 60}ms` }}
-        >
-          <div className="flex items-center justify-between gap-3">
-            <Eyebrow>Personal Insight Questions</Eyebrow>
-            <div className="flex shrink-0 items-center gap-2.5">
+      {/* Anchor 2 — UC PIQs, always shown; the prompt list fills in once picked */}
+      <section
+        className="portal-rise neu-raised rounded-[2rem] p-6"
+        style={{ animationDelay: `${piqDelay}ms` }}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <Eyebrow>UC Personal Insight Questions</Eyebrow>
+          <div className="flex shrink-0 items-center gap-2.5">
+            {piqs.length > 0 && (
               <span className="text-xs font-semibold text-ink-faint">{chosen} of 4 picked</span>
-              {writing?.ucPiqHref && (
-                <DocLink href={writing.ucPiqHref} label="Open your UC PIQ doc" />
-              )}
-            </div>
+            )}
+            {writing?.ucPiqHref && <DocLink href={writing.ucPiqHref} label="Open your UC PIQ doc" />}
           </div>
+        </div>
+        {piqs.length > 0 ? (
           <ul className="mt-4 space-y-3.5">
             {piqs.map((p) => (
               <li
@@ -556,8 +596,13 @@ function Essays({ data, writing }) {
               </li>
             ))}
           </ul>
-        </section>
-      )}
+        ) : (
+          <p className="mt-2 text-sm leading-relaxed text-ink-soft">
+            You’ll answer four of the eight UC prompts. Open your PIQ doc to start drafting — your
+            four picks will appear here as you build your college list.
+          </p>
+        )}
+      </section>
     </div>
   );
 }

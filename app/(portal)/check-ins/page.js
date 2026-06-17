@@ -47,6 +47,7 @@ export default function CheckInsPage() {
   const { data, loading } = usePortalData();
   const ryanDone = checkedInThisWeek(data?.lastCheckin);
   const aaronDone = checkedInThisWeek(data?.aaronLastCheckin);
+  const isSenior = !!data?.senior;
 
   return (
     <div className="space-y-7">
@@ -62,26 +63,42 @@ export default function CheckInsPage() {
         </div>
       </header>
 
-      <section className="space-y-3">
-        <PersonCard
-          href="/check-ins/ryan"
-          icon={GraduationCap}
-          name="Ryan"
-          role="Counseling & academics"
-          done={ryanDone}
-          loading={loading}
-          delay={80}
-        />
-        <PersonCard
-          href="/check-ins/aaron"
-          icon={Trophy}
-          name="Aaron"
-          role="Competitions & projects"
-          done={aaronDone}
-          loading={loading}
-          delay={140}
-        />
-      </section>
+      {isSenior ? (
+        // Seniors do a SINGLE weekly check-in — it's the prerequisite that unlocks
+        // their deterministic booking for the week (no Aaron/Ryan split).
+        <section className="space-y-3">
+          <PersonCard
+            href="/check-ins/senior"
+            icon={GraduationCap}
+            name="Weekly check-in"
+            role="Unlocks this week’s meetings"
+            done={data?.senior?.checkedIn}
+            loading={loading}
+            delay={80}
+          />
+        </section>
+      ) : (
+        <section className="space-y-3">
+          <PersonCard
+            href="/check-ins/ryan"
+            icon={GraduationCap}
+            name="Ryan"
+            role="Counseling & academics"
+            done={ryanDone}
+            loading={loading}
+            delay={80}
+          />
+          <PersonCard
+            href="/check-ins/aaron"
+            icon={Trophy}
+            name="Aaron"
+            role="Competitions & projects"
+            done={aaronDone}
+            loading={loading}
+            delay={140}
+          />
+        </section>
+      )}
     </div>
   );
 }

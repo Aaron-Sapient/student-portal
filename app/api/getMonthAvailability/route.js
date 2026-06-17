@@ -3,6 +3,14 @@ import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
 import { listBlocks, isDateBlocked, blockedWindowsForDate } from '@/lib/blocks';
+import {
+  getSeniorByEmail,
+  canBook,
+  fetchSeniorMeetings,
+  bucketByWeek,
+  startOfSaturdayWeek,
+  PACKAGE_RULES,
+} from '@/lib/seniors';
 
 function getServiceAuth() {
   return new google.auth.GoogleAuth({
@@ -56,6 +64,26 @@ export async function GET(request) {
     const calendar = google.calendar({ version: 'v3', auth: authClient });
     const sheets = google.sheets({ version: 'v4', auth: authClient });
 
+    // Senior gate: a day is bookable only if the requested length is on their
+    // package AND the teacher + per-week cap + secondary-first allow a meeting in
+    // THAT day's week. Fetch the senior's own bookings across the grid once and
+    // bucket by week so each day's check is O(1).
+    const senior = await getSeniorByEmail(sessionClaims.email);
+    let seniorWeeks = null;
+    if (senior) {
+      if (!PACKAGE_RULES[senior.package].denominations.includes(duration)) {
+        return Response.json({ availableDates: [] });
+      }
+      const meetings = await fetchSeniorMeetings(
+        calendar,
+        senior,
+        gridStart.startOf('day').toISO(),
+        gridEnd.endOf('day').toISO()
+      );
+      seniorWeeks = bucketByWeek(meetings);
+    }
+    const EMPTY_WEEK = { aaron: { count: 0, minutes: 0 }, ryan: { count: 0, minutes: 0 } };
+
     // Mirror getAvailableSlots: an Aaron block also blocks ART since they share a calendar.
     const blockSlugs = instructor.slug === 'art' ? ['art', 'aaron'] : [instructor.slug];
 
@@ -82,6 +110,15 @@ export async function GET(request) {
     while (cursor <= gridEnd) {
       const dateStr = cursor.toFormat('yyyy-LL-dd');
       const hours = instructor.hoursByWeekday[cursor.weekday];
+
+      // Seniors: skip days their package/teacher/cap/secondary-first don't allow.
+      if (senior) {
+        const booked = seniorWeeks.get(startOfSaturdayWeek(cursor).toISODate()) || EMPTY_WEEK;
+        if (!canBook(senior, cursor, instructor.slug, duration, booked).ok) {
+          cursor = cursor.plus({ days: 1 });
+          continue;
+        }
+      }
 
       if (
         hours &&

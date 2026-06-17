@@ -106,6 +106,12 @@ export async function POST(request) {
       responsePreference,
     } = body;
 
+    // Seniors do a record-only weekly check-in: it's the deterministic prerequisite
+    // that unlocks their booking for the week (no Claude eval, no token, no Ryan
+    // approval email, no report). We still write grades + the AY timestamp + the
+    // CheckinForm row, then return early before the urgency-evaluation machinery.
+    const isSenior = body.senior === true;
+
     const authClient = getServiceAuth();
     const sheets = google.sheets({ version: 'v4', auth: authClient });
 
@@ -167,6 +173,11 @@ export async function POST(request) {
         ]],
       },
     });
+
+    // Senior check-in is record-only — booking is now unlocked for the week.
+    if (isSenior) {
+      return Response.json({ success: true, senior: true });
+    }
 
     // ── 5. Fetch grade history (last 3 submissions) for AI context ───────────
     const checkinRes = await sheets.spreadsheets.values.get({

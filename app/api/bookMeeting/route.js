@@ -3,6 +3,17 @@ import { google } from 'googleapis';
 import nodemailer from 'nodemailer';
 import { DateTime } from 'luxon';
 import { getInstructor, validateInstructorHours } from '@/lib/instructors';
+import { getSeniorByEmail, checkedInThisWeek, canBook, countBookedForWeek } from '@/lib/seniors';
+
+// Human messages for canBook() rejection reasons.
+const SENIOR_DENY = {
+  'wrong-teacher': 'That isn’t your assigned teacher for that week.',
+  'secondary-first': 'Book your cross-meeting with your other teacher first.',
+  'secondary-done': 'You’ve already booked your once-a-month cross-meeting.',
+  'week-full': 'You’ve booked all your meetings for that week.',
+  'budget-used': 'You’ve used all your meeting time for that week.',
+  'bad-duration': 'That meeting length isn’t available on your package.',
+};
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -94,6 +105,38 @@ export async function POST(request) {
       }, { status: 409 });
     }
 
+    // Senior path — deterministic enforcement (the final authority; the slot
+    // endpoints can be bypassed). Re-check the weekly check-in, then verify the
+    // teacher/length/cap/secondary-first for the MEETING's week against the live
+    // calendar count. Seniors never consume a token (guarded below).
+    const senior = await getSeniorByEmail(email);
+    if (senior) {
+      const nowLA = DateTime.now().setZone('America/Los_Angeles');
+      const masterFull = await sheets.spreadsheets.values.get({
+        spreadsheetId: MASTER_SHEET_ID,
+        range: `${MASTER_TAB}!A:BD`,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      });
+      const srow = (masterFull.data.values || []).find(
+        r => String(r[9] || '').trim().toLowerCase() === email.toLowerCase()
+      );
+      if (!srow || !checkedInThisWeek(srow[50], nowLA)) {
+        return Response.json(
+          { error: "Complete this week's check-in before booking." },
+          { status: 400 }
+        );
+      }
+      const mins = parseInt(String(duration).replace(/\D/g, ''), 10);
+      const booked = await countBookedForWeek(calendar, senior, startTime);
+      const verdict = canBook(senior, startTime, instructor.slug, mins, booked);
+      if (!verdict.ok) {
+        return Response.json(
+          { error: SENIOR_DENY[verdict.reason] || 'You can’t book that meeting.' },
+          { status: 409 }
+        );
+      }
+    }
+
     const agendaTrimmed = agenda?.trim() || '';
     const titlePrefix = instructor.slug === 'art' ? 'ART: ' : '';
     const eventTitle = agendaTrimmed
@@ -117,7 +160,7 @@ export async function POST(request) {
             studentEmail: email,
             type: duration,
             instructor: instructor.slug,
-            bookingType: instructor.slug === 'art' ? 'art' : 'standard',
+            bookingType: senior ? 'senior' : instructor.slug === 'art' ? 'art' : 'standard',
           },
         },
       },
@@ -134,7 +177,8 @@ export async function POST(request) {
 
     // Consume booking token (skip if rescheduling — token already consumed by the original booking).
     // ART tracks the timestamp of the booking; everyone else uses a 'no' flag.
-    if (!isReschedule && rowIndex > 0) {
+    // Seniors have NO token (deterministic, count-based) — never write a column for them.
+    if (!isReschedule && rowIndex > 0 && !senior) {
       const tokenValue = instructor.tokenIsTimestamp ? new Date().toISOString() : 'no';
       await sheets.spreadsheets.values.update({
         spreadsheetId: MASTER_SHEET_ID,

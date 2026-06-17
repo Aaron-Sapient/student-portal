@@ -186,6 +186,120 @@ function BookSection({ data, loading }) {
   );
 }
 
+// ── Senior essay-program booking ─────────────────────────────────────────────
+// Seniors don't see the Ryan/Aaron/ART check-in cards. Their cadence is
+// deterministic: a weekly check-in unlocks booking, then they book their package
+// allotment with the assigned teacher for the week (primary, or — in their phase
+// week — the secondary teacher for the one required monthly cross-meeting, which
+// must be booked FIRST). All of this is precomputed server-side into data.senior.
+const teacherIcon = (slug) => (slug === 'ryan' ? GraduationCap : Trophy);
+const lenLabel = (durs) =>
+  durs.length === 1 ? `${durs[0]}-min Zoom` : `${durs.join('/')}-min Zoom`;
+
+function SeniorBanner({ s }) {
+  const whoName = s.secondaryRequired ? s.secondaryName : s.primaryName;
+  return (
+    <section className="portal-rise neu-raised rounded-[2rem] p-5" style={{ animationDelay: '40ms' }}>
+      <div className="flex items-baseline justify-between gap-3">
+        <Eyebrow>This week</Eyebrow>
+        <span className="text-[11px] font-semibold text-ink-soft">{s.packageLabel}</span>
+      </div>
+      <p className="mt-2 font-display text-xl font-semibold leading-tight text-ink">
+        Meet <span className="text-terracotta">{whoName}</span>
+        {s.isPhaseWeek && <span className="text-ink-soft"> · phase week</span>}
+      </p>
+      <p className="mt-1 text-sm text-ink-soft">{s.packageNote}</p>
+      <p className="mt-2 text-xs font-semibold uppercase tracking-[0.1em] text-ink-faint">
+        {s.remaining} meeting{s.remaining === 1 ? '' : 's'} left this week
+      </p>
+    </section>
+  );
+}
+
+function SeniorBookSection({ data, loading }) {
+  const s = data.senior;
+
+  // Gate 1 — the weekly check-in must be in before anything is bookable.
+  if (!s.checkedIn) {
+    return (
+      <div className="space-y-7">
+        <SeniorBanner s={s} />
+        <Link
+          href="/check-ins"
+          style={{ animationDelay: '110ms' }}
+          className="portal-rise group neu-raised flex items-center gap-4 rounded-3xl p-5 transition-transform active:scale-[0.99]"
+        >
+          <IconTile icon={Lock} muted />
+          <div className="min-w-0 flex-1">
+            <p className="font-display text-xl font-semibold leading-tight text-ink">Check in to unlock</p>
+            <p className="mt-0.5 text-sm text-ink-soft">Your weekly check-in unlocks this week’s meetings.</p>
+          </div>
+          <ChevronRight className="h-5 w-5 shrink-0 text-ink-faint transition-transform group-hover:translate-x-0.5" strokeWidth={2.2} />
+        </Link>
+      </div>
+    );
+  }
+
+  // Which teacher(s) can they book right now?
+  const cards = [];
+  if (s.secondaryRequired) {
+    cards.push({
+      slug: s.secondarySlug,
+      name: s.secondaryName,
+      role: 'Your once-a-month meeting · book this first',
+      durations: s.bookable[s.secondarySlug] || s.denominations,
+    });
+  } else {
+    for (const slug of [s.primarySlug, s.secondarySlug]) {
+      const durs = s.bookable[slug] || [];
+      if (!durs.length) continue;
+      cards.push({
+        slug,
+        name: slug === s.primarySlug ? s.primaryName : s.secondaryName,
+        role: slug === s.primarySlug ? 'Your teacher' : 'This week only',
+        durations: durs,
+      });
+    }
+  }
+
+  return (
+    <div className="space-y-7">
+      <SeniorBanner s={s} />
+      <section className="space-y-3.5">
+        <p
+          className="portal-rise px-1 text-xs font-semibold uppercase tracking-[0.13em] text-ink-faint"
+          style={{ animationDelay: '70ms' }}
+        >
+          {s.secondaryRequired ? 'Book this first' : 'Book your meeting'}
+        </p>
+        {cards.length === 0 ? (
+          <OptionCard
+            icon={teacherIcon(s.primarySlug)}
+            name="You’re all set"
+            role="All your meetings for this week are booked"
+            state={{ checkedIn: true, note: 'Nothing left to book this week' }}
+            loading={loading}
+            delay={110}
+          />
+        ) : (
+          cards.map((c, i) => (
+            <OptionCard
+              key={c.slug}
+              href={`/meetings/${c.slug}`}
+              icon={teacherIcon(c.slug)}
+              name={c.name}
+              role={c.role}
+              state={{ bookable: true, label: lenLabel(c.durations) }}
+              loading={loading}
+              delay={110 + i * 60}
+            />
+          ))
+        )}
+      </section>
+    </div>
+  );
+}
+
 // Session frequency, one bar per week — moved here from Home: meeting cadence
 // belongs with meetings (info-once rule).
 function SessionsCard({ sessions }) {
@@ -276,6 +390,8 @@ export default function MeetingsPage() {
       <div key={section}>
         {section === 'upcoming' ? (
           <UpcomingSection meetings={meetings} studentName={data?.studentName} />
+        ) : data?.senior ? (
+          <SeniorBookSection data={data} loading={loading} />
         ) : (
           <BookSection data={data} loading={loading} />
         )}

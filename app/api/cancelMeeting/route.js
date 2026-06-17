@@ -3,6 +3,7 @@ import { google } from 'googleapis';
 import nodemailer from 'nodemailer';
 import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
+import { getSeniorByEmail } from '@/lib/seniors';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -89,10 +90,13 @@ export async function POST(request) {
     const rowIndex = rows.findIndex(r => r[0] === email) + 1;
 
     // Token logic:
+    //  - Seniors: NO token — the per-week cap is recounted from live calendar events,
+    //    so deleting this event already frees the slot. Never write a column for them.
     //  - Reschedule (cancel half of a reschedule flow): leave token consumed; bookMeeting will not re-consume.
     //  - Real cancel + standard tracking: restore token to the meeting's original duration ('15min' / '30min').
     //  - Real cancel + timestamp tracking (ART): clear the column so weekly check sees no booking.
-    if (rowIndex > 0) {
+    const senior = await getSeniorByEmail(email);
+    if (rowIndex > 0 && !senior) {
       let newValue = null;
       if (instructor.tokenIsTimestamp) {
         if (!isReschedule) newValue = '';

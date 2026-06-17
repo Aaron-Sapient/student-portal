@@ -49,6 +49,8 @@ export function bookingHref(instructor, type) {
 // True when the student has any meeting they're currently entitled to book.
 export function hasBookingAvailable(data) {
   if (!data) return false;
+  // Seniors: deterministic — checked in this week AND allotment not yet used up.
+  if (data.senior) return data.senior.checkedIn && data.senior.remaining > 0;
   return (
     !!bookingHref('ryan', data.meetingType) ||
     !!bookingHref('aaron', data.aaronMeetingType) ||
@@ -56,8 +58,10 @@ export function hasBookingAvailable(data) {
   );
 }
 
-// True when either weekly check-in is still outstanding this week.
+// True when this week's check-in is still outstanding.
 export function hasCheckinDue(data) {
   if (!data) return false;
+  // Seniors have a single weekly check-in (recorded in AY → data.lastCheckin).
+  if (data.senior) return !data.senior.checkedIn;
   return !checkedInThisWeek(data.lastCheckin) || !checkedInThisWeek(data.aaronLastCheckin);
 }

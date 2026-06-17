@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
+import { getSeniorByEmail, checkedInThisWeek, PACKAGE_RULES } from '@/lib/seniors';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -62,6 +63,38 @@ export async function GET(request) {
       valueRenderOption: 'UNFORMATTED_VALUE',
     });
     const studentName = nameRes.data.values?.[0]?.[0] || '';
+
+    // Senior path: deterministic, token-free. A weekly check-in (Master AY = col
+    // 50, the same column the senior check-in records) is the prerequisite; the
+    // per-week cap, assigned teacher, and secondary-first ordering are enforced
+    // per meeting date in getMonthAvailability/getAvailableSlots/bookMeeting, so
+    // this is just a lenient entry gate (checked in + a valid teacher).
+    const senior = await getSeniorByEmail(email);
+    if (senior) {
+      const now = DateTime.now().setZone('America/Los_Angeles');
+      if (!checkedInThisWeek(studentRow[50], now)) {
+        return Response.json({
+          allowed: false,
+          senior: true,
+          reason: "Complete this week's check-in to unlock booking.",
+        });
+      }
+      const secondary = senior.primary_teacher === 'aaron' ? 'ryan' : 'aaron';
+      if (instructor.slug !== senior.primary_teacher && instructor.slug !== secondary) {
+        return Response.json({
+          allowed: false,
+          senior: true,
+          reason: 'That isn’t one of your assigned teachers.',
+        });
+      }
+      return Response.json({
+        allowed: true,
+        senior: true,
+        studentName,
+        instructor: instructor.slug,
+        durations: PACKAGE_RULES[senior.package].denominations, // [30] or [40,20]
+      });
+    }
 
     // ART path: requires BC=TRUE, and BD either empty or older than this week's Saturday.
     if (instructor.slug === 'art') {
