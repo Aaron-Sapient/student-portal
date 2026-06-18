@@ -10,5 +10,5 @@ export const metadata = {
 // backdrop — but NOT the (portal) layout, so there's no tab dock. The doc fills
 // the viewport, Google-Docs style.
 export default function WriteLayout({ children }) {
-  return <PortalShell iconNames="stylus_note,history,arrow_back,check">{children}</PortalShell>;
+  return <PortalShell iconNames="arrow_back,check,history,stylus_note">{children}</PortalShell>;
 }

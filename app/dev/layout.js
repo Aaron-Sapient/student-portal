@@ -24,7 +24,7 @@ export default async function DevLayout({ children }) {
   if (!ADMIN_EMAILS.includes(sessionClaims?.email)) redirect('/dashboard');
 
   return (
-    <PortalShell className="dev-root" iconNames="group,tune,sell">
+    <PortalShell className="dev-root" iconNames="group,sell,tune">
       <DevDataProvider>
         {/* Only three tabs here, so this surface uses the student portal's
             horizontal glass dock (bottom on every breakpoint) rather than the

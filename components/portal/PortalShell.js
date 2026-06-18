@@ -19,6 +19,17 @@ const hanken = Hanken_Grotesk({
 });
 
 export default function PortalShell({ iconNames, className = '', children }) {
+  // Google Fonts 400s the css2 request unless icon_names is alphabetically
+  // sorted, which silently kills the WHOLE subset (every glyph falls back to its
+  // ligature text). Normalize here so callers can list icons in any order — and
+  // a stray out-of-order name can never break the nav again.
+  const sortedIconNames = (iconNames || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .sort()
+    .join(',');
+
   return (
     <div
       className={`portal-root ${className} ${fraunces.variable} ${hanken.variable} relative min-h-screen bg-cream font-body text-ink antialiased`}
@@ -32,11 +43,11 @@ export default function PortalShell({ iconNames, className = '', children }) {
     >
       {/* Material Symbols (Rounded) for the tab bar only. Subsetted to the nav
           glyphs via icon_names so the payload is tiny; display=block avoids the
-          ligature-text flash before the font loads. NOTE: icon_names must be
-          alphabetically sorted or Google Fonts 400s the request. */}
+          ligature-text flash before the font loads. icon_names is normalized to
+          alphabetical order above (Google 400s an unsorted list). */}
       <link
         rel="stylesheet"
-        href={`https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-25..0&icon_names=${iconNames}&display=block`}
+        href={`https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-25..0&icon_names=${sortedIconNames}&display=block`}
       />
       {/* Atmospheric backdrop: warm radial wash + faint grain, fixed so it
           never scrolls or shifts layout. */}
