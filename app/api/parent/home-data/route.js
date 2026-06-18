@@ -11,7 +11,7 @@ export async function GET(request) {
   const { child, sheets, error } = await requireParent(request)
   if (error) return error
 
-  const [projectsRes, nameRes, tabsRes, rawScores, transcriptRes] = await Promise.all([
+  const [projectsRes, nameRes, rawScores, transcriptRes] = await Promise.all([
     sheets.spreadsheets.values.get({
       spreadsheetId: child.sheetId,
       // E:N — Owner lives in col N (relative index 9); same block as /api/home-data.
@@ -20,12 +20,9 @@ export async function GET(request) {
     }),
     sheets.spreadsheets.values.get({
       spreadsheetId: child.sheetId,
-      range: "'🔎 Overview'!B2",
+      // B2 = student name; C4 = "Current Year:" grade (gates the Colleges tab).
+      range: "'🔎 Overview'!B2:C4",
       valueRenderOption: 'UNFORMATTED_VALUE',
-    }),
-    sheets.spreadsheets.get({
-      spreadsheetId: child.sheetId,
-      fields: 'sheets(properties(title))',
     }),
     getStudentScores(sheets, child.sheetId, gradeFromClass(child.grade)),
     sheets.spreadsheets.values
@@ -47,9 +44,10 @@ export async function GET(request) {
   )
   const scores = gradeGate.enough ? rawScores : { insufficientData: true }
 
-  const hasCollegeList = (tabsRes.data.sheets || []).some(
-    (s) => s.properties?.title === '🏫 College List'
-  )
+  // Colleges tab = 12th-graders only — gate on grade (🔎 Overview!C4 === "12th"),
+  // not 🏫 College List tab presence (every student has that tab from day 1).
+  const currentYear = String(nameRes.data.values?.[2]?.[1] || '').trim()
+  const hasCollegeList = currentYear === '12th'
 
   const studentName = nameRes.data.values?.[0]?.[0] || child.name
 

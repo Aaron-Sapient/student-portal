@@ -14,9 +14,10 @@ const BASE_TABS = [
   { href: '/files', label: 'Files', sym: 'folder_open' },
 ];
 
-// Seniors only — slotted in after Home once we know the student's sheet has a
-// college list. Cached in localStorage so returning seniors get the right dock
-// on first paint instead of a tab popping in when /api/home-data lands.
+// Seniors only — slotted in after Home once we know the student is a 12th-grader
+// (🔎 Overview!C4, surfaced as data.hasCollegeList). Cached in localStorage so
+// returning seniors get the right dock on first paint instead of a tab popping
+// in when /api/home-data lands.
 const COLLEGES_TAB = { href: '/colleges', label: 'Colleges', sym: 'school' };
 const COLLEGES_CACHE_KEY = 'portal:hasColleges';
 

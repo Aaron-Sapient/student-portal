@@ -161,10 +161,10 @@ export async function GET() {
 
   const studentSheetId = sheetIdMatch[1]
 
-  // Fetch projects, student name, tab list (gates the Colleges tab), the weekly
-  // holistic scores (📊 Scores, written by the NAS cron), and the session log
-  // (📆 Meetings dates → frequency strip) in parallel
-  const [projectsRes, nameRes, tabsRes, rawScores, transcriptRes, meetingDatesRes, aaronPast, ryanPast] = await Promise.all([
+  // Fetch projects, student name + grade (🔎 Overview, gates the Colleges tab),
+  // the weekly holistic scores (📊 Scores, written by the NAS cron), and the
+  // session log (📆 Meetings dates → frequency strip) in parallel
+  const [projectsRes, nameRes, rawScores, transcriptRes, meetingDatesRes, aaronPast, ryanPast] = await Promise.all([
     sheets.spreadsheets.values.get({
       spreadsheetId: studentSheetId,
       // E:N — Owner lives in col N (relative index 9). Appended right of the
@@ -174,12 +174,10 @@ export async function GET() {
     }),
     sheets.spreadsheets.values.get({
       spreadsheetId: studentSheetId,
-      range: "'🔎 Overview'!B2",
+      // B2 = student name; C4 = "Current Year:" grade (gates the Colleges tab).
+      // One read serves both — see studentName / currentYear below.
+      range: "'🔎 Overview'!B2:C4",
       valueRenderOption: 'UNFORMATTED_VALUE',
-    }),
-    sheets.spreadsheets.get({
-      spreadsheetId: studentSheetId,
-      fields: 'sheets(properties(title))',
     }),
     getStudentScores(sheets, studentSheetId, gradeFromClass(studentRow[1])),
     sheets.spreadsheets.values
@@ -219,10 +217,13 @@ export async function GET() {
     )
   )
 
-  // Seniors get the Colleges tab; gate on their sheet actually having the list.
-  const hasCollegeList = (tabsRes.data.sheets || []).some(
-    (s) => s.properties?.title === '🏫 College List'
-  )
+  // Colleges tab = 12th-graders only. Gate on the student's grade
+  // (🔎 Overview!C4 "Current Year:" === "12th"), NOT on a 🏫 College List tab:
+  // every student gets that tab from day 1 so Ryan can build the list early, so
+  // tab-presence both leaks Colleges to underclassmen and hides it from a senior
+  // whose tab isn't created yet.
+  const currentYear = String(nameRes.data.values?.[2]?.[1] || '').trim()
+  const hasCollegeList = currentYear === '12th'
 
   // "Project progress" line: always aggregated across 🏆 Comps & Projects —
   // seniors keep working on projects too (college-app progress lives in the
