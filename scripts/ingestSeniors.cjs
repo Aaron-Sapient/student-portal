@@ -22,6 +22,11 @@ const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = "'👩‍🎓 All Data'";
 const ROSTER_TAB = "'Class of 2027 Table'";
 
+// Test fixtures kept permanently as known-good seniors. They are NOT in the
+// roster (so --prune would delete them every run), but must persist for
+// demo/screenshot logins. Test Student → aaronblumenthal21@gmail.com.
+const KEEP_TEST_SHEET_IDS = ['1UW-RSqv30c_BUdv9nfm48YVVs7L-UmWKsYn_jXhYt6w'];
+
 // package (lowercased from the sheet) -> derived columns. lib/seniors.js
 // PACKAGE_RULES is the authoritative logic; these just mirror into SQL.
 const PACKAGE_DERIVED = {
@@ -153,7 +158,7 @@ async function main() {
   console.log(`\n✓ Upserted ${records.length} senior(s).`);
 
   if (PRUNE) {
-    const keep = new Set(records.map((r) => r.student_sheet_id));
+    const keep = new Set([...records.map((r) => r.student_sheet_id), ...KEEP_TEST_SHEET_IDS]);
     const { data: existing } = await sb.from('seniors').select('student_sheet_id, student_name');
     const stale = (existing || []).filter((r) => !keep.has(r.student_sheet_id));
     for (const r of stale) {
