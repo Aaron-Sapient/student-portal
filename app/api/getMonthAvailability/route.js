@@ -7,6 +7,9 @@ import {
   getSeniorByEmail,
   loadSeniorBookingState,
   canBookOnDate,
+  phaseWeekMonthKey,
+  weekOfMonth,
+  OTHER,
 } from '@/lib/seniors';
 
 function getServiceAuth() {
@@ -66,9 +69,30 @@ export async function GET(request) {
     // phase). Load the ledger state once; each day's check is pure/in-memory.
     const senior = await getSeniorByEmail(sessionClaims.email);
     let seniorState = null;
+    // The viewed month's cross-meeting week, as {start,end} ISO — colored ONLY on
+    // the secondary teacher's calendar (the one this cross-meeting is actually
+    // with), when this grant carries the cross-meeting (its window reaches the
+    // phase week) and we're viewing that month. On the primary calendar the week
+    // carries no special meaning, so we leave it out. We derive it from the booking
+    // logic's OWN helpers (phaseWeekMonthKey/weekOfMonth) so the gold highlight can
+    // never contradict what the rules will let you book.
+    let phaseWeek = null;
     if (senior) {
       seniorState = await loadSeniorBookingState(senior);
-      if (!seniorState.grant) return Response.json({ availableDates: [] });
+      if (!seniorState.grant) return Response.json({ availableDates: [], phaseWeek: null });
+      const isCrossCalendar = instructor.slug === OTHER[senior.primary_teacher];
+      const monthKey = phaseWeekMonthKey(senior, seniorState.grant);
+      if (isCrossCalendar && monthKey && monthKey === monthStart.toFormat('yyyy-LL')) {
+        let pwStart = null;
+        let pwEnd = null;
+        for (let d = monthStart; d <= monthEnd; d = d.plus({ days: 1 })) {
+          if (weekOfMonth(d) === senior.phase) {
+            if (!pwStart) pwStart = d;
+            pwEnd = d;
+          }
+        }
+        if (pwStart) phaseWeek = { start: pwStart.toISODate(), end: pwEnd.toISODate() };
+      }
     }
 
     // Mirror getAvailableSlots: an Aaron block also blocks ART since they share a calendar.
@@ -138,7 +162,7 @@ export async function GET(request) {
       cursor = cursor.plus({ days: 1 });
     }
 
-    return Response.json({ availableDates });
+    return Response.json({ availableDates, phaseWeek });
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500 });
   }

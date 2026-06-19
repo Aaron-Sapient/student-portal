@@ -56,16 +56,14 @@ export function DocLink({ href, label }) {
 }
 
 // Soft-extruded square tile that frames a lucide icon (chooser rows, empty states).
-// muted: grays the glyph for locked/disabled rows.
-export function IconTile({ icon: Icon, size = 'md', muted = false }) {
+// muted: grays the glyph for locked/disabled rows. tone: 'gold' tints it ochre for
+// the monthly cross-meeting; defaults to the terracotta brand accent.
+export function IconTile({ icon: Icon, size = 'md', muted = false, tone = 'terracotta' }) {
   const dims = size === 'lg' ? 'h-16 w-16 rounded-3xl' : 'h-14 w-14 rounded-2xl';
   const glyph = size === 'lg' ? 'h-7 w-7' : 'h-6 w-6';
+  const color = muted ? 'text-ink-faint' : tone === 'gold' ? 'text-ochre' : 'text-terracotta';
   return (
-    <span
-      className={`neu-chip flex shrink-0 items-center justify-center ${
-        muted ? 'text-ink-faint' : 'text-terracotta'
-      } ${dims}`}
-    >
+    <span className={`neu-chip flex shrink-0 items-center justify-center ${color} ${dims}`}>
       <Icon className={glyph} strokeWidth={1.8} />
     </span>
   );

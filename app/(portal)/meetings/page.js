@@ -44,24 +44,45 @@ function artState(data) {
   return { bookable: false, note: 'Booked this week' };
 }
 
+// Soft role pill that sits beside a name (e.g. "Primary Reader" / "Secondary
+// Reader"). Reuses the "Beta" pill recipe from homeSections — including its
+// optical-centering for all-caps tracked text — colored to its card's accent.
+function RoleTag({ label, tone }) {
+  const skin =
+    tone === 'gold'
+      ? 'bg-ochre/[0.14] text-ochre'
+      : 'bg-terracotta/[0.1] text-terracotta-deep';
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center justify-center rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.12em] ${skin}`}
+    >
+      <span className="-mr-[0.12em] translate-y-[0.5px] leading-none">{label}</span>
+    </span>
+  );
+}
+
 // Bookable vs locked must read at a glance: bookable rows carry the brand icon
 // tile, a FILLED terracotta "Book →" pill, and lift; locked rows are pressed-in,
 // grayed, and lead with the padlock. Checked-in rows are a third state — a
 // raised confirmation with a moss pill, nothing lock-like about it.
-function OptionCard({ href, icon: Icon, name, role, state, loading, delay }) {
+function OptionCard({ href, icon: Icon, name, role, state, loading, delay, accent, tag }) {
   const done = !!state.checkedIn;
+  const gold = accent === 'gold';
   const inner = (
     <>
-      <IconTile icon={Icon} muted={!state.bookable && !done} />
+      <IconTile icon={Icon} muted={!state.bookable && !done} tone={gold ? 'gold' : 'terracotta'} />
       <div className="min-w-0 flex-1">
-        <p
-          className={`font-display text-xl font-semibold leading-tight ${
-            state.bookable || done ? 'text-ink' : 'text-ink-soft'
-          }`}
-        >
-          {name}
-        </p>
-        <p className="mt-0.5 text-sm text-ink-soft">{role}</p>
+        <div className="flex items-center gap-2">
+          <p
+            className={`min-w-0 font-display text-xl font-semibold leading-tight ${
+              state.bookable || done ? 'text-ink' : 'text-ink-soft'
+            }`}
+          >
+            {name}
+          </p>
+          {tag && <RoleTag label={tag.label} tone={tag.tone} />}
+        </div>
+        <p className={`mt-0.5 text-sm ${gold ? 'font-medium text-ochre' : 'text-ink-soft'}`}>{role}</p>
         {!loading && (
           <span
             className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] ${
@@ -97,12 +118,13 @@ function OptionCard({ href, icon: Icon, name, role, state, loading, delay }) {
   );
 
   const base = 'portal-rise flex items-center gap-4 rounded-3xl p-5';
+  const ring = gold ? ' ring-1 ring-inset ring-ochre/35' : '';
   if (state.bookable) {
     return (
       <Link
         href={href}
         style={{ animationDelay: `${delay}ms` }}
-        className={`${base} group neu-raised transition-transform active:scale-[0.99]`}
+        className={`${base}${ring} group neu-raised transition-transform active:scale-[0.99]`}
       >
         {inner}
       </Link>
@@ -110,7 +132,7 @@ function OptionCard({ href, icon: Icon, name, role, state, loading, delay }) {
   }
   if (done) {
     return (
-      <div style={{ animationDelay: `${delay}ms` }} className={`${base} neu-raised`}>
+      <div style={{ animationDelay: `${delay}ms` }} className={`${base}${ring} neu-raised`}>
         {inner}
       </div>
     );
@@ -226,8 +248,9 @@ function SeniorBanner({ s }) {
       </p>
       <p className="mt-1 text-sm text-ink-soft">{s.packageNote}</p>
       {s.crossOwed && (
-        <p className="mt-1 text-sm text-ink-soft">
-          Includes your monthly cross-meeting with <span className="text-terracotta">{s.secondaryName}</span>.
+        <p className="mt-2.5 inline-flex items-center gap-1.5 rounded-full bg-ochre/[0.12] px-3 py-1 text-[11px] font-semibold text-ochre">
+          <span className="h-1.5 w-1.5 rounded-full bg-ochre" />
+          Monthly cross-meeting with {s.secondaryName}
         </p>
       )}
       <p className="mt-2 text-xs font-semibold uppercase tracking-[0.1em] text-ink-faint">
@@ -265,6 +288,7 @@ function SeniorBookSection({ data, loading }) {
   const cards = (s.meetings || []).map((m) => ({
     slug: m.slug,
     name: m.name,
+    kind: m.kind,
     role:
       (m.kind === 'cross' ? 'Monthly cross-meeting' : 'Your teacher') +
       (m.window ? ` · ${fmtRange(m.window.start, m.window.end)}` : ''),
@@ -301,6 +325,11 @@ function SeniorBookSection({ data, loading }) {
               state={{ bookable: true, label: lenLabel(c.durations) }}
               loading={loading}
               delay={110 + i * 60}
+              accent={c.kind === 'cross' ? 'gold' : undefined}
+              tag={{
+                label: c.kind === 'cross' ? 'Secondary Reader' : 'Primary Reader',
+                tone: c.kind === 'cross' ? 'gold' : 'primary',
+              }}
             />
           ))
         )}

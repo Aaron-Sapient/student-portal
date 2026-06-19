@@ -35,6 +35,15 @@ function formatDateStr(date) {
   const d = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
 }
+// "Jun 20–26", or "Jun 27 – Jul 2" across a month boundary (matches the meetings card).
+function fmtRange(startISO, endISO) {
+  const a = DateTime.fromISO(startISO, { zone: ZONE });
+  const b = DateTime.fromISO(endISO, { zone: ZONE });
+  if (!a.isValid || !b.isValid) return '';
+  return a.month === b.month
+    ? `${a.toFormat('LLL d')}–${b.toFormat('d')}`
+    : `${a.toFormat('LLL d')} – ${b.toFormat('LLL d')}`;
+}
 function buildCalendarGrid(year, month) {
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -101,6 +110,10 @@ export default function BookingFlow({ slug }) {
   // Seniors: the package's bookable lengths, e.g. ['40min','20min'] (Essential) or
   // ['30min'] (VIP/Comprehensive). null for underclassmen (15/30 token flow).
   const [seniorDurations, setSeniorDurations] = useState(null);
+  // Senior calendar context from /api/validateBooking: { kind, eligibleWindow,
+  // grantWindow, phase }. null for underclassmen. Drives the context header and
+  // the empty-state path; phaseWeek (per month, below) drives the gold coloring.
+  const [seniorMeta, setSeniorMeta] = useState(null);
   const durationMins = parseInt(duration, 10) || 30;
   const meetingLabel = `${durationMins}-min Zoom`;
 
@@ -108,6 +121,9 @@ export default function BookingFlow({ slug }) {
   const [calMonth, setCalMonth] = useState(today.getMonth());
   const [calYear, setCalYear] = useState(today.getFullYear());
   const [availableDates, setAvailableDates] = useState(() => new Set());
+  // The viewed month's cross-meeting week {start,end} ISO (seniors only), from
+  // getMonthAvailability — present only in the month the cross-meeting belongs to.
+  const [phaseWeek, setPhaseWeek] = useState(null);
   const [loadingMonth, setLoadingMonth] = useState(true);
   const [selectedDate, setSelectedDate] = useState(null);
   const [slots, setSlots] = useState([]);
@@ -140,6 +156,12 @@ export default function BookingFlow({ slug }) {
           const ds = (data.durations && data.durations.length ? data.durations : [30]).map((n) => `${n}min`);
           setSeniorDurations(ds);
           setDuration(ds[0]);
+          setSeniorMeta({
+            kind: data.kind || 'primary',
+            eligibleWindow: data.eligibleWindow || null,
+            grantWindow: data.grantWindow || null,
+            phase: data.phase,
+          });
         } else {
           setDuration(data.decision === '15min' ? '15min' : '30min');
         }
@@ -167,14 +189,16 @@ export default function BookingFlow({ slug }) {
     let cancelled = false;
     setLoadingMonth(true);
     setAvailableDates(new Set());
+    setPhaseWeek(null);
     fetch(`/api/getMonthAvailability?month=${calMonth}&year=${calYear}&duration=${durationMins}&instructor=${instructor.slug}`)
       .then((r) => r.json())
       .then((data) => {
         if (cancelled) return;
         setAvailableDates(new Set(data.availableDates || []));
+        setPhaseWeek(data.phaseWeek || null);
         setLoadingMonth(false);
       })
-      .catch(() => { if (!cancelled) { setAvailableDates(new Set()); setLoadingMonth(false); } });
+      .catch(() => { if (!cancelled) { setAvailableDates(new Set()); setPhaseWeek(null); setLoadingMonth(false); } });
     return () => { cancelled = true; };
   }, [calMonth, calYear, durationMins, instructor.slug, validating, authError, routedKind]);
 
@@ -359,12 +383,47 @@ export default function BookingFlow({ slug }) {
             </h1>
           </div>
         </div>
-        <p className="mt-2 pl-[3.75rem] text-sm text-ink-soft">
-          {seniorDurations && seniorDurations.length > 1
-            ? 'Choose a length, then pick a day and time.'
-            : 'Pick a day, then choose a time.'}
-        </p>
+        {!seniorMeta && (
+          <p className="mt-2 pl-[3.75rem] text-sm text-ink-soft">
+            {seniorDurations && seniorDurations.length > 1
+              ? 'Choose a length, then pick a day and time.'
+              : 'Pick a day, then choose a time.'}
+          </p>
+        )}
       </header>
+
+      {/* Senior context: which meeting this is + the window it's bookable in. The
+          monthly cross-meeting carries the gold language that also marks its week
+          in the calendar below, so the two never read as separate ideas. */}
+      {seniorMeta && (
+        <div
+          className={`mb-5 rounded-2xl px-4 py-3.5 ${
+            seniorMeta.kind === 'cross'
+              ? 'bg-ochre/[0.09] ring-1 ring-inset ring-ochre/25'
+              : 'neu-inset'
+          }`}
+        >
+          <p className="flex items-center gap-2 text-sm font-semibold text-ink">
+            {seniorMeta.kind === 'cross' && (
+              <span className="h-2 w-2 shrink-0 rounded-full bg-ochre" />
+            )}
+            {seniorMeta.kind === 'cross'
+              ? `Monthly cross-meeting with ${bodyName}`
+              : `Your weekly meeting with ${bodyName}`}
+          </p>
+          {seniorMeta.eligibleWindow && (
+            <p className="mt-1 text-[13px] leading-relaxed text-ink-soft">
+              {seniorMeta.kind === 'cross' ? 'Book any open day · ' : 'Book '}
+              <span className="font-semibold text-ink">
+                {fmtRange(seniorMeta.eligibleWindow.start, seniorMeta.eligibleWindow.end)}
+              </span>
+              {seniorMeta.kind === 'cross' && phaseWeek
+                ? ' — your cross-meeting week is marked in gold.'
+                : ''}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Essential seniors choose 1×40 or 2×20 each week */}
       {seniorDurations && seniorDurations.length > 1 && (
@@ -430,6 +489,10 @@ export default function BookingFlow({ slug }) {
             const baseDisabled = isPast || notBookable || tooSoon || overflow;
             const isAvailable = !baseDisabled && !loadingMonth && availableDates.has(dateStr);
             const isSelected = selectedDate && dateStr === formatDateStr(selectedDate);
+            // Two orthogonal channels: the FILL says whether the day is bookable
+            // (terracotta), the gold RING says it's part of the monthly cross-meeting
+            // week. A day can be both — bookable AND special.
+            const inPhaseWeek = !!phaseWeek && dateStr >= phaseWeek.start && dateStr <= phaseWeek.end;
             return (
               <button
                 key={i}
@@ -441,10 +504,12 @@ export default function BookingFlow({ slug }) {
                     ? 'bg-terracotta font-bold text-paper shadow-sm'
                     : isAvailable
                     ? 'bg-terracotta/[0.1] font-semibold text-terracotta-deep hover:bg-terracotta/20 active:scale-95'
+                    : inPhaseWeek && !overflow
+                    ? 'bg-ochre/[0.08] font-medium text-ochre'
                     : overflow
                     ? 'text-ink-faint/40'
                     : 'text-ink-faint/60'
-                }`}
+                }${inPhaseWeek ? ' ring-2 ring-inset ring-ochre/55' : ''}`}
               >
                 {date.getDate()}
               </button>
@@ -454,7 +519,33 @@ export default function BookingFlow({ slug }) {
         {loadingMonth && (
           <p className="mt-3 text-center text-xs text-ink-faint">Checking {bodyName}’s availability…</p>
         )}
+        {/* Legend appears only in the cross-meeting month, where the gold ring is
+            actually on screen and needs a key. */}
+        {phaseWeek && !loadingMonth && (
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 border-t border-sand/60 pt-3.5 text-[11px] font-medium text-ink-soft">
+            <span className="flex items-center gap-1.5">
+              <span className="h-3.5 w-3.5 rounded-md bg-terracotta/20" />
+              Open day
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="h-3.5 w-3.5 rounded-md ring-2 ring-inset ring-ochre/60" />
+              Cross-meeting week
+            </span>
+          </div>
+        )}
       </div>
+
+      {/* Seniors: never leave an empty grid as a silent "no". Say where the open
+          days actually are and how to get there. */}
+      {seniorMeta && !loadingMonth && availableDates.size === 0 && seniorMeta.grantWindow && (
+        <p className="mt-3 rounded-2xl bg-clay-50 px-4 py-3 text-center text-[13px] leading-relaxed text-ink-soft">
+          No open times with {bodyName} in {MONTH_NAMES[calMonth]}. You can book{' '}
+          <span className="font-semibold text-ink">
+            {fmtRange(seniorMeta.grantWindow.start, seniorMeta.grantWindow.end)}
+          </span>{' '}
+          — use the arrows to reach those days.
+        </p>
+      )}
 
       {/* recommended */}
       {recommended.length > 0 && (
