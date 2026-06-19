@@ -72,3 +72,6 @@ supabase/.temp/
 /tasks.md
 /senior_tab.md
 /supabase-migration.md
+
+# canonical local notes folder — handoffs, build plans, scratch (never commit)
+/_notes/
