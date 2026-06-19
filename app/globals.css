@@ -228,6 +228,86 @@ body {
 /* The writing page itself: comfortable measure + room to write. */
 .portal-root .mde-host .md-surface { min-height: 54vh; font-size: 17px; }
 
+/* ── Full-screen "zen" writing surface (/write/[doc]) ──────────────────────
+   The document fills the viewport on a pure-white (day) / pure-black (night)
+   canvas — no card, no chrome. Only the page background changes; the type
+   theme (serif terracotta headings, OS-adaptive ink) is inherited so the
+   white "paper" still reads as the portal. The editor surface is transparent,
+   so it shows this canvas through. */
+.write-zen {
+  background: #ffffff;
+  /* Full-bleed: the tab drawer slides from the screen edge, so square its outer
+     corners (the 16px default is for an editor nested in a rounded card). */
+  --mde-drawer-radius: 0px;
+}
+@media (prefers-color-scheme: dark) {
+  .write-zen { background: #000000; }
+}
+/* The editor element (== .mde-host) fills the flex column; its tab-stage owns
+   the scroll. The surface fills the stage so tapping anywhere keeps writing,
+   and (equal specificity, declared later) this wins over the 54vh rule above. */
+.write-zen .mde-host { background: transparent; }
+.write-zen .mde-host .md-surface {
+  min-height: 100%;
+  /* Generous reading gutters — the full-bleed surface lost the old card's
+     padding, so the text would otherwise hug the screen edge. Honors the
+     notch in landscape. (Top band stays from the editor's narrow-mode rule.) */
+  padding-left: max(28px, env(safe-area-inset-left));
+  padding-right: max(28px, env(safe-area-inset-right));
+  padding-bottom: 44px;
+}
+@media (min-width: 768px) {
+  /* Desktop: a centered, comfortable measure instead of edge-to-edge. */
+  .write-zen .mde-host .md-surface {
+    max-width: 760px;
+    margin-inline: auto;
+    padding-top: 48px;
+    padding-left: 28px;
+    padding-right: 28px;
+  }
+}
+
+/* Discreet floating controls that replace the removed top strip. */
+.write-tools {
+  position: fixed; z-index: 45;
+  right: max(14px, env(safe-area-inset-right));
+  bottom: max(14px, env(safe-area-inset-bottom));
+  display: flex; align-items: center; gap: 10px;
+  opacity: 0.82; transition: opacity 0.2s;
+}
+.write-tools:hover, .write-tools:focus-within { opacity: 1; }
+/* Phones: hide the save chip + version history entirely. Autosave still runs
+   silently; history is a desktop task. (Resolves the awkward bottom-corner
+   cluster on mobile.) */
+@media (max-width: 640px) {
+  .write-tools { display: none; }
+}
+.write-tool-btn {
+  display: grid; place-items: center; width: 38px; height: 38px;
+  border-radius: 12px; color: var(--color-ink-soft);
+  background: var(--neu-inset-bg);
+  box-shadow: 3px 3px 7px var(--neu-lo), -3px -3px 7px var(--neu-hi);
+  transition: color 0.14s, box-shadow 0.14s;
+}
+.write-tool-btn:hover { color: var(--color-terracotta-deep); }
+.write-tool-btn:active {
+  box-shadow: inset 2px 2px 5px var(--neu-lo), inset -2px -2px 5px var(--neu-hi);
+}
+
+/* Version history as a bottom-sheet (mobile) / centered modal (desktop). */
+.write-overlay {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: flex-end; justify-content: center;
+  padding: 12px 12px max(16px, env(safe-area-inset-bottom));
+  background: rgba(0, 0, 0, 0.4);
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  animation: portalRise 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@media (min-width: 640px) {
+  .write-overlay { align-items: center; padding: 24px; }
+}
+.write-overlay-card { width: 100%; max-width: 460px; max-height: 82vh; overflow-y: auto; }
+
 /* ── Check-in "How'd the week go?" clay blob ──────────────────────────────
    Ported from the habit tracker's check-in ritual: a pressable lump of clay
    that morphs with the slider — plum lump under a thumbprint at the low end,

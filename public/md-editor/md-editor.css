@@ -110,6 +110,13 @@
   .md-surface .ln.meta.active { min-height: 1.7em; line-height: 1.7; overflow: visible; opacity: 1; }
   .md-surface .ln.meta.active .tok.cm, .md-surface .ln.meta.active .tok.cm > .mk { display: inline; }
 
+  /* ---------- DOCS-8 invisible styling (@{s:…}…@{/s}) ---------- */
+  /* The styled run gets its colour/font/size from inline styles set in JS (sanitized).
+     Its markers NEVER render — unlike %% they don't even peek when the caret enters. */
+  .md-surface .tok.sty { border-radius: 3px; }
+  .md-surface .tok.sty[style*="background"] { padding: 0 .12em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+  .md-surface .stymk { display: none; }
+
   /* ---------- smart chips (people / dates) ---------- */
   .md-surface .chip {
     display: inline-flex; align-items: center; gap: 5px;
@@ -211,44 +218,281 @@
   .md-surface .mtable-wrap:hover .mcol-grip::before { background: color-mix(in srgb, var(--mde-green-soft) 45%, transparent); }
   .md-surface .mcol-grip:hover::before, .md-surface .mcol-grip.dragging::before { background: var(--mde-green); }
 
-  /* ---------- document tabs (MarkdownTabs wrapper) ---------- */
-  /* Defaults reproduce the Helthy clay look; a host re-skins via --mde-tab-*. */
+  /* ---------- document tabs (MarkdownTabs wrapper) — LEFT rail, collapsible ----------
+     A vertical sidebar separated from the editor by a single hairline (no shadow);
+     a panel icon collapses it to a thin reveal handle. Re-skin via --mde-tab-*. */
   :root {
-    --mde-tab-gap:           6px;
-    --mde-tab-radius:        10px;
-    --mde-tab-bg:            var(--mde-paper);
-    --mde-tab-fg:            var(--mde-ink-soft);
-    --mde-tab-active-bg:     var(--mde-card);
-    --mde-tab-active-fg:     var(--mde-green-deep);
-    --mde-tab-shadow:        var(--mde-clay-raise-sm);
-    --mde-tab-active-shadow: var(--mde-clay-sink-sm);
-    --mde-tab-add-fg:        var(--mde-green-soft);
-    --mde-tab-stage-gap:     14px;
+    --mde-tab-radius:    9px;
+    --mde-rail-width:    234px;
+    --mde-tab-fg:        var(--mde-ink-soft);
+    --mde-tab-active-bg: var(--mde-leaf);
+    --mde-tab-active-fg: var(--mde-green-deep);
   }
-  .mde-tabs { display: flex; flex-direction: column; gap: var(--mde-tab-stage-gap); min-height: 0; }
+  .mde-tabs { display: flex; flex-direction: row; align-items: stretch; min-height: 0; position: relative; container-type: inline-size; container-name: mde; }
   .mde-tabrail {
-    display: flex; flex-wrap: nowrap; gap: var(--mde-tab-gap); overflow-x: auto;
-    padding: 4px 2px; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    flex: 0 0 var(--mde-rail-width); width: var(--mde-rail-width); display: flex; flex-direction: column;
+    min-height: 0; overflow: hidden; border-right: 1px solid var(--mde-hairline);
+    transition: flex-basis .2s var(--mde-clay-ease), width .2s var(--mde-clay-ease), opacity .15s, border-color .15s;
   }
-  .mde-tabrail::-webkit-scrollbar { height: 0; width: 0; }
+  .mde-tabs.railcollapsed .mde-tabrail { flex-basis: 0; width: 0; opacity: 0; border-right-color: transparent; pointer-events: none; }
+  .mde-tabrail-head { display: flex; align-items: center; gap: 6px; padding: 12px 10px 8px 14px; }
+  .mde-tabrail-title { flex: 1 1 auto; font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--mde-ink-faint); white-space: nowrap; overflow: hidden; }
+  .mde-tab-collapse, .mde-tab-add, .mde-tab-reveal {
+    appearance: none; border: 0; background: transparent; cursor: pointer; flex: none;
+    width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px;
+    color: var(--mde-ink-faint); transition: color .12s, background .12s;
+  }
+  .mde-tab-collapse svg, .mde-tab-add svg, .mde-tab-reveal svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .mde-tab-collapse:hover, .mde-tab-add:hover, .mde-tab-reveal:hover { color: var(--mde-green-deep); background: var(--mde-leaf); }
+  .mde-tab-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 2px 10px 12px; display: flex; flex-direction: column; gap: 2px; }
   .mde-tab {
-    flex: 0 0 auto; appearance: none; border: 0; cursor: pointer; font-family: var(--mde-sans);
-    font-size: 13.5px; font-weight: 600; color: var(--mde-tab-fg); background: var(--mde-tab-bg);
-    border-radius: var(--mde-tab-radius); padding: 7px 14px; box-shadow: var(--mde-tab-shadow);
-    white-space: nowrap; max-width: 230px; transition: color .15s, box-shadow .18s var(--mde-clay-ease), background .15s, opacity .15s;
+    display: flex; align-items: center; gap: 7px;
+    appearance: none; border: 0; cursor: pointer; font-family: var(--mde-sans); text-align: left;
+    font-size: 13.5px; font-weight: 600; color: var(--mde-tab-fg); background: transparent;
+    border-radius: var(--mde-tab-radius); padding: 7px 6px 7px 12px; white-space: nowrap;
+    transition: color .12s, background .12s, opacity .15s, box-shadow .12s;
   }
-  .mde-tab:hover { color: var(--mde-tab-active-fg); }
-  .mde-tab.active { color: var(--mde-tab-active-fg); background: var(--mde-tab-active-bg); box-shadow: var(--mde-tab-active-shadow); }
+  .mde-tab:hover { color: var(--mde-tab-active-fg); background: var(--mde-leaf); }
+  /* no left ridge — a clean Google-Docs-style pill (just the soft fill) */
+  .mde-tab.active { color: var(--mde-tab-active-fg); background: var(--mde-tab-active-bg); }
   .mde-tab.dim { opacity: .5; }
-  .mde-tab-label { display: inline-block; outline: none; overflow: hidden; text-overflow: ellipsis; max-width: 100%; vertical-align: bottom; }
+  .mde-tab-emoji { flex: none; font-size: 15px; line-height: 1; width: 1.3em; text-align: center; }
+  .mde-tab-label { flex: 1 1 auto; min-width: 0; display: block; outline: none; overflow: hidden; text-overflow: ellipsis; }
   .mde-tab-label[contenteditable="true"] { cursor: text; min-width: 2ch; text-overflow: clip; }
-  .mde-tab-add {
-    flex: 0 0 auto; appearance: none; border: 0; cursor: pointer; width: 34px; height: 34px;
-    border-radius: var(--mde-tab-radius); background: var(--mde-tab-bg); color: var(--mde-tab-add-fg);
-    font-size: 21px; line-height: 1; box-shadow: var(--mde-tab-shadow); display: grid; place-items: center;
-    transition: box-shadow .18s var(--mde-clay-ease), color .15s;
+  .mde-tab-empty { font-family: var(--mde-sans); font-size: 13px; color: var(--mde-ink-faint); padding: 8px 6px; }
+  /* The floating reveal handle mirrors the TOC button exactly (.mde-toc-btn) so the
+     two top-corner controls read as one matched pair, not two unrelated chips. */
+  .mde-tab-reveal {
+    position: absolute; top: 7px; left: 12px; z-index: 5; display: none;
+    width: 38px; height: 38px; border: none; border-radius: 11px;
+    color: var(--mde-ink-soft); background: var(--mde-clay-card);
+    box-shadow: var(--mde-clay-raise-sm);
+    transition: color .14s, box-shadow .14s;
   }
-  .mde-tab-add:hover { color: var(--mde-tab-active-fg); }
-  .mde-tab-add:active { box-shadow: var(--mde-tab-active-shadow); }
-  .mde-tab-empty { font-family: var(--mde-sans); font-size: 13px; color: var(--mde-ink-faint); padding: 8px 4px; }
-  .mde-tab-stage { min-height: 0; }
+  .mde-tab-reveal svg { width: 20px; height: 20px; }
+  .mde-tab-reveal:hover { color: var(--mde-green-deep); background: var(--mde-clay-card); }
+  .mde-tab-reveal:active { box-shadow: var(--mde-clay-sink-sm); }
+  .mde-tabs.railcollapsed .mde-tab-reveal { display: grid; }
+  .mde-tab-stage { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; }
+
+  /* per-tab kebab (⋮) — appears on hover/active, opens the options menu */
+  .mde-tab-kebab {
+    flex: none; appearance: none; border: 0; background: transparent; cursor: pointer;
+    width: 24px; height: 24px; margin: -2px -1px -2px 0; display: grid; place-items: center;
+    border-radius: 7px; color: var(--mde-ink-faint); opacity: 0;
+    transition: opacity .12s, color .12s, background .12s;
+  }
+  .mde-tab:hover .mde-tab-kebab, .mde-tab.active .mde-tab-kebab, .mde-tab-kebab.open { opacity: 1; }
+  .mde-tab-kebab:hover, .mde-tab-kebab.open { color: var(--mde-green-deep); background: var(--mde-card); }
+  .mde-tab-kebab svg { width: 16px; height: 16px; }
+  .mde-tab-kebab svg circle { fill: currentColor; stroke: none; }
+  /* drag-to-reorder: the dragged row dims; a hairline shows the drop edge */
+  .mde-tab[draggable="true"] { -webkit-user-select: none; user-select: none; }
+  .mde-tab.dragging { opacity: .35; }
+  .mde-tab.drop-before { box-shadow: inset 0 2px 0 var(--mde-green); }
+  .mde-tab.drop-after  { box-shadow: inset 0 -2px 0 var(--mde-green); }
+
+  /* tab options menu + emoji picker (body-mounted; --mde-* tokens are global so they theme) */
+  .mde-tab-menu, .mde-emoji-pop {
+    position: fixed; z-index: 330; font-family: var(--mde-sans);
+    background: var(--mde-clay-card); border: 1px solid var(--mde-hairline); border-radius: 13px;
+    box-shadow: 0 18px 48px rgba(42,82,50,.20), 0 4px 12px rgba(0,0,0,.07);
+    padding: 6px; display: none;
+  }
+  .mde-tab-menu { min-width: 186px; }
+  .mde-tab-menu.open, .mde-emoji-pop.open { display: block; animation: atIn .12s var(--mde-clay-ease) both; }
+  .mde-tab-menu-item {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 8px 10px; border: 0; background: transparent; cursor: pointer;
+    border-radius: 9px; font-family: var(--mde-sans); font-size: 13.5px; font-weight: 600;
+    color: var(--mde-ink); text-align: left;
+  }
+  .mde-tab-menu-item:hover { background: var(--mde-leaf); color: var(--mde-green-deep); }
+  .mde-tab-menu-item svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+  .mde-tab-menu-item.danger { color: #c0392b; }
+  .mde-tab-menu-item.danger:hover { background: color-mix(in srgb, #c0392b 13%, transparent); color: #c0392b; }
+  .mde-tab-menu-sep { height: 1px; background: var(--mde-hairline); margin: 5px 6px; }
+  .mde-emoji-pop { width: 256px; }
+  .mde-emoji-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; max-height: 224px; overflow-y: auto; }
+  .mde-emoji-cell { appearance: none; border: 0; background: transparent; cursor: pointer; font-size: 19px; line-height: 1; padding: 5px 0; border-radius: 8px; display: grid; place-items: center; }
+  .mde-emoji-cell:hover { background: var(--mde-leaf); }
+  .mde-emoji-none { width: 100%; margin-top: 6px; padding: 8px; border: 0; border-top: 1px solid var(--mde-hairline); background: transparent; cursor: pointer; font-family: var(--mde-sans); font-size: 13px; font-weight: 600; color: var(--mde-ink-soft); }
+  .mde-emoji-none:hover { color: var(--mde-green-deep); }
+  /* transient "Link copied" toast, centered in the editor stage */
+  .mde-tab-toast {
+    position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%) translateY(8px);
+    z-index: 60; pointer-events: none; opacity: 0;
+    background: var(--mde-ink); color: var(--mde-paper); font-family: var(--mde-sans);
+    font-size: 12.5px; font-weight: 600; padding: 7px 14px; border-radius: 999px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.18); transition: opacity .18s, transform .18s;
+  }
+  .mde-tab-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ---- narrow editors → the rail becomes an overlay DRAWER (container query) ----
+     Keyed on the editor's OWN inline-size (.mde-tabs is the query container), so it
+     triggers on a phone AND when the editor is embedded in a narrow column. The rail
+     floats over a full-width editor with a tap-to-close scrim; the reveal handle opens
+     it, and the host JS defaults it closed + closes it after a tab is picked. */
+  .mde-tab-scrim { display: none; }
+  @container mde (max-width: 600px) {
+    .mde-tab-stage { width: 100%; }
+    /* On a phone the floating tabs/reveal (top-left) and TOC (top-right) buttons
+       sit at the editor's top edge, where the document title/first line also
+       starts — so they collide. Reserve a top band so the text begins BELOW the
+       button row (the Obsidian-mobile layout): buttons higher than text. */
+    .md-surface { padding-top: 56px; }
+    /* Hidden drawer: overshoot the translate so it clears any host padding the
+       rail's containing block (.mde-tabs) sits inside — translateX(-101%) only
+       clears the rail's OWN left edge, which leaves a sliver when the editor is
+       embedded in a padded card. visibility:hidden (delayed so the slide-out
+       still animates) is the belt-and-suspenders guarantee nothing ever peeks. */
+    .mde-tabrail {
+      position: absolute; top: 0; bottom: 0; left: 0; z-index: 40;
+      width: min(82%, 300px); flex-basis: auto; opacity: 1;
+      background: var(--mde-card); border-right: 1px solid var(--mde-hairline);
+      /* Round the drawer's outer (left) corners so that, when the editor sits inside a
+         padded/rounded host card, the overlay reads as an intentional rounded panel
+         rather than a rectangle cropped flat against the card. --mde-drawer-radius is
+         host-overridable (default tracks a typical inner-card radius). */
+      border-radius: var(--mde-drawer-radius, 16px) 0 0 var(--mde-drawer-radius, 16px);
+      transform: translateX(-115%); visibility: hidden;
+      transition: transform .24s var(--mde-clay-ease), visibility 0s linear .24s;
+    }
+    .mde-tabs.railcollapsed .mde-tabrail { width: min(82%, 300px); flex-basis: auto; opacity: 1; transform: translateX(-115%); visibility: hidden; border-right-color: var(--mde-hairline); pointer-events: none; }
+    .mde-tabs:not(.railcollapsed) .mde-tabrail { transform: none; visibility: visible; box-shadow: 8px 0 30px rgba(0,0,0,.20); transition: transform .24s var(--mde-clay-ease), visibility 0s linear 0s; }
+    .mde-tab-scrim { display: block; position: absolute; inset: 0; z-index: 35; background: rgba(0,0,0,.34); border-radius: var(--mde-drawer-radius, 16px); opacity: 0; pointer-events: none; transition: opacity .24s; }
+    .mde-tabs:not(.railcollapsed) .mde-tab-scrim { opacity: 1; pointer-events: auto; }
+  }
+
+  /* ---------- DOCS-4 command palette (Option+/) ---------- */
+  .mde-cmdpal {
+    position: fixed; z-index: 320; width: min(440px, calc(100vw - 24px));
+    background: var(--mde-clay-card); border: 1px solid var(--mde-hairline); border-radius: 16px;
+    box-shadow: 0 20px 54px rgba(42,82,50,.22), 0 4px 12px rgba(0,0,0,.07);
+    padding: 8px; display: none;
+  }
+  .mde-cmdpal.open { display: block; animation: atIn .14s var(--mde-clay-ease) both; }
+  .mde-cmd-head { display: flex; align-items: center; gap: 9px; padding: 6px 8px 9px; border-bottom: 1px solid var(--mde-hairline); margin-bottom: 6px; }
+  .mde-cmd-mag { width: 17px; height: 17px; flex: none; stroke: var(--mde-ink-faint); fill: none; stroke-width: 2; stroke-linecap: round; }
+  .mde-cmd-input {
+    flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--mde-ink);
+    font-family: var(--mde-sans); font-size: 15.5px; padding: 0;
+  }
+  .mde-cmd-input::placeholder { color: var(--mde-ink-faint); }
+  .mde-cmd-list { max-height: 332px; overflow-y: auto; }
+  .mde-cmd-crumb { font-size: 12px; font-weight: 600; color: var(--mde-green-soft); padding: 4px 10px 7px; }
+  .mde-cmd-group { font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--mde-ink-faint); padding: 9px 10px 4px; }
+  .mde-cmd-item { display: flex; align-items: center; gap: 11px; padding: 8px 10px; border-radius: 10px; cursor: pointer; }
+  .mde-cmd-item.sel { background: var(--mde-leaf); }
+  .mde-cmd-t { font-size: 14.5px; color: var(--mde-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mde-cmd-sw { width: 15px; height: 15px; flex: none; border-radius: 5px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+  .mde-cmd-sw.blank { background: transparent; box-shadow: none; }
+  .mde-cmd-empty { padding: 16px 12px; font-size: 13px; color: var(--mde-ink-faint); text-align: center; }
+
+  /* ---------- DOCS-TOC — table of contents (right-docked H1/H2 outline) ----------
+     .mde-toc-root is positioned by JS to overlay the editor stage; the button and
+     panel dock within it. Inherits the active --mde-* theme. */
+  .mde-toc-root {
+    position: fixed; z-index: 280; overflow: hidden; pointer-events: none;
+    font-family: var(--mde-sans);
+  }
+  .mde-toc-root svg { display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .mde-toc-btn {
+    position: absolute; top: 7px; right: 12px; width: 38px; height: 38px; pointer-events: auto;
+    display: grid; place-items: center; border: none; cursor: pointer; border-radius: 11px;
+    color: var(--mde-ink-soft); background: var(--mde-clay-card); box-shadow: var(--mde-clay-raise-sm);
+    transition: color .14s, box-shadow .14s, opacity .18s var(--mde-clay-ease);
+  }
+  .mde-toc-btn svg { width: 20px; height: 20px; }
+  .mde-toc-btn svg circle { fill: currentColor; stroke: none; }
+  .mde-toc-btn:hover { color: var(--mde-green-deep); }
+  .mde-toc-btn:active { box-shadow: var(--mde-clay-sink-sm); }
+  .mde-toc-root.open .mde-toc-btn { opacity: 0; pointer-events: none; }
+  /* While the tabs DRAWER is open (narrow mode), the floating TOC button would sit
+     bright on top of the drawer's dark scrim and read as a glowing artifact. The
+     host tab wrapper toggles .rail-open on the (body-mounted) TOC root to fade it
+     out — it's irrelevant while the drawer owns the screen anyway. */
+  .mde-toc-root.rail-open .mde-toc-btn { opacity: 0; pointer-events: none; }
+
+  .mde-toc-panel {
+    position: absolute; top: 0; right: 0; bottom: 0; width: min(290px, 86%); pointer-events: none;
+    display: flex; flex-direction: column; background: var(--mde-card);
+    border-left: 1px solid var(--mde-hairline);
+    transform: translateX(106%); opacity: 0; transition: transform .24s var(--mde-clay-ease), opacity .24s var(--mde-clay-ease);
+  }
+  .mde-toc-root.open .mde-toc-panel { transform: none; opacity: 1; pointer-events: auto; }
+  .mde-toc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 13px 12px 9px 16px; }
+  .mde-toc-title { font-size: 11px; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; color: var(--mde-ink-faint); }
+  .mde-toc-x { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border: none; background: transparent; cursor: pointer; border-radius: 8px; color: var(--mde-ink-faint); }
+  .mde-toc-x svg { width: 16px; height: 16px; }
+  .mde-toc-x:hover { color: var(--mde-ink); background: var(--mde-leaf); }
+  .mde-toc-searchwrap { position: relative; display: flex; align-items: center; margin: 0 12px 8px; padding: 0 10px; border-radius: 10px; background: var(--mde-paper); box-shadow: var(--mde-clay-sink-sm); }
+  .mde-toc-searchwrap svg { width: 15px; height: 15px; flex: none; color: var(--mde-ink-faint); }
+  .mde-toc-search { flex: 1; min-width: 0; border: none; outline: none; background: transparent; color: var(--mde-ink); font-family: var(--mde-sans); font-size: 13.5px; padding: 8px 6px; }
+  .mde-toc-search::placeholder { color: var(--mde-ink-faint); }
+  .mde-toc-list { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 10px 14px; }
+  .mde-toc-list::-webkit-scrollbar { width: 8px; }
+  .mde-toc-list::-webkit-scrollbar-thumb { background: var(--mde-hairline); border-radius: 8px; }
+  .mde-toc-row { display: flex; align-items: center; }
+  .mde-toc-row.lvl1 { position: relative; }
+  .mde-toc-twist { position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; display: grid; place-items: center; border: none; background: transparent; cursor: pointer; padding: 0; color: var(--mde-ink-faint); border-radius: 5px; }
+  .mde-toc-twist svg { width: 13px; height: 13px; transform: rotate(90deg); transition: transform .15s var(--mde-clay-ease); }
+  .mde-toc-twist.collapsed svg { transform: rotate(0deg); }
+  .mde-toc-twist.ghost { visibility: hidden; }
+  .mde-toc-twist:hover { color: var(--mde-green-deep); }
+  .mde-toc-link {
+    flex: 1; min-width: 0; text-align: left; border: none; background: transparent; cursor: pointer;
+    font-family: var(--mde-sans); color: var(--mde-ink-soft); border-radius: 8px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: background .1s, color .1s;
+  }
+  .mde-toc-row.lvl1 > .mde-toc-link { font-size: 14px; font-weight: 600; color: var(--mde-ink); padding: 6px 9px 6px 22px; }
+  .mde-toc-row.lvl2 > .mde-toc-link { font-size: 13px; padding: 5px 9px 5px 12px; }
+  .mde-toc-link:hover { background: var(--mde-leaf); color: var(--mde-green-deep); }
+  .mde-toc-link.active { background: var(--mde-leaf); color: var(--mde-green-deep); box-shadow: inset 2px 0 0 var(--mde-green); }
+  .mde-toc-children { margin: 1px 0 2px 10px; padding-left: 10px; border-left: 1px solid var(--mde-hairline); }
+  .mde-toc-empty { padding: 18px 10px; font-size: 13px; color: var(--mde-ink-faint); text-align: center; }
+
+  /* ======================================================================
+     DOCS-6 — REAL dark mode. A full --mde-* token swap (not an inverted hack).
+     "auto": the OS preference drives it, unless a host pins .mde-light. A host
+     or the palette's "Toggle dark mode" sets .mde-dark / .mde-light on <html>.
+     Tokens cascade to the body-mounted popovers (menu, grid, palette) too.
+     ====================================================================== */
+  :root.mde-dark, :root.mde-dark body {
+    --mde-green:       #6fbf86;
+    --mde-green-deep:  #8fd6a3;
+    --mde-green-soft:  #5a9a6f;
+    --mde-leaf:        #18181b;
+    --mde-leaf-line:   #27272a;
+    --mde-paper:       #000000;
+    --mde-card:        #0c0c0c;
+    --mde-ink:         #ededed;
+    --mde-ink-soft:    #a1a1aa;
+    --mde-ink-faint:   #6b6b73;
+    --mde-hairline:    #2a2a2a;
+    --mde-amber:       #d9a657;
+    --mde-amber-soft:  #2a2212;
+    --mde-clay-card:   #0c0c0c;
+    --mde-clay-dark:   rgba(0, 0, 0, .6);
+    --mde-clay-light:  rgba(255, 255, 255, .03);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not(.mde-light):not(.mde-dark), :root:not(.mde-light):not(.mde-dark) body {
+      --mde-green:       #6fbf86;
+      --mde-green-deep:  #8fd6a3;
+      --mde-green-soft:  #5a9a6f;
+      --mde-leaf:        #18181b;
+      --mde-leaf-line:   #27272a;
+      --mde-paper:       #000000;
+      --mde-card:        #0c0c0c;
+      --mde-ink:         #ededed;
+      --mde-ink-soft:    #a1a1aa;
+      --mde-ink-faint:   #6b6b73;
+      --mde-hairline:    #2a2a2a;
+      --mde-amber:       #d9a657;
+      --mde-amber-soft:  #2a2212;
+      --mde-clay-card:   #0c0c0c;
+      --mde-clay-dark:   rgba(0, 0, 0, .6);
+      --mde-clay-light:  rgba(255, 255, 255, .03);
+    }
+  }

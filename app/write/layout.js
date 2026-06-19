@@ -4,6 +4,15 @@ export const metadata = {
   title: 'Write · Admissions.Partners',
 };
 
+// Tint the iOS Safari chrome to match the pure white/black writing canvas so the
+// document bleeds seamlessly into the browser UI (no warm portal bar above it).
+export const viewport = {
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#ffffff' },
+    { media: '(prefers-color-scheme: dark)', color: '#000000' },
+  ],
+};
+
 // Full-screen, chromeless word-processor surface (opened in a new browser tab
 // from the Colleges cards). Reuses PortalShell only for the design tokens —
 // fonts, the .portal-root scope the --mde-* skin + neu-* classes need, the warm

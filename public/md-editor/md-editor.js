@@ -19,6 +19,52 @@
     const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g,
       c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+    /* ----- DOCS-8 invisible styling: parse + SANITIZE a @{s:…} spec -----
+       A spec is "key=val;key=val". Every value is whitelisted before it ever
+       reaches the DOM/clipboard, so the in-band syntax can never inject CSS. */
+    const FONT_STACKS = {
+      sans:    'var(--mde-sans)',
+      serif:   'var(--mde-serif)',
+      mono:    'var(--mde-mono)',
+      poppins: '"Poppins", var(--mde-sans)',
+      georgia: 'Georgia, "Times New Roman", serif',
+      times:   '"Times New Roman", Times, serif',
+      arial:   'Arial, Helvetica, sans-serif',
+      courier: '"Courier New", ui-monospace, monospace',
+    };
+    function safeColor(v) {
+      v = String(v == null ? "" : v).trim();
+      if (/^#[0-9a-fA-F]{3,8}$/.test(v)) return v;        // #abc / #aabbcc / #aabbccdd
+      if (/^[a-zA-Z]{1,24}$/.test(v)) return v.toLowerCase(); // CSS named color
+      return null;
+    }
+    function safeNum(v, lo, hi) { const n = parseFloat(v); return (isFinite(n) && n >= lo && n <= hi) ? n : null; }
+    function parseStyleSpec(spec) {
+      const out = {};
+      String(spec == null ? "" : spec).split(";").forEach(part => {
+        const eq = part.indexOf("="); if (eq < 0) return;
+        const k = part.slice(0, eq).trim().toLowerCase(), v = part.slice(eq + 1).trim();
+        if (k) out[k] = v;
+      });
+      return out;
+    }
+    // build a sanitized {prop:value} list once; reused for DOM styling AND html export
+    function styleDecls(spec) {
+      const m = parseStyleSpec(spec), d = [];
+      let c;
+      if (m.c  && (c = safeColor(m.c)))  d.push(["color", c]);
+      if (m.bg && (c = safeColor(m.bg))) d.push(["background-color", c]);
+      if (m.f  && FONT_STACKS[m.f])      d.push(["font-family", FONT_STACKS[m.f]]);
+      if (m.sz && (c = safeNum(m.sz, 0.5, 4))) d.push(["font-size", c + "em"]);
+      if (m.u === "1") d.push(["text-decoration", "underline"]);
+      return d;
+    }
+    function applyStyleSpec(el, spec) { for (const [p, v] of styleDecls(spec)) el.style.setProperty(p, v); }
+    function styleSpecToCss(spec) { return styleDecls(spec).map(([p, v]) => p + ":" + v).join(";"); }
+    function styleSpecToStr(obj) {  // {c:'red', f:'poppins'} -> "c=red;f=poppins"  (empty values drop)
+      return Object.keys(obj).filter(k => obj[k] != null && obj[k] !== "").map(k => k + "=" + obj[k]).join(";");
+    }
+
     let text = "";
     let selA = 0, selB = 0;
     let leaves = [];     // { el, s, len }  — every source char lives in exactly one leaf
@@ -27,11 +73,26 @@
     let composing = false, compAt = null;
     let suppress = false;
     let undo = [], redo = [], lastType = null, lastAt = 0;
+    let tocRefresh = null;   // DOCS-TOC: set by the table-of-contents feature; called after every render
 
     /* ----- inline tokenizer (operates in absolute source offsets) ----- */
     function findSingle(s, ch, from) {
       for (let j = from; j < s.length; j++)
         if (s[j] === ch && s[j + 1] !== ch && s[j - 1] !== ch && j > from) return j;
+      return -1;
+    }
+    // DOCS-8 invisible styling: find the @{/s} that closes the @{s:…} starting just
+    // before `from`, honoring nested style spans (depth). Returns the content-index of
+    // the matching @{/s}, or -1 if unbalanced (then the opener falls through to text).
+    function findStyleClose(s, from) {
+      let depth = 0, i = from, n = s.length;
+      while (i < n) {
+        if (s[i] === "@" && s[i + 1] === "{") {
+          if (s.startsWith("/s}", i + 2)) { if (depth === 0) return i; depth--; i += 5; continue; }
+          if (s.startsWith("s:", i + 2)) { depth++; i += 2; continue; }
+        }
+        i++;
+      }
       return -1;
     }
     function parseInline(content, base) {
@@ -47,6 +108,15 @@
               const ctype = inner.slice(0, ci), cval = inner.slice(ci + 1);
               if (ctype === "person" || ctype === "date") {
                 pushText(i); out.push({ kind: "chip", ctype, cval, s: base + i, e: base + cl + 1 }); i = cl + 1; ts = i; continue;
+              }
+              if (ctype === "s") {   // DOCS-8 invisible-styling span: @{s:SPEC}…@{/s}
+                const close = findStyleClose(content, cl + 1);
+                if (close >= 0) {
+                  pushText(i);
+                  out.push({ kind: "style", spec: cval, s: base + i, e: base + close + 5,
+                             openEnd: base + cl + 1, closeStart: base + close, inner: content.slice(cl + 1, close) });
+                  i = close + 5; ts = i; continue;
+                }
               }
             }
           }
@@ -106,6 +176,17 @@
       leaves.push({ el: sp, s, len: str.length });
       return sp;
     }
+    // a DOCS-8 style marker (@{s:…} / @{/s}): one atomic, contenteditable-false,
+    // never-revealed leaf. Atomic ⇒ caret skips it and backspace removes it whole;
+    // it is NOT pushed to `toks`, so unlike %% it never peeks open as raw syntax.
+    function styleMarkerLeaf(str, s) {
+      const sp = document.createElement("span");
+      sp.className = "stymk"; sp.dataset.s = s; sp.dataset.len = str.length;
+      sp.setAttribute("contenteditable", "false");
+      sp.appendChild(document.createTextNode(str));
+      leaves.push({ el: sp, s, len: str.length, atomic: true });
+      return sp;
+    }
     function appendInline(parent, content, base) {
       for (const t of parseInline(content, base)) {
         if (t.kind === "text") { parent.appendChild(leafSpan(t.text, t.s, "seg")); continue; }
@@ -118,6 +199,15 @@
           el.textContent = t.ctype === "date" ? fmtDateLabel(t.cval) : t.cval;
           leaves.push({ el, s: t.s, len: t.e - t.s, atomic: true });
           parent.appendChild(el); continue;
+        }
+        if (t.kind === "style") {
+          // styled run: invisible atomic markers wrap normally-editable, recursed content
+          const tok = document.createElement("span"); tok.className = "tok sty";
+          applyStyleSpec(tok, t.spec);
+          tok.appendChild(styleMarkerLeaf("@{s:" + t.spec + "}", t.s));
+          appendInline(tok, t.inner, t.openEnd);
+          tok.appendChild(styleMarkerLeaf("@{/s}", t.closeStart));
+          parent.appendChild(tok); continue;   // intentionally NOT added to `toks` (never reveals)
         }
         if (t.kind === "comment") {
           // three leaves (%% + inner + %%) keep the leaf-coverage invariant; CSS hides it
@@ -197,6 +287,7 @@
       }
       applyReveal();
       suppress = false;
+      if (tocRefresh) tocRefresh();
     }
 
     /* ----- tables: GFM detected in source, rendered house-style; cells are
@@ -553,6 +644,26 @@
     function atomicBefore(pos) { for (const lf of leaves) if (lf.atomic && lf.s + lf.len === pos) return lf; return null; }
     function atomicAfter(pos) { for (const lf of leaves) if (lf.atomic && lf.s === pos) return lf; return null; }
 
+    /* ----- smart lists: Enter continues a bullet/numbered list (next marker,
+       numbers auto-increment); Enter on an EMPTY item exits the list. Returns
+       true when it handled the keystroke, so the caller skips the plain newline. */
+    function smartListEnter(pos) {
+      const ls = lineStart(pos);
+      let le = text.indexOf("\n", pos); if (le < 0) le = text.length;
+      const line = text.slice(ls, le);
+      let m, prefix;
+      if ((m = line.match(/^(\s*)([-*+]\s+)(.*)$/))) {
+        if (m[3].trim() === "") { edit(ls, le, m[1], ls + m[1].length, "nl"); return true; }  // empty bullet → exit
+        prefix = m[1] + m[2];
+      } else if ((m = line.match(/^(\s*)(\d+)\.(\s+)(.*)$/))) {
+        if (m[4].trim() === "") { edit(ls, le, m[1], ls + m[1].length, "nl"); return true; }   // empty number → exit
+        prefix = m[1] + (parseInt(m[2], 10) + 1) + "." + m[3];
+      } else return false;
+      const ins = "\n" + prefix;
+      edit(pos, pos, ins, pos + ins.length, "nl");
+      return true;
+    }
+
     /* ----- input handling (everything goes through here) ----- */
     surface.addEventListener("beforeinput", e => {
       if (cellOf(e.target)) return;   // table cells edit natively, then reserialize
@@ -562,7 +673,7 @@
       const a = cur[0], b = cur[1];
       if (t === "insertText") { e.preventDefault(); const d = e.data == null ? "" : e.data; edit(a, b, d, a + d.length, "type"); }
       else if (t === "insertReplacementText") { e.preventDefault(); const d = (e.dataTransfer && e.dataTransfer.getData("text")) || e.data || ""; edit(a, b, d, a + d.length, "rep"); }
-      else if (t === "insertParagraph" || t === "insertLineBreak") { e.preventDefault(); edit(a, b, "\n", a + 1, "nl"); }
+      else if (t === "insertParagraph" || t === "insertLineBreak") { e.preventDefault(); if (!(a === b && smartListEnter(a))) edit(a, b, "\n", a + 1, "nl"); }
       else if (t === "deleteContentBackward") { e.preventDefault(); if (a !== b) edit(a, b, "", a, "del"); else if (a > 0) { const ch = atomicBefore(a); if (ch) edit(ch.s, a, "", ch.s, "del"); else { const p = prevG(a); edit(p, a, "", p, "del"); } } }
       else if (t === "deleteContentForward")  { e.preventDefault(); if (a !== b) edit(a, b, "", a, "del"); else if (b < text.length) { const ch = atomicAfter(b); if (ch) edit(b, ch.s + ch.len, "", a, "del"); else { const x = nextG(b); edit(b, x, "", a, "del"); } } }
       else if (t === "deleteWordBackward")    { e.preventDefault(); if (a !== b) edit(a, b, "", a, "del"); else { const p = wordLeft(a); edit(p, a, "", p, "del"); } }
@@ -572,23 +683,125 @@
       else if (t === "historyRedo") { e.preventDefault(); restore(redo, undo); }
       else { e.preventDefault(); } // paste/cut/drop handled by their own events; ignore the rest
     });
+    /* ----- DOCS-9 clean export: serialize a source range to human-clean output -----
+       Plain text drops every marker, chips become their label, %% comments and style
+       markers vanish, tables become tab-separated rows — so an essay pasted into Google
+       Docs reads as written, never as `**`/`#`/`@{…}` soup that screams AI. A parallel
+       text/html flavor keeps INTENDED formatting (bold, headings, colour) as real rich
+       text. A private MIME carries the raw markdown so copy↔paste *inside* the editor
+       still round-trips losslessly. */
+    const MD_MIME = "application/x-mde-markdown";
+    function inlineToPlain(content) {
+      let out = "";
+      for (const t of parseInline(content, 0)) {
+        if (t.kind === "text") out += t.text;
+        else if (t.kind === "chip") out += (t.ctype === "date" ? fmtDateLabel(t.cval) : t.cval);
+        else if (t.kind === "comment") { /* drop */ }
+        else if (t.kind === "code") out += t.inner;
+        else if (t.kind === "link") out += t.ltext;
+        else if (t.kind === "style") out += inlineToPlain(t.inner);
+        else out += inlineToPlain(t.inner);   // strong / em / del
+      }
+      return out;
+    }
+    function inlineToHtml(content) {
+      let out = "";
+      for (const t of parseInline(content, 0)) {
+        if (t.kind === "text") out += esc(t.text);
+        else if (t.kind === "chip") out += esc(t.ctype === "date" ? fmtDateLabel(t.cval) : t.cval);
+        else if (t.kind === "comment") { /* drop */ }
+        else if (t.kind === "code") out += "<code>" + esc(t.inner) + "</code>";
+        else if (t.kind === "link") out += '<a href="' + esc(t.url) + '">' + esc(t.ltext) + "</a>";
+        else if (t.kind === "style") { const css = styleSpecToCss(t.spec); out += css ? "<span style='" + css + "'>" + inlineToHtml(t.inner) + "</span>" : inlineToHtml(t.inner); }
+        else if (t.kind === "strong") out += "<strong>" + inlineToHtml(t.inner) + "</strong>";
+        else if (t.kind === "del") out += "<del>" + inlineToHtml(t.inner) + "</del>";
+        else out += "<em>" + inlineToHtml(t.inner) + "</em>";
+      }
+      return out;
+    }
+    function tableRunEnd(lines, i) {   // [hdrIdx, bodyEnd) for a table starting at line i, or null
+      const colsMeta = isColsLine(lines[i]) && i + 2 < lines.length && isRow(lines[i + 1]) && isDelim(lines[i + 2]);
+      const tableTop = isRow(lines[i]) && i + 1 < lines.length && isDelim(lines[i + 1]);
+      if (!colsMeta && !tableTop) return null;
+      const hdr = colsMeta ? i + 1 : i;
+      let j = hdr + 2; while (j < lines.length && isRow(lines[j])) j++;
+      return [hdr, j];
+    }
+    function rangeToPlain(md) {
+      const lines = md.split("\n"), out = []; let i = 0;
+      while (i < lines.length) {
+        const tr = tableRunEnd(lines, i);
+        if (tr) {
+          const [hdr, j] = tr;
+          out.push(splitCells(lines[hdr]).map(inlineToPlain).join("\t"));
+          for (let k = hdr + 2; k < j; k++) out.push(splitCells(lines[k]).map(inlineToPlain).join("\t"));
+          i = j; continue;
+        }
+        const ln = lines[i], b = classify(ln, 0, ln.length);
+        if (b.type === "meta") { i++; continue; }                 // drop %%…%% line
+        if (b.type === "hr") { out.push(""); i++; continue; }
+        if (b.type === "h" || b.type === "bq") out.push(inlineToPlain(ln.slice(b.mlen)));
+        else if (b.type === "li") out.push("• " + inlineToPlain(ln.slice(b.mlen)));
+        else if (b.type === "ol") { const m = ln.match(/^\s*(\d+)\./); out.push((m ? m[1] : "1") + ". " + inlineToPlain(ln.slice(b.mlen))); }
+        else if (b.type === "blank") out.push("");
+        else out.push(inlineToPlain(ln));
+        i++;
+      }
+      return out.join("\n");
+    }
+    function rangeToHtml(md) {
+      const lines = md.split("\n"); let html = "", i = 0, listType = null, buf = [];
+      const flush = () => { if (listType) { html += "<" + listType + ">" + buf.join("") + "</" + listType + ">"; listType = null; buf = []; } };
+      while (i < lines.length) {
+        const tr = tableRunEnd(lines, i);
+        if (tr) {
+          flush(); const [hdr, j] = tr;
+          let t = "<table><thead><tr>"; splitCells(lines[hdr]).forEach(c => t += "<th>" + inlineToHtml(c) + "</th>"); t += "</tr></thead><tbody>";
+          for (let k = hdr + 2; k < j; k++) { t += "<tr>"; splitCells(lines[k]).forEach(c => t += "<td>" + inlineToHtml(c) + "</td>"); t += "</tr>"; }
+          html += t + "</tbody></table>"; i = j; continue;
+        }
+        const ln = lines[i], b = classify(ln, 0, ln.length);
+        if (b.type === "li") { if (listType !== "ul") { flush(); listType = "ul"; } buf.push("<li>" + inlineToHtml(ln.slice(b.mlen)) + "</li>"); i++; continue; }
+        if (b.type === "ol") { if (listType !== "ol") { flush(); listType = "ol"; } buf.push("<li>" + inlineToHtml(ln.slice(b.mlen)) + "</li>"); i++; continue; }
+        flush();
+        if (b.type === "meta") { /* drop */ }
+        else if (b.type === "h") html += "<h" + b.lvl + ">" + inlineToHtml(ln.slice(b.mlen)) + "</h" + b.lvl + ">";
+        else if (b.type === "bq") html += "<blockquote>" + inlineToHtml(ln.slice(b.mlen)) + "</blockquote>";
+        else if (b.type === "hr") html += "<hr>";
+        else if (b.type === "blank") { /* skip */ }
+        else html += "<p>" + inlineToHtml(ln) + "</p>";
+        i++;
+      }
+      flush();
+      return html;
+    }
+    function writeClipboard(e, a, b) {
+      const md = text.slice(a, b);
+      e.clipboardData.setData("text/plain", rangeToPlain(md));
+      try { e.clipboardData.setData("text/html", rangeToHtml(md)); } catch (_) {}
+      try { e.clipboardData.setData(MD_MIME, md); } catch (_) {}   // internal round-trip
+    }
+
     surface.addEventListener("paste", e => {
       if (cellOf(e.target)) return;
       e.preventDefault();
-      const d = ((e.clipboardData || window.clipboardData).getData("text/plain") || "").replace(/\r\n?/g, "\n");
+      const cd = e.clipboardData || window.clipboardData;
+      let d = (cd.getData(MD_MIME) || "");           // paste WITHIN the editor → raw markdown
+      if (!d) d = (cd.getData("text/plain") || "");  // from elsewhere → as typed
+      d = d.replace(/\r\n?/g, "\n");
       const cur = readSel() || [selA, selB];
       edit(cur[0], cur[1], d, null, "paste");
     });
     surface.addEventListener("copy", e => {
       if (cellOf(e.target)) return;
       const cur = readSel(); if (!cur || cur[0] === cur[1]) return;
-      e.preventDefault(); e.clipboardData.setData("text/plain", text.slice(cur[0], cur[1]));
+      e.preventDefault(); writeClipboard(e, cur[0], cur[1]);
     });
     surface.addEventListener("cut", e => {
       if (cellOf(e.target)) return;
       const cur = readSel(); if (!cur) return;
       e.preventDefault();
-      if (cur[0] !== cur[1]) { e.clipboardData.setData("text/plain", text.slice(cur[0], cur[1])); edit(cur[0], cur[1], "", cur[0], "cut"); }
+      if (cur[0] !== cur[1]) { writeClipboard(e, cur[0], cur[1]); edit(cur[0], cur[1], "", cur[0], "cut"); }
     });
     surface.addEventListener("drop", e => {
       if (cellOf(e.target)) return;
@@ -618,12 +831,95 @@
       if (mod && (e.key === "b" || e.key === "B")) { e.preventDefault(); wrap("**"); return; }
       if (mod && (e.key === "i" || e.key === "I")) { e.preventDefault(); wrap("*"); return; }
       if (mod && (e.key === "s" || e.key === "S")) { e.preventDefault(); onSave(); return; }
+      // DOCS-4 — Option+/ opens the command palette. e.code dodges the Mac dead-key (⌥/ = "÷").
+      if (e.altKey && !e.metaKey && !e.ctrlKey && (e.code === "Slash" || e.key === "/")) { e.preventDefault(); openPalette(); return; }
       if (e.key === "Tab") { e.preventDefault(); const c = readSel() || [selA, selB]; edit(c[0], c[1], "  ", c[0] + 2, "type"); return; }
     });
     function wrap(mk) {
       const c = readSel() || [selA, selB], a = c[0], b = c[1];
       if (a === b) edit(a, b, mk + mk, a + mk.length, "wrap");
       else edit(a, b, mk + text.slice(a, b) + mk, b + 2 * mk.length, "wrap");
+    }
+
+    /* ----- DOCS-8 apply / clear invisible styling (driven by the palette/toolbar) ----- */
+    // scan the whole source for balanced @{s:…}…@{/s} spans (innermost-resolvable)
+    function scanStyleSpans(txt) {
+      const spans = [], stack = []; let i = 0; const n = txt.length;
+      while (i < n) {
+        if (txt[i] === "@" && txt[i + 1] === "{") {
+          if (txt.startsWith("s:", i + 2)) { const cl = txt.indexOf("}", i + 2); if (cl > 0) { stack.push({ s: i, openEnd: cl + 1 }); i = cl + 1; continue; } }
+          else if (txt.startsWith("/s}", i + 2)) { const o = stack.pop(); if (o) spans.push({ s: o.s, openEnd: o.openEnd, closeStart: i, e: i + 5 }); i += 5; continue; }
+        }
+        i++;
+      }
+      return spans;
+    }
+    // wrap the current selection in a style span; merge into an exactly-enclosing span so
+    // colour+font+size stack into ONE @{s:…} rather than nesting markers.
+    function applyStyle(props) {
+      const c = readSel() || [selA, selB]; let a = c[0], b = c[1];
+      if (a === b) return;                                  // styling needs a selection
+      const exact = scanStyleSpans(text).find(sp => sp.openEnd === a && sp.closeStart === b);
+      if (exact) {                                          // already wrapped → merge specs
+        const cur = parseStyleSpec(text.slice(exact.s + 4, exact.openEnd - 1));
+        for (const k in props) { if (props[k] === null) delete cur[k]; else cur[k] = props[k]; }
+        const spec = styleSpecToStr(cur);
+        if (!spec) return clearRange(exact);
+        const open = "@{s:" + spec + "}";
+        snapshot("style");
+        text = text.slice(0, exact.s) + open + text.slice(exact.openEnd);
+        render(); setCaret(exact.s + open.length, exact.s + open.length + (b - a)); onInput();
+        return;
+      }
+      const spec = styleSpecToStr(props); if (!spec) return;
+      const open = "@{s:" + spec + "}", inner = text.slice(a, b);
+      snapshot("style");
+      text = text.slice(0, a) + open + inner + "@{/s}" + text.slice(b);
+      render(); setCaret(a + open.length, a + open.length + inner.length); onInput();  // keep inner selected so styles stack
+    }
+    function clearRange(sp) {   // remove both markers of one span, keep inner
+      snapshot("style");
+      text = text.slice(0, sp.closeStart) + text.slice(sp.e);    // close first (higher offset)
+      text = text.slice(0, sp.s) + text.slice(sp.openEnd);
+      const openLen = sp.openEnd - sp.s;
+      render(); setCaret(sp.openEnd - openLen, sp.closeStart - openLen); onInput();
+    }
+    function clearStyle() {   // unwrap the innermost style span enclosing the selection
+      const c = readSel() || [selA, selB], a = c[0], b = c[1];
+      let target = null;
+      for (const sp of scanStyleSpans(text))
+        if (sp.s <= a && sp.e >= b && (!target || (sp.e - sp.s) < (target.e - target.s))) target = sp;
+      if (target) clearRange(target);
+    }
+
+    /* ----- block-format ops (also exposed through the palette) ----- */
+    function curLineRange(pos) { const s = lineStart(pos); let e = text.indexOf("\n", pos); if (e < 0) e = text.length; return [s, e]; }
+    const BLOCK_RE = /^(#{1,6}\s+|>\s?|[-*+]\s+|\d+\.\s+)/;
+    function setHeading(lvl) {
+      const c = readSel() || [selA, selB], lr = curLineRange(c[0]);
+      const body = text.slice(lr[0], lr[1]).replace(BLOCK_RE, "");
+      const had = /^#{1,6}\s+/.test(text.slice(lr[0], lr[1]));
+      const lvlNow = had ? (text.slice(lr[0], lr[1]).match(/^#+/) || [""])[0].length : 0;
+      const nl = (lvlNow === lvl) ? body : ("#".repeat(lvl) + " " + body);   // same level toggles off
+      edit(lr[0], lr[1], nl, lr[0] + nl.length, "block");
+    }
+    function togglePrefix(re, prefix) {
+      const c = readSel() || [selA, selB], lr = curLineRange(c[0]);
+      const ln = text.slice(lr[0], lr[1]);
+      const nl = re.test(ln) ? ln.replace(re, "") : (prefix + ln.replace(BLOCK_RE, ""));
+      edit(lr[0], lr[1], nl, lr[0] + nl.length, "block");
+    }
+    function insertLink() {
+      const c = readSel() || [selA, selB], a = c[0], b = c[1], sel = text.slice(a, b) || "text";
+      const pre = "[" + sel + "](";
+      edit(a, b, pre + "url)", a + pre.length + 3, "link");
+      setCaret(a + pre.length, a + pre.length + 3);   // select "url"
+    }
+    function insertRule() {
+      const c = readSel() || [selA, selB], a = c[0];
+      const atBol = a === 0 || text[a - 1] === "\n";
+      const ins = (atBol ? "" : "\n") + "---\n";
+      edit(a, a, ins, a + ins.length, "block");
     }
 
     let rafPending = false;
@@ -802,12 +1098,353 @@
       if (w) focusCell(w.querySelector(".mcell"));
     }
 
+    /* ================= DOCS-6 real dark mode (token swap; opt-in, persisted) =================
+       The dark --mde-* set lives in CSS (.mde-dark / prefers-color-scheme). Here we only
+       flip a class on <html> so the body-mounted popovers inherit it too, and remember the
+       choice. "auto" (no class) lets the OS preference drive it. */
+    function getTheme() { try { return localStorage.getItem("mde-theme") || "auto"; } catch (_) { return "auto"; } }
+    function applyThemeClass(name) {
+      const r = document.documentElement;
+      r.classList.toggle("mde-dark", name === "dark");
+      r.classList.toggle("mde-light", name === "light");
+    }
+    function setTheme(name) {
+      if (name !== "dark" && name !== "light") name = "auto";
+      try { name === "auto" ? localStorage.removeItem("mde-theme") : localStorage.setItem("mde-theme", name); } catch (_) {}
+      applyThemeClass(name);
+    }
+    function prefersDark() { return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches); }
+    function isDark() { const r = document.documentElement; return r.classList.contains("mde-dark") || (getTheme() === "auto" && !r.classList.contains("mde-light") && prefersDark()); }
+    function toggleTheme() { setTheme(isDark() ? "light" : "dark"); }
+    applyThemeClass(getTheme());   // honor a prior choice; "auto" is a no-op
+
+    /* ================= DOCS-4 Option+/ command palette ================= */
+    /* Fuzzy over every editor action, frequency-weighted (persisted). It is the single
+       keyboard surface that drives DOCS-8 styling — colour/font/size are submenus here,
+       so users never type or see the @{s:…} syntax. */
+    const pal = document.createElement("div"); pal.className = "mde-cmdpal"; document.body.appendChild(pal);
+    let palOpen = false, palItems = [], palSel = 0, palStack = [], palQuery = "", palInput = null, palList = null;
+    function loadUsage() { try { return JSON.parse(localStorage.getItem("mde-cmd-usage") || "{}") || {}; } catch (_) { return {}; } }
+    let palUsage = loadUsage();
+    function bumpUsage(id) { palUsage[id] = (palUsage[id] || 0) + 1; try { localStorage.setItem("mde-cmd-usage", JSON.stringify(palUsage)); } catch (_) {} }
+
+    const PAL_COLORS = [["Red", "#c0392b"], ["Orange", "#b9770e"], ["Green", "#1e7d4f"], ["Teal", "#127d82"], ["Blue", "#1f6feb"], ["Purple", "#7b3fb0"], ["Pink", "#c026a6"], ["Slate", "#4b5563"]];
+    const PAL_HILITES = [["Yellow", "#fff3a3"], ["Green", "#cde6c4"], ["Blue", "#cfe4ff"], ["Pink", "#ffd6ec"], ["Orange", "#ffe0bd"]];
+    const PAL_FONTS = [["Sans", "sans"], ["Serif", "serif"], ["Mono", "mono"], ["Poppins", "poppins"], ["Georgia", "georgia"], ["Times", "times"], ["Arial", "arial"], ["Courier", "courier"]];
+    const PAL_SIZES = [["Small", "0.85"], ["Normal", null], ["Large", "1.3"], ["Huge", "1.7"]];
+    const swatch = hex => '<span class="mde-cmd-sw" style="background:' + esc(hex) + '"></span>';
+    const subItem = (id, title, run, ico) => ({ id, title, group: "", run, keywords: "", ico: ico || "" });
+
+    function rootCommands() {
+      const c = [], add = (id, title, group, run, keywords) => c.push({ id, title, group, run, keywords: keywords || "" });
+      add("bold", "Bold", "Format", () => wrap("**"), "strong weight");
+      add("italic", "Italic", "Format", () => wrap("*"), "emphasis oblique");
+      add("strike", "Strikethrough", "Format", () => wrap("~~"), "del cross out");
+      add("code", "Inline code", "Format", () => wrap("`"), "monospace");
+      add("h1", "Heading 1", "Format", () => setHeading(1), "title");
+      add("h2", "Heading 2", "Format", () => setHeading(2), "subtitle");
+      add("h3", "Heading 3", "Format", () => setHeading(3), "");
+      add("bullets", "Bullet list", "Format", () => togglePrefix(/^(\s*)[-*+]\s+/, "- "), "unordered ul");
+      add("numbers", "Numbered list", "Format", () => togglePrefix(/^(\s*)\d+\.\s+/, "1. "), "ordered ol");
+      add("quote", "Quote", "Format", () => togglePrefix(/^(\s*)>\s?/, "> "), "blockquote");
+      add("color", "Text color…", "Style", () => pushSub("Text color", PAL_COLORS.map(([n, hex]) => subItem("color-" + n, n, () => applyStyle({ c: hex }), swatch(hex))).concat([subItem("color-none", "Default color", () => applyStyle({ c: null }))])), "colour foreground");
+      add("hilite", "Highlight…", "Style", () => pushSub("Highlight", PAL_HILITES.map(([n, hex]) => subItem("hl-" + n, n, () => applyStyle({ bg: hex }), swatch(hex))).concat([subItem("hl-none", "No highlight", () => applyStyle({ bg: null }))])), "background marker");
+      add("font", "Font…", "Style", () => pushSub("Font", PAL_FONTS.map(([n, key]) => subItem("font-" + key, n, () => applyStyle({ f: key })))), "typeface family");
+      add("size", "Font size…", "Style", () => pushSub("Font size", PAL_SIZES.map(([n, v]) => subItem("size-" + n, n, () => applyStyle({ sz: v })))), "scale bigger smaller");
+      add("clearfmt", "Clear formatting", "Style", () => clearStyle(), "remove reset plain");
+      add("table", "Insert table", "Insert", () => { const s = readSel() || [selA, selB]; openGrid(s[0], s[1]); }, "grid");
+      add("link", "Insert link", "Insert", () => insertLink(), "url hyperlink");
+      add("rule", "Horizontal rule", "Insert", () => insertRule(), "divider hr line");
+      add("date", "Insert today's date", "Insert", () => { const s = readSel() || [selA, selB]; const tok = "@{date:" + todayISO() + "}"; edit(s[0], s[1], tok, s[0] + tok.length, "chip"); }, "today calendar");
+      add("dark", "Toggle dark mode", "View", () => toggleTheme(), "theme night light");
+      add("copyplain", "Copy clean text", "Export", () => copyCleanAll(), "plain export paste docs");
+      return c;
+    }
+    function copyCleanAll() {
+      const md = (selA !== selB) ? text.slice(selA, selB) : text;
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(rangeToPlain(md)).catch(() => {});
+    }
+    function fuzzy(q, s) {
+      q = q.toLowerCase(); s = (s || "").toLowerCase(); if (!q) return 0;
+      let qi = 0, score = 0, prev = -2;
+      for (let si = 0; si < s.length && qi < q.length; si++) {
+        if (s[si] === q[qi]) { score += (si === prev + 1) ? 3 : 1; if (si === 0 || /\s/.test(s[si - 1])) score += 2; prev = si; qi++; }
+      }
+      return qi === q.length ? score : -1;
+    }
+    function currentSource() { return palStack.length ? palStack[palStack.length - 1].items : rootCommands(); }
+    function rankItems(q) {
+      const src = currentSource();
+      if (palStack.length) return src.filter(it => !q || fuzzy(q, it.title) >= 0);   // submenu: plain filter
+      const scored = [];
+      for (const it of src) {
+        const base = q ? Math.max(fuzzy(q, it.title), fuzzy(q, it.keywords) - 1) : 0;
+        if (q && base < 0) continue;
+        scored.push({ it, score: base + Math.min(palUsage[it.id] || 0, 8) * (q ? 0.5 : 1) });
+      }
+      scored.sort((a, b) => b.score - a.score || a.it.title.localeCompare(b.it.title));
+      return scored.map(x => x.it);
+    }
+    function buildPaletteDom() {
+      pal.innerHTML =
+        '<div class="mde-cmd-head"><svg class="mde-cmd-mag" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.2-4.2"/></svg>' +
+        '<input class="mde-cmd-input" placeholder="Search actions…" spellcheck="false"></div><div class="mde-cmd-list"></div>';
+      palInput = pal.querySelector(".mde-cmd-input"); palList = pal.querySelector(".mde-cmd-list");
+      palInput.addEventListener("input", () => { palQuery = palInput.value; palSel = 0; renderPalette(); });
+      palInput.addEventListener("keydown", onPaletteKey);
+    }
+    function renderPalette() {
+      palItems = rankItems(palQuery.trim());
+      let html = "";
+      if (palStack.length) html += '<div class="mde-cmd-crumb">‹ ' + esc(palStack[palStack.length - 1].title) + "</div>";
+      if (!palItems.length) html += '<div class="mde-cmd-empty">No actions — press Esc</div>';
+      let lastG = null;
+      palItems.forEach((it, i) => {
+        if (it.group && it.group !== lastG) { html += '<div class="mde-cmd-group">' + esc(it.group) + "</div>"; lastG = it.group; }
+        html += '<div class="mde-cmd-item' + (i === palSel ? " sel" : "") + '" data-i="' + i + '">' +
+          (it.ico || "") + '<span class="mde-cmd-t">' + esc(it.title) + "</span></div>";
+      });
+      palList.innerHTML = html;
+      palList.querySelectorAll(".mde-cmd-item").forEach(el => {
+        el.addEventListener("mousedown", e => { e.preventDefault(); runPalette(+el.dataset.i); });
+        el.addEventListener("mousemove", () => { palSel = +el.dataset.i; highlightPalette(); });
+      });
+      ensurePalVisible();
+    }
+    function highlightPalette() { palList.querySelectorAll(".mde-cmd-item").forEach(el => el.classList.toggle("sel", +el.dataset.i === palSel)); }
+    function ensurePalVisible() { const el = palList && palList.querySelector(".mde-cmd-item.sel"); if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest" }); }
+    function pushSub(title, items) { palStack.push({ title, items }); palQuery = ""; if (palInput) palInput.value = ""; palSel = 0; renderPalette(); }
+    function onPaletteKey(e) {
+      if (e.key === "ArrowDown") { e.preventDefault(); if (palItems.length) { palSel = (palSel + 1) % palItems.length; highlightPalette(); ensurePalVisible(); } }
+      else if (e.key === "ArrowUp") { e.preventDefault(); if (palItems.length) { palSel = (palSel - 1 + palItems.length) % palItems.length; highlightPalette(); ensurePalVisible(); } }
+      else if (e.key === "Enter") { e.preventDefault(); runPalette(palSel); }
+      else if (e.key === "Escape") { e.preventDefault(); if (palStack.length) { palStack.pop(); palQuery = ""; palInput.value = ""; renderPalette(); } else closePalette(); }
+      else if (e.key === "Backspace" && !palInput.value && palStack.length) { e.preventDefault(); palStack.pop(); palQuery = ""; renderPalette(); }
+    }
+    function runPalette(i) {
+      const it = palItems[i]; if (!it) return;
+      if (!palStack.length) bumpUsage(it.id);
+      const before = palStack.length;
+      it.run();
+      if (palStack.length <= before) closePalette();   // a leaf action ran (no submenu opened)
+    }
+    function openPalette() {
+      if (!palList) buildPaletteDom();
+      palStack = []; palQuery = ""; palSel = 0; palOpen = true; palInput.value = "";
+      pal.classList.add("open"); renderPalette();
+      const w = pal.offsetWidth || 440;
+      pal.style.left = Math.max(12, (window.innerWidth - w) / 2) + "px";
+      pal.style.top = Math.min(140, Math.round(window.innerHeight * 0.16)) + "px";
+      palInput.focus();
+    }
+    function closePalette() { if (!palOpen) return; palOpen = false; pal.classList.remove("open"); palStack = []; surface.focus(); }
+
     document.addEventListener("mousedown", e => {
       if ((menuOpen && !menu.contains(e.target)) || (gridOpen && !gridPop.contains(e.target) && !surface.contains(e.target))) { closeMenu(); closeGrid(); }
+      if (palOpen && !pal.contains(e.target)) closePalette();
     }, true);
     const stage = scrollParent || surface.closest(".editor-stage") || surface.parentElement;
     if (stage) stage.addEventListener("scroll", () => { closeMenu(); closeGrid(); });
-    function dismiss() { closeMenu(); closeGrid(); }
+    function dismiss() { closeMenu(); closeGrid(); closePalette(); }
+
+    /* ======================================================================
+       DOCS-TOC — table of contents. A right-docked panel listing the doc's
+       H1/H2 headings (nested), with live search, scroll-spy active-tracking,
+       click-to-scroll, and collapsible H1 groups. Self-contained: a floating
+       list-icon button toggles it. Opt out with opts.toc === false; drive it
+       from a host icon via ed.toggleTOC()/openTOC()/closeTOC(). Styled by
+       --mde-toc-* tokens (inherit the active theme). ===================== */
+    const tocEnabled = opts.toc !== false;
+    const tocButtonEnabled = opts.tocButton !== false;   // false => panel+API only, host drives it
+    const TOC_ICON  = '<svg viewBox="0 0 24 24"><circle cx="5" cy="7" r="1.35"/><circle cx="5" cy="12" r="1.35"/><circle cx="5" cy="17" r="1.35"/><path d="M9.5 7h9.5M9.5 12h9.5M9.5 17h9.5"/></svg>';
+    const TOC_CLOSE = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+    const TOC_TWIST = '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
+    const TOC_FIND  = '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.8 4.8"/></svg>';
+    let tocRoot = null, tocBtn = null, tocPanel = null, tocList = null, tocSearch = null;
+    let tocOpen = false, headings = [], tocActive = -1, tocRaf = 0, tocLock = 0;
+    const tocCollapsed = new Set();   // keyed by H1 title — survives re-renders
+
+    // Pull H1/H2 headings (in document order) straight from the rendered blocks;
+    // each carries its live block element as the scroll target + clean title text.
+    function collectHeadings() {
+      const out = [];
+      for (const b of blocks) {
+        if (!b.el || !b.el.classList || !b.el.classList.contains("h")) continue;
+        const lvl = b.el.classList.contains("h1") ? 1 : b.el.classList.contains("h2") ? 2 : 0;
+        if (!lvl) continue;
+        const raw = text.slice(b.s, b.e), m = raw.match(/^\s*#{1,6}\s+([\s\S]*)$/);
+        const title = inlineToPlain(m ? m[1] : raw).trim() || "Untitled";
+        out.push({ level: lvl, title, el: b.el });
+      }
+      return out;
+    }
+
+    function buildTocDom() {
+      tocRoot = document.createElement("div"); tocRoot.className = "mde-toc-root";
+      if (tocButtonEnabled) {
+        tocBtn = document.createElement("button");
+        tocBtn.type = "button"; tocBtn.className = "mde-toc-btn"; tocBtn.title = "Contents";
+        tocBtn.setAttribute("aria-label", "Table of contents"); tocBtn.innerHTML = TOC_ICON;
+        tocBtn.addEventListener("click", e => { e.preventDefault(); toggleTOC(); });
+      }
+
+      tocPanel = document.createElement("aside"); tocPanel.className = "mde-toc-panel";
+      const head = document.createElement("div"); head.className = "mde-toc-head";
+      const ttl = document.createElement("span"); ttl.className = "mde-toc-title"; ttl.textContent = "Contents";
+      const x = document.createElement("button");
+      x.type = "button"; x.className = "mde-toc-x"; x.setAttribute("aria-label", "Close"); x.innerHTML = TOC_CLOSE;
+      x.addEventListener("click", e => { e.preventDefault(); closeTOC(); });
+      head.appendChild(ttl); head.appendChild(x);
+
+      const sw = document.createElement("div"); sw.className = "mde-toc-searchwrap"; sw.innerHTML = TOC_FIND;
+      tocSearch = document.createElement("input");
+      tocSearch.type = "text"; tocSearch.className = "mde-toc-search"; tocSearch.placeholder = "Search…";
+      tocSearch.setAttribute("spellcheck", "false");
+      tocSearch.addEventListener("input", renderTocList);
+      tocSearch.addEventListener("keydown", e => { if (e.key === "Escape") { e.preventDefault(); if (tocSearch.value) { tocSearch.value = ""; renderTocList(); } else closeTOC(); } });
+      sw.appendChild(tocSearch);
+
+      tocList = document.createElement("div"); tocList.className = "mde-toc-list";
+      tocPanel.appendChild(head); tocPanel.appendChild(sw); tocPanel.appendChild(tocList);
+      if (tocBtn) tocRoot.appendChild(tocBtn);
+      tocRoot.appendChild(tocPanel);
+      document.body.appendChild(tocRoot);
+
+      window.addEventListener("scroll", onTocReflow, true);
+      window.addEventListener("resize", onTocReflow);
+      placeTOC();
+    }
+
+    function onTocReflow() {
+      if (tocRaf) return;
+      tocRaf = requestAnimationFrame(() => { tocRaf = 0; placeTOC(); updateTocActive(); });
+    }
+    // Overlay the editor stage's VISIBLE band; button + panel dock within it.
+    // Clamping to the viewport keeps the panel docked to the stage's right edge
+    // yet always on-screen, whether the stage scrolls internally (the real apps)
+    // or the whole window scrolls (the panel then pins to the visible band).
+    function placeTOC() {
+      if (!tocRoot || !stage) return;
+      const r = stage.getBoundingClientRect();
+      const top = Math.max(0, r.top), bottom = Math.min(window.innerHeight, r.bottom);
+      tocRoot.style.left = r.left + "px"; tocRoot.style.width = r.width + "px";
+      tocRoot.style.top = top + "px"; tocRoot.style.height = Math.max(0, bottom - top) + "px";
+    }
+
+    function renderTocList() {
+      if (!tocList) return;
+      const q = (tocSearch.value || "").trim().toLowerCase();
+      const hit = h => !q || h.title.toLowerCase().indexOf(q) >= 0;
+      tocList.innerHTML = "";
+      if (!headings.length) { tocList.appendChild(emptyToc(q ? "No matches" : "No headings yet")); return; }
+      // group H2s under the preceding H1
+      const tree = []; let cur = null;
+      headings.forEach((h, i) => {
+        if (h.level === 1) { cur = { h, idx: i, kids: [] }; tree.push(cur); }
+        else if (cur) cur.kids.push({ h, idx: i });
+        else tree.push({ h, idx: i, kids: null });   // orphan H2 (no H1 above it)
+      });
+      let shown = 0;
+      for (const node of tree) {
+        if (!node.kids) { if (hit(node.h)) { tocList.appendChild(tocRow(node, 2, false)); shown++; } continue; }
+        const kids = q ? node.kids.filter(k => hit(k.h)) : node.kids;
+        if (q && !hit(node.h) && !kids.length) continue;
+        const collapsed = !q && tocCollapsed.has(node.h.title);
+        tocList.appendChild(tocRow(node, 1, node.kids.length > 0, collapsed));
+        shown++;
+        if (!collapsed && kids.length) {
+          const wrap = document.createElement("div"); wrap.className = "mde-toc-children";
+          kids.forEach(k => { wrap.appendChild(tocRow(k, 2, false)); shown++; });
+          tocList.appendChild(wrap);
+        }
+      }
+      if (!shown) tocList.appendChild(emptyToc("No matches"));
+      markTocActive(tocActive);
+    }
+    function emptyToc(msg) { const d = document.createElement("div"); d.className = "mde-toc-empty"; d.textContent = msg; return d; }
+    function tocRow(node, level, hasKids, collapsed) {
+      const row = document.createElement("div"); row.className = "mde-toc-row lvl" + level;
+      if (level === 1) {
+        const tw = document.createElement("button");
+        tw.type = "button"; tw.className = "mde-toc-twist" + (hasKids ? "" : " ghost") + (collapsed ? " collapsed" : "");
+        tw.innerHTML = TOC_TWIST; tw.tabIndex = -1;
+        if (hasKids) tw.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); if (tocCollapsed.has(node.h.title)) tocCollapsed.delete(node.h.title); else tocCollapsed.add(node.h.title); renderTocList(); });
+        row.appendChild(tw);
+      }
+      const link = document.createElement("button");
+      link.type = "button"; link.className = "mde-toc-link"; link.dataset.idx = node.idx;
+      link.textContent = node.h.title;
+      link.addEventListener("click", e => { e.preventDefault(); gotoHeading(node.idx); });
+      row.appendChild(link);
+      return row;
+    }
+    function gotoHeading(idx) {
+      const h = headings[idx]; if (!h || !h.el) return;
+      h.el.scrollIntoView({ behavior: "smooth", block: "start" });
+      // a click wins over scroll-spy until the smooth scroll settles (a heading
+      // near the doc end can't reach the top, so the fold would mis-highlight it)
+      tocLock = performance.now() + 700; tocActive = idx; markTocActive(idx);
+    }
+    function markTocActive(idx) {
+      if (!tocList) return;
+      tocList.querySelectorAll(".mde-toc-link").forEach(el => el.classList.toggle("active", +el.dataset.idx === idx));
+    }
+    // is the active scroller (window or the internal stage) at its bottom?
+    function tocAtBottom() {
+      const d = document.documentElement;
+      if (window.innerHeight + window.scrollY >= d.scrollHeight - 4) return true;
+      if (stage && stage.scrollHeight - stage.clientHeight > 4 && stage.scrollTop + stage.clientHeight >= stage.scrollHeight - 4) return true;
+      return false;
+    }
+    // scroll-spy: the active heading is the last one at/above the stage top — but
+    // at the very bottom the last heading wins (it may never reach the top), and a
+    // recent click holds its target.
+    function updateTocActive() {
+      if (!tocOpen || !headings.length || !stage || performance.now() < tocLock) return;
+      const top = stage.getBoundingClientRect().top + 64;
+      let act = 0;
+      for (let i = 0; i < headings.length; i++) {
+        if (headings[i].el.getBoundingClientRect().top <= top) act = i; else break;
+      }
+      if (tocAtBottom()) act = headings.length - 1;
+      if (act !== tocActive) { tocActive = act; markTocActive(act); }
+    }
+    function refreshTOC() { headings = collectHeadings(); renderTocList(); updateTocActive(); }
+
+    function openTOC() {
+      if (!tocEnabled) return;
+      if (!tocRoot) buildTocDom();
+      tocOpen = true; tocRoot.classList.add("open");
+      placeTOC(); refreshTOC();
+    }
+    function closeTOC() { if (!tocOpen) return; tocOpen = false; if (tocRoot) tocRoot.classList.remove("open"); surface.focus(); }
+    function toggleTOC() { tocOpen ? closeTOC() : openTOC(); }
+    function isTOCOpen() { return tocOpen; }
+    if (tocEnabled) { buildTocDom(); tocRefresh = function () { if (tocOpen) refreshTOC(); }; }
+
+    /* A small whitelisted command API so a HOST TOOLBAR can run the essential
+       editing actions (the same internals the palette drives). Keeps formatting
+       logic in one place; the host just paints buttons and calls ed.cmd("bold"). */
+    function cmd(name) {
+      switch (name) {
+        case "bold":    return wrap("**");
+        case "italic":  return wrap("*");
+        case "strike":  return wrap("~~");
+        case "code":    return wrap("`");
+        case "h1":      return setHeading(1);
+        case "h2":      return setHeading(2);
+        case "h3":      return setHeading(3);
+        case "bullets": return togglePrefix(/^(\s*)[-*+]\s+/, "- ");
+        case "numbers": return togglePrefix(/^(\s*)\d+\.\s+/, "1. ");
+        case "quote":   return togglePrefix(/^(\s*)>\s?/, "> ");
+        case "link":    return insertLink();
+        case "rule":    return insertRule();
+        case "table":   { const s = readSel() || [selA, selB]; return openGrid(s[0], s[1]); }
+        case "clearfmt":return clearStyle();
+        case "undo":    return restore(undo, redo);
+        case "redo":    return restore(redo, undo);
+      }
+    }
 
     return {
       setText(v) { dismiss(); text = (v == null ? "" : String(v)).replace(/\r\n?/g, "\n"); undo = []; redo = []; lastType = null; selA = selB = 0; render(); },
@@ -815,6 +1452,24 @@
       focus() { surface.focus(); },
       caretToEnd() { setCaret(text.length); },
       dismiss,
+      // DOCS-9 clean export — serialize the current selection (or the whole doc) to
+      // human-clean output, no markdown / chip / style syntax. Useful for a "copy clean"
+      // host button or an export pipeline.
+      getClean(opts) { const o = opts || {}; const a = (o.selection && selA !== selB) ? selA : 0, b = (o.selection && selA !== selB) ? selB : text.length; const md = text.slice(a, b); return o.html ? rangeToHtml(md) : rangeToPlain(md); },
+      // DOCS-4 / DOCS-8 — open the command palette, or apply/clear invisible styling
+      // programmatically (e.g. from a host toolbar button).
+      openPalette, applyStyle, clearStyle,
+      // DOCS-6 — theme control: "dark" | "light" | "auto".
+      setTheme, getTheme, toggleTheme,
+      // DOCS-TOC — table of contents (H1/H2). Hide the built-in button with opts.tocButton:false
+      // and drive it from a host toolbar via these.
+      toggleTOC, openTOC, closeTOC, isTOCOpen, refreshTOC,
+      // Fade the floating TOC button out of the way (e.g. while a host overlay/drawer
+      // covers the editor) — the button lives on a body-mounted root the host can't reach.
+      setTocButtonHidden(b) { if (tocRoot) tocRoot.classList.toggle("rail-open", !!b); },
+      // Whitelisted editing commands for a host toolbar (bold/italic/headings/lists/link/table/
+      // undo/redo/…). The same internals the command palette uses.
+      cmd,
     };
   }
 
@@ -825,27 +1480,84 @@
      persistence logic (the host owns those via the hooks below). Styled by
      --mde-tab-* tokens.
 
+     LAYOUT: tabs are a COLLAPSIBLE LEFT RAIL (panel icon toggles it; state persists
+     in localStorage `mde-tabs-collapsed`), separated from the editor by a hairline.
+
        makeTabs(container, {
-         tabs:[{id,title,dim?}], activeId?, people?, emptyLabel?,
+         tabs:[{id,title,emoji?,dim?}], activeId?, people?, emptyLabel?,
+         railTitle?,       // sidebar header label (default "Tabs")
+         toc?, tocButton?, // forwarded to makeEditor (TOC panel + floating button)
+         tabMenu?,         // set false to hide the per-tab ⋮ options menu
          loadTab(id) -> markdown (string|Promise),   // REQUIRED to show content
          onTabInput(id),   // content changed — host debounces + saves getText()
          onTabSave(id),    // Cmd/Ctrl-S — host flushes
          onSelect(prevId,nextId),  // before switching — host flushes prev
          onRename(id,title),       // inline rename committed
-         onAddTab() -> {id,title} | Promise | null,  // host creates the tab
+         onAddTab() -> {id,title,emoji?} | Promise | null,  // host creates the tab
+         onReorder(orderedIds),    // drag-reorder committed — ids in their new order
+         onDelete(id) -> bool|Promise,   // host deletes; return false to veto removal
+         onDuplicate(id) -> {id,title?,emoji?} | Promise,  // host clones; a NEW id is required
+         onSetEmoji(id, emoji),    // emoji chosen ("" clears it) — host persists
+         linkForTab(id) -> url (string|Promise),   // override the "Copy link" target
        })
+     Tab IDS ARE STABLE, OPAQUE SLUGS owned by the host: reorder/rename/emoji never
+     change them — only onAddTab / onDuplicate mint new ones. The kebab (⋮) menu shows
+     only the actions whose hooks are supplied (Copy link is always available).
      Instance: setTabs(list,selectId?) · addTab(t,select?) · renameTab(id,title) ·
-       selectTab(id) · getActiveId() · getText() · setText(v) · getEditor() · focus()
+       setEmoji(id,emoji) · getTabs() · selectTab(id) · getActiveId() · getText() ·
+       setText(v) · getEditor() · focus()
      ====================================================================== */
   function makeTabs(container, opts) {
     opts = opts || {};
     const loadTab = opts.loadTab || function () { return ""; };
-    const tabsState = [];       // [{ id, title, dim }]
+    const tabsState = [];       // [{ id, title, emoji, dim }] — id is the host's stable slug
     let activeId = null, loading = false, renaming = null;
+    const tabMenuEnabled = opts.tabMenu !== false;
+
+    const TABS_PANEL_ICON = '<svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/></svg>';
+    const TABS_PLUS_ICON  = '<svg viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"/></svg>';
+    const TAB_KEBAB_ICON  = '<svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>';
+    const MENU_ICONS = {
+      rename:    '<svg viewBox="0 0 24 24"><path d="M4 20.5h4l9.5-9.5a2.1 2.1 0 0 0-3-3L5 17.5v3z"/><path d="M13 7l3 3"/></svg>',
+      emoji:     '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.7 14.3a4 4 0 0 0 6.6 0M9 9.8h.01M15 9.8h.01"/></svg>',
+      duplicate: '<svg viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2.2"/><path d="M5.5 15.5H5A1.5 1.5 0 0 1 3.5 14V5A1.5 1.5 0 0 1 5 3.5h9A1.5 1.5 0 0 1 15.5 5v.5"/></svg>',
+      link:      '<svg viewBox="0 0 24 24"><path d="M9.5 14.5l5-5"/><path d="M8 11 6 13a3.6 3.6 0 0 0 5 5l2-2"/><path d="M16 13l2-2a3.6 3.6 0 0 0-5-5l-2 2"/></svg>',
+      trash:     '<svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M6.6 7l.8 12.4a1.5 1.5 0 0 0 1.5 1.4h6.2a1.5 1.5 0 0 0 1.5-1.4L17.4 7"/></svg>',
+    };
+    const TAB_EMOJIS = ["📄","📝","📌","⭐","✅","🔥","💡","🎯","🚀","📚","✏️","🗒️","📋","🧠","💬","🎓","🏫","🏆","❤️","👋","🤯","🍔","🌱","🌟","🔖","📎","🗂️","📁","🔬","🎨","⚡","🧩","☀️","🌙","🧭","✨"];
+    function loadCollapsed() { try { return localStorage.getItem("mde-tabs-collapsed") === "1"; } catch (_) { return false; } }
+    let collapsed = loadCollapsed();
+    // on a narrow surface the rail is an overlay drawer (see the @container rule) — start
+    // it closed so the editor is full-width; matchMedia here just avoids a first-paint flash.
+    try { if (window.matchMedia && window.matchMedia("(max-width: 600px)").matches) collapsed = true; } catch (_) {}
 
     container.classList.add("mde-tabs");
     container.innerHTML = "";
+    // ---- left rail: a header (collapse + title + add) over a vertical tab list ----
     const rail = document.createElement("div"); rail.className = "mde-tabrail";
+    const railHead = document.createElement("div"); railHead.className = "mde-tabrail-head";
+    const collapseBtn = document.createElement("button");
+    collapseBtn.type = "button"; collapseBtn.className = "mde-tab-collapse"; collapseBtn.title = "Collapse";
+    collapseBtn.setAttribute("aria-label", "Collapse tabs"); collapseBtn.innerHTML = TABS_PANEL_ICON;
+    collapseBtn.addEventListener("click", () => setCollapsed(true));
+    const railTitle = document.createElement("span"); railTitle.className = "mde-tabrail-title"; railTitle.textContent = opts.railTitle || "Tabs";
+    railHead.appendChild(collapseBtn); railHead.appendChild(railTitle);
+    if (opts.onAddTab) {
+      const add = document.createElement("button");
+      add.type = "button"; add.className = "mde-tab-add"; add.title = "New document";
+      add.setAttribute("aria-label", "Add tab"); add.innerHTML = TABS_PLUS_ICON;
+      add.addEventListener("click", addViaHost);
+      railHead.appendChild(add);
+    }
+    const railList = document.createElement("div"); railList.className = "mde-tab-list";
+    rail.appendChild(railHead); rail.appendChild(railList);
+
+    // a reveal handle, shown only when the rail is collapsed
+    const reveal = document.createElement("button");
+    reveal.type = "button"; reveal.className = "mde-tab-reveal"; reveal.title = "Show tabs";
+    reveal.setAttribute("aria-label", "Show tabs"); reveal.innerHTML = TABS_PANEL_ICON;
+    reveal.addEventListener("click", () => setCollapsed(false));
+
     const stage = document.createElement("div"); stage.className = "editor-stage mde-tab-stage";
     const surface = document.createElement("div"); surface.className = "md-surface";
     // makeEditor doesn't make its surface editable — the host owns that. The tabs
@@ -855,43 +1567,94 @@
     surface.setAttribute("spellcheck", "true");
     stage.appendChild(surface);
     container.appendChild(rail);
+    container.appendChild(reveal);
     container.appendChild(stage);
+    // mobile overlay-drawer backdrop — inert/hidden on desktop, shown via the @container rule
+    const scrim = document.createElement("div"); scrim.className = "mde-tab-scrim";
+    scrim.addEventListener("click", () => setCollapsed(true));
+    container.appendChild(scrim);
+    container.classList.toggle("railcollapsed", collapsed);
 
     const ed = makeEditor(surface, {
       people: opts.people || [],
+      toc: opts.toc,
+      tocButton: opts.tocButton,
       scrollParent: stage,
       onInput: function () { if (!loading && opts.onTabInput) opts.onTabInput(activeId); },
       onSave:  function () { if (opts.onTabSave) opts.onTabSave(activeId); },
     });
 
+    // collapsing/expanding changes the stage width — nudge any body-mounted
+    // overlays (the TOC panel tracks the stage rect) to reposition.
+    function setCollapsed(v) {
+      collapsed = v;
+      container.classList.toggle("railcollapsed", v);
+      // In narrow (drawer) mode, fade the floating TOC button while the drawer is open
+      // so it doesn't glow over the scrim; restore it once the drawer closes.
+      if (ed && ed.setTocButtonHidden) ed.setTocButtonHidden(container.classList.contains("mde-narrow") && !v);
+      // on a narrow surface the drawer is transient — don't overwrite the desktop preference
+      if (!container.classList.contains("mde-narrow")) { try { localStorage.setItem("mde-tabs-collapsed", v ? "1" : "0"); } catch (_) {} }
+      window.dispatchEvent(new Event("resize"));
+    }
+    rail.addEventListener("transitionend", e => { if (e.propertyName === "flex-basis" || e.propertyName === "width" || e.propertyName === "transform") window.dispatchEvent(new Event("resize")); });
+    // Track when the editor is narrow enough to switch the rail to an overlay drawer.
+    // Keyed off the editor's OWN width (matches the @container rule), so it's correct even
+    // when embedded in a narrow column on a wide screen.
+    let wasNarrow = null;
+    function syncNarrow() {
+      const narrow = container.getBoundingClientRect().width <= 600;
+      if (narrow === wasNarrow) return;
+      wasNarrow = narrow;
+      container.classList.toggle("mde-narrow", narrow);
+      setCollapsed(narrow ? true : loadCollapsed());   // mobile → closed drawer; desktop → restore saved pref
+    }
+    if (typeof ResizeObserver !== "undefined") { const ro = new ResizeObserver(syncNarrow); ro.observe(container); }
+    requestAnimationFrame(syncNarrow);
+
     function renderRail() {
-      rail.innerHTML = "";
+      closeTabMenu(); closeEmojiPop();
+      railList.innerHTML = "";
       for (const t of tabsState) {
-        const el = document.createElement("button");
-        el.type = "button";
+        const el = document.createElement("div");
         el.className = "mde-tab" + (t.id === activeId ? " active" : "") + (t.dim ? " dim" : "");
-        el.dataset.id = t.id;
+        el.dataset.id = t.id; el.title = t.title || "Untitled";
+        el.setAttribute("role", "button"); el.tabIndex = 0;
+        if (opts.onReorder) el.draggable = true;
+
+        const emo = document.createElement("span");
+        emo.className = "mde-tab-emoji";
+        if (t.emoji) emo.textContent = t.emoji; else emo.style.display = "none";
+        el.appendChild(emo);
+
         const label = document.createElement("span");
         label.className = "mde-tab-label";
         label.textContent = t.title || "Untitled";
         el.appendChild(label);
+
+        if (tabMenuEnabled) {
+          const kebab = document.createElement("button");
+          kebab.type = "button"; kebab.className = "mde-tab-kebab";
+          kebab.title = "Tab options"; kebab.setAttribute("aria-label", "Tab options");
+          kebab.innerHTML = TAB_KEBAB_ICON;
+          kebab.addEventListener("mousedown", e => e.stopPropagation());
+          kebab.addEventListener("click", e => { e.stopPropagation(); openTabMenu(t, kebab); });
+          el.appendChild(kebab);
+        }
+
         el.addEventListener("click", function () { if (!renaming) selectTab(t.id); });
+        el.addEventListener("keydown", function (e) {
+          if ((e.key === "Enter" || e.key === " ") && !renaming) { e.preventDefault(); selectTab(t.id); }
+        });
         if (opts.onRename)
           el.addEventListener("dblclick", function (e) { e.preventDefault(); beginRename(t, label); });
-        rail.appendChild(el);
-      }
-      if (opts.onAddTab) {
-        const add = document.createElement("button");
-        add.type = "button"; add.className = "mde-tab-add"; add.setAttribute("aria-label", "Add tab");
-        add.textContent = "+";
-        add.addEventListener("click", addViaHost);
-        rail.appendChild(add);
+        if (opts.onReorder) wireDrag(el, t);
+        railList.appendChild(el);
       }
       if (!tabsState.length) {
         const empty = document.createElement("div");
         empty.className = "mde-tab-empty";
         empty.textContent = opts.emptyLabel || "No documents yet";
-        rail.appendChild(empty);
+        railList.appendChild(empty);
       }
     }
 
@@ -908,11 +1671,15 @@
       loading = false;
       const activeEl = rail.querySelector(".mde-tab.active");
       if (activeEl && activeEl.scrollIntoView) activeEl.scrollIntoView({ block: "nearest", inline: "nearest" });
+      if (container.classList.contains("mde-narrow")) setCollapsed(true);   // mobile: close the drawer after picking
       ed.focus();
     }
 
     function beginRename(t, labelEl) {
       renaming = t.id;
+      const row = labelEl.closest(".mde-tab");
+      if (row) row.draggable = false;   // don't let a text-selection drag the tab
+      closeTabMenu(); closeEmojiPop();
       labelEl.contentEditable = "true";
       labelEl.spellcheck = false;
       labelEl.focus();
@@ -920,6 +1687,7 @@
       const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
       function commit(save) {
         labelEl.contentEditable = "false";
+        if (row && opts.onReorder) row.draggable = true;
         renaming = null;
         const next = labelEl.textContent.trim();
         if (save && next && next !== t.title) {
@@ -939,26 +1707,187 @@
       let res;
       try { res = await opts.onAddTab(); } catch (e) { return; }
       if (!res || !res.id) return;
-      tabsState.push({ id: res.id, title: res.title || "Untitled", dim: false });
+      tabsState.push({ id: res.id, title: res.title || "Untitled", emoji: res.emoji || "", dim: false });
       renderRail();
       selectTab(res.id);
     }
 
+    /* ---- per-tab ⋮ menu, emoji picker, drag-reorder, copy-link ---------------
+       All owned by this widget; identity stays with the host's opaque ids. The
+       menu + picker are body-mounted (like the palette) — --mde-* tokens live on
+       :root so they still theme. Toast lives in the stage. ----------------------*/
+    const tabMenu  = document.createElement("div"); tabMenu.className  = "mde-tab-menu";  document.body.appendChild(tabMenu);
+    const emojiPop = document.createElement("div"); emojiPop.className = "mde-emoji-pop"; document.body.appendChild(emojiPop);
+    const toast    = document.createElement("div"); toast.className    = "mde-tab-toast"; container.appendChild(toast);
+    let toastTimer = null, dragId = null;
+
+    function rowFor(id) { return Array.prototype.find.call(railList.children, el => el.dataset && el.dataset.id === id); }
+    function closeTabMenu() { tabMenu.classList.remove("open"); const k = railList.querySelector(".mde-tab-kebab.open"); if (k) k.classList.remove("open"); }
+    function closeEmojiPop() { emojiPop.classList.remove("open"); }
+    function anyPopOpen() { return tabMenu.classList.contains("open") || emojiPop.classList.contains("open"); }
+    function positionPop(pop, anchor) {
+      pop.style.visibility = "hidden"; pop.style.left = "0"; pop.style.top = "0";
+      const r = anchor.getBoundingClientRect(), pr = pop.getBoundingClientRect(), M = 8;
+      let left = r.right - pr.width, top = r.bottom + 4;
+      if (left + pr.width > window.innerWidth - M) left = window.innerWidth - M - pr.width;
+      if (left < M) left = M;
+      if (top + pr.height > window.innerHeight - M) top = r.top - pr.height - 4;
+      if (top < M) top = M;
+      pop.style.left = left + "px"; pop.style.top = top + "px"; pop.style.visibility = "";
+    }
+    function menuItem(text, icon, onClick, danger) {
+      const it = document.createElement("button");
+      it.type = "button"; it.className = "mde-tab-menu-item" + (danger ? " danger" : "");
+      const wrap = document.createElement("span"); wrap.innerHTML = icon; it.appendChild(wrap.firstChild);
+      const sp = document.createElement("span"); sp.textContent = text; it.appendChild(sp);
+      it.addEventListener("click", e => { e.stopPropagation(); onClick(); });
+      return it;
+    }
+    function openTabMenu(t, anchor) {
+      const reopen = tabMenu.classList.contains("open") && tabMenu.dataset.for === t.id;
+      closeEmojiPop(); closeTabMenu();
+      if (reopen) return;
+      tabMenu.innerHTML = ""; tabMenu.dataset.for = t.id;
+      if (opts.onRename)    tabMenu.appendChild(menuItem("Rename", MENU_ICONS.rename, () => { closeTabMenu(); startRename(t); }));
+      if (opts.onSetEmoji)  tabMenu.appendChild(menuItem("Choose emoji", MENU_ICONS.emoji, () => openEmojiPop(t, anchor)));
+      if (opts.onDuplicate) tabMenu.appendChild(menuItem("Duplicate", MENU_ICONS.duplicate, () => { closeTabMenu(); duplicateTab(t); }));
+      tabMenu.appendChild(menuItem("Copy link", MENU_ICONS.link, () => { closeTabMenu(); copyLink(t); }));
+      if (opts.onDelete) {
+        const sep = document.createElement("div"); sep.className = "mde-tab-menu-sep"; tabMenu.appendChild(sep);
+        tabMenu.appendChild(menuItem("Delete", MENU_ICONS.trash, () => { closeTabMenu(); deleteTab(t); }, true));
+      }
+      tabMenu.classList.add("open"); anchor.classList.add("open");
+      positionPop(tabMenu, anchor);
+    }
+    function openEmojiPop(t, anchor) {
+      closeTabMenu();
+      emojiPop.innerHTML = "";
+      const grid = document.createElement("div"); grid.className = "mde-emoji-grid";
+      TAB_EMOJIS.forEach(e => {
+        const c = document.createElement("button"); c.type = "button"; c.className = "mde-emoji-cell"; c.textContent = e;
+        c.addEventListener("click", ev => { ev.stopPropagation(); setEmoji(t, e); closeEmojiPop(); });
+        grid.appendChild(c);
+      });
+      emojiPop.appendChild(grid);
+      if (t.emoji) {
+        const none = document.createElement("button"); none.type = "button"; none.className = "mde-emoji-none"; none.textContent = "Remove emoji";
+        none.addEventListener("click", ev => { ev.stopPropagation(); setEmoji(t, ""); closeEmojiPop(); });
+        emojiPop.appendChild(none);
+      }
+      emojiPop.classList.add("open");
+      positionPop(emojiPop, anchor);
+    }
+    function setEmoji(t, emoji) {
+      t.emoji = emoji || ""; renderRail();
+      if (opts.onSetEmoji) try { opts.onSetEmoji(t.id, t.emoji); } catch (_) {}
+    }
+    function startRename(t) { const row = rowFor(t.id); const label = row && row.querySelector(".mde-tab-label"); if (label) beginRename(t, label); }
+    async function duplicateTab(t) {
+      if (!opts.onDuplicate) return;
+      let res; try { res = await opts.onDuplicate(t.id); } catch (_) { return; }
+      if (!res || !res.id) return;
+      const idx = tabsState.findIndex(x => x.id === t.id);
+      const nt = { id: res.id, title: res.title || ((t.title || "Untitled") + " copy"),
+                   emoji: res.emoji != null ? res.emoji : (t.emoji || ""), dim: false };
+      tabsState.splice(idx < 0 ? tabsState.length : idx + 1, 0, nt);
+      renderRail(); selectTab(nt.id);
+    }
+    async function deleteTab(t) {
+      if (!opts.onDelete) return;
+      if (!window.confirm('Delete "' + (t.title || "Untitled") + '"? This can\'t be undone.')) return;
+      try { if ((await opts.onDelete(t.id)) === false) return; } catch (_) { return; }
+      const idx = tabsState.findIndex(x => x.id === t.id);
+      if (idx < 0) return;
+      tabsState.splice(idx, 1);
+      if (activeId === t.id) {
+        activeId = null;
+        const next = tabsState[idx] || tabsState[idx - 1];
+        renderRail();
+        if (next) selectTab(next.id); else { loading = true; ed.setText(""); loading = false; }
+      } else renderRail();
+    }
+    async function copyLink(t) {
+      let url = null;
+      if (opts.linkForTab) { try { url = await opts.linkForTab(t.id); } catch (_) {} }
+      if (!url) { try { const u = new URL(window.location.href); u.searchParams.set("tab", t.id); url = u.toString(); } catch (_) { url = t.id; } }
+      let ok = false;
+      try { await navigator.clipboard.writeText(url); ok = true; }
+      catch (_) {
+        try {
+          const ta = document.createElement("textarea"); ta.value = url; ta.style.position = "fixed"; ta.style.opacity = "0";
+          document.body.appendChild(ta); ta.focus(); ta.select(); ok = document.execCommand("copy"); document.body.removeChild(ta);
+        } catch (_2) {}
+      }
+      flashToast(ok ? "Link copied" : "Couldn’t copy link");
+    }
+    function flashToast(msg) {
+      toast.textContent = msg; toast.classList.add("show");
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove("show"), 1500);
+    }
+
+    // ---- drag-to-reorder (HTML5 DnD); only order changes, ids are preserved ----
+    function clearDropMarkers() { railList.querySelectorAll(".drop-before,.drop-after").forEach(el => el.classList.remove("drop-before", "drop-after")); }
+    function dropBefore(e, el) { const r = el.getBoundingClientRect(); return (e.clientY - r.top) < r.height / 2; }
+    function wireDrag(el, t) {
+      el.addEventListener("dragstart", e => {
+        if (renaming) { e.preventDefault(); return; }
+        dragId = t.id; el.classList.add("dragging"); closeTabMenu(); closeEmojiPop();
+        try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", t.id); } catch (_) {}
+      });
+      el.addEventListener("dragend", () => { el.classList.remove("dragging"); clearDropMarkers(); dragId = null; });
+      el.addEventListener("dragover", e => {
+        if (dragId == null || t.id === dragId) return;
+        e.preventDefault(); try { e.dataTransfer.dropEffect = "move"; } catch (_) {}
+        const before = dropBefore(e, el); clearDropMarkers();
+        el.classList.add(before ? "drop-before" : "drop-after");
+      });
+      el.addEventListener("dragleave", () => el.classList.remove("drop-before", "drop-after"));
+      el.addEventListener("drop", e => {
+        e.preventDefault();
+        if (dragId == null || t.id === dragId) { clearDropMarkers(); return; }
+        const before = dropBefore(e, el); clearDropMarkers(); moveTab(dragId, t.id, before);
+      });
+    }
+    function moveTab(srcId, targetId, before) {
+      const from = tabsState.findIndex(x => x.id === srcId); if (from < 0) return;
+      const [item] = tabsState.splice(from, 1);
+      let to = tabsState.findIndex(x => x.id === targetId);
+      if (to < 0) { tabsState.splice(from, 0, item); return; }
+      if (!before) to += 1;
+      tabsState.splice(to, 0, item);
+      renderRail();
+      if (opts.onReorder) try { opts.onReorder(tabsState.map(x => x.id)); } catch (_) {}
+    }
+
+    // close popups on outside click / Escape / scroll / resize
+    document.addEventListener("mousedown", e => {
+      if (!anyPopOpen()) return;
+      if (tabMenu.contains(e.target) || emojiPop.contains(e.target)) return;
+      if (e.target.closest && e.target.closest(".mde-tab-kebab")) return;
+      closeTabMenu(); closeEmojiPop();
+    });
+    document.addEventListener("keydown", e => { if (e.key === "Escape" && anyPopOpen()) { closeTabMenu(); closeEmojiPop(); } });
+    window.addEventListener("resize", () => { closeTabMenu(); closeEmojiPop(); });
+    window.addEventListener("scroll", () => { closeTabMenu(); closeEmojiPop(); }, true);
+
     const api = {
       setTabs(list, selectId) {
         tabsState.length = 0;
-        for (const t of (list || [])) tabsState.push({ id: t.id, title: t.title || "Untitled", dim: !!t.dim });
+        for (const t of (list || [])) tabsState.push({ id: t.id, title: t.title || "Untitled", emoji: t.emoji || "", dim: !!t.dim });
         activeId = null;
         renderRail();
         const first = selectId || (tabsState[0] && tabsState[0].id);
         if (first) selectTab(first); else { loading = true; ed.setText(""); loading = false; }
       },
       addTab(t, select) {
-        tabsState.push({ id: t.id, title: t.title || "Untitled", dim: !!t.dim });
+        tabsState.push({ id: t.id, title: t.title || "Untitled", emoji: t.emoji || "", dim: !!t.dim });
         renderRail();
         if (select !== false) selectTab(t.id);
       },
       renameTab(id, title) { const t = tabsState.find(x => x.id === id); if (t) { t.title = title; renderRail(); } },
+      setEmoji(id, emoji) { const t = tabsState.find(x => x.id === id); if (t) { t.emoji = emoji || ""; renderRail(); } },
+      getTabs() { return tabsState.map(t => ({ id: t.id, title: t.title, emoji: t.emoji, dim: t.dim })); },
       selectTab,
       getActiveId() { return activeId; },
       getText() { return ed.getText(); },

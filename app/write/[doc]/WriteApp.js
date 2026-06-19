@@ -84,6 +84,13 @@ export default function WriteApp() {
     };
   }, [docId]);
 
+  // The doc name is no longer shown in the chromeless UI, so surface it in the
+  // browser tab title — the open tab still says which document this is.
+  useEffect(() => {
+    const label = state.data?.doc?.label;
+    if (label) document.title = `${label} · Writing`;
+  }, [state.data]);
+
   // ── saving ───────────────────────────────────────────────────────────────────
   const saveTab = useCallback(
     async (tabId, text) => {
@@ -259,16 +266,15 @@ export default function WriteApp() {
   // ── render ───────────────────────────────────────────────────────────────────
   if (state.loading) {
     return (
-      <div className="relative z-10 mx-auto w-full max-w-3xl px-5 py-8">
-        <div className="portal-skeleton h-12 w-full rounded-full" />
-        <div className="portal-skeleton mt-4 h-[70vh] w-full rounded-[2.25rem]" />
+      <div className="write-zen fixed inset-0 z-10 flex items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-ink-faint" strokeWidth={2.2} />
       </div>
     );
   }
   if (state.error) {
     return (
-      <div className="relative z-10 mx-auto w-full max-w-3xl px-5 py-16 text-center">
-        <TriangleAlert className="mx-auto h-8 w-8 text-terracotta" strokeWidth={2} />
+      <div className="write-zen fixed inset-0 z-10 flex flex-col items-center justify-center px-6 text-center">
+        <TriangleAlert className="h-8 w-8 text-terracotta" strokeWidth={2} />
         <p className="mt-3 font-display text-xl font-semibold text-ink">Couldn’t open this doc</p>
         <p className="mt-1 text-sm text-ink-soft">{state.error}</p>
         <Link
@@ -281,61 +287,41 @@ export default function WriteApp() {
     );
   }
 
-  const { doc, student } = state.data;
-
   return (
-    <div className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-3xl flex-col px-4 pb-10 pt-5 sm:px-6">
-      <header className="flex items-center gap-3 pb-4">
-        <Link
-          href="/colleges"
-          aria-label="Back to Colleges"
-          className="neu-chip flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-ink-soft active:scale-90"
-        >
-          <ArrowLeft className="h-4.5 w-4.5" strokeWidth={2.2} />
-        </Link>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-xs font-semibold uppercase tracking-[0.16em] text-ink-faint">
-            {student?.name ? `${student.name} · ` : ''}
-            {readOnly ? 'Read-only' : 'Writing'}
-          </p>
-          <h1 className="truncate font-display text-xl font-semibold leading-tight text-ink">
-            {doc.label}
-          </h1>
-        </div>
-        {readOnly ? (
-          <span className="shrink-0 text-xs font-semibold text-ink-faint">View only</span>
-        ) : (
-          <SavePill status={save} onHistory={openHistory} />
-        )}
-        {readOnly && (
-          <button
-            onClick={openHistory}
-            aria-label="Version history"
-            className="neu-chip flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-ink-soft active:scale-90"
-          >
-            <History className="h-4 w-4" strokeWidth={2.1} />
-          </button>
-        )}
-      </header>
+    <div className="write-zen fixed inset-0 z-10 flex flex-col">
+      {/* The document fills the whole screen — no header strip, no back button,
+          no doc name, no rounded container. Because this element is the editor
+          root (MarkdownTabs adds .mde-tabs to it), filling the viewport makes
+          the tab drawer + scrim cover the full screen even for a short doc. */}
+      <div ref={mountRef} className="mde-host min-h-0 flex-1" />
 
-      <div className="neu-raised flex-1 rounded-[2.25rem] p-5 sm:p-7">
-        <div ref={mountRef} className="mde-host min-h-[64vh]" />
+      {/* Autosave state + version history lived in the (now-removed) strip, so
+          they move to one discreet floating control — bottom-right, clear of the
+          editor's own top-corner tab/TOC buttons and the iOS home indicator. */}
+      <div className="write-tools">
+        {!readOnly && <SaveDot status={save} />}
+        <button
+          onClick={openHistory}
+          aria-label="Version history"
+          title="Version history"
+          className="write-tool-btn"
+        >
+          <History className="h-[18px] w-[18px]" strokeWidth={2.1} />
+        </button>
       </div>
 
       {history && (
-        <div className="mt-4">
-          <HistoryPanel
-            history={history}
-            onClose={() => setHistory(null)}
-            onRestore={readOnly ? null : restore}
-          />
-        </div>
+        <HistoryOverlay
+          history={history}
+          onClose={() => setHistory(null)}
+          onRestore={readOnly ? null : restore}
+        />
       )}
     </div>
   );
 }
 
-function SavePill({ status, onHistory }) {
+function SaveDot({ status }) {
   const map = {
     idle: { icon: Check, label: 'Saved', cls: 'text-ink-faint' },
     saving: { icon: Loader2, label: 'Saving…', cls: 'text-ink-soft', spin: true },
@@ -345,19 +331,19 @@ function SavePill({ status, onHistory }) {
   const s = map[status] || map.idle;
   const Icon = s.icon;
   return (
-    <div className="flex shrink-0 items-center gap-1.5">
-      <span className={`flex items-center gap-1 text-xs font-semibold ${s.cls}`}>
-        <Icon className={`h-3.5 w-3.5 ${s.spin ? 'animate-spin' : ''}`} strokeWidth={2.4} />
-        {s.label}
-      </span>
-      <button
-        onClick={onHistory}
-        aria-label="Version history"
-        title="Version history"
-        className="neu-chip flex h-10 w-10 items-center justify-center rounded-full text-ink-soft active:scale-90"
-      >
-        <History className="h-4 w-4" strokeWidth={2.1} />
-      </button>
+    <span className={`flex items-center gap-1.5 text-xs font-semibold ${s.cls}`}>
+      <Icon className={`h-3.5 w-3.5 ${s.spin ? 'animate-spin' : ''}`} strokeWidth={2.4} />
+      {s.label}
+    </span>
+  );
+}
+
+function HistoryOverlay({ history, onClose, onRestore }) {
+  return (
+    <div className="write-overlay" onClick={onClose}>
+      <div className="write-overlay-card" onClick={(e) => e.stopPropagation()}>
+        <HistoryPanel history={history} onClose={onClose} onRestore={onRestore} />
+      </div>
     </div>
   );
 }
