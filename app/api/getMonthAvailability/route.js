@@ -6,6 +6,7 @@ import { listBlocks, isDateBlocked, blockedWindowsForDate } from '@/lib/blocks';
 import {
   getSeniorByEmail,
   canBook,
+  isCurrentBookingWeek,
   fetchSeniorMeetings,
   bucketByWeek,
   startOfSaturdayWeek,
@@ -111,8 +112,13 @@ export async function GET(request) {
       const dateStr = cursor.toFormat('yyyy-LL-dd');
       const hours = instructor.hoursByWeekday[cursor.weekday];
 
-      // Seniors: skip days their package/teacher/cap/secondary-first don't allow.
+      // Seniors: only the current (check-in-active) week is bookable, then skip
+      // days their package/teacher/cap/secondary-first don't allow.
       if (senior) {
+        if (!isCurrentBookingWeek(cursor, now)) {
+          cursor = cursor.plus({ days: 1 });
+          continue;
+        }
         const booked = seniorWeeks.get(startOfSaturdayWeek(cursor).toISODate()) || EMPTY_WEEK;
         if (!canBook(senior, cursor, instructor.slug, duration, booked).ok) {
           cursor = cursor.plus({ days: 1 });

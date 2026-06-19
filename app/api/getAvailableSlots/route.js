@@ -3,7 +3,7 @@ import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
 import { listBlocks, isDateBlocked, blockedWindowsForDate } from '@/lib/blocks';
-import { getSeniorByEmail, canBook, countBookedForWeek, PACKAGE_RULES } from '@/lib/seniors';
+import { getSeniorByEmail, canBook, isCurrentBookingWeek, countBookedForWeek, PACKAGE_RULES } from '@/lib/seniors';
 
 function getServiceAuth() {
   return new google.auth.GoogleAuth({
@@ -87,6 +87,10 @@ export async function GET(request) {
     // + per-week cap + secondary-first must allow a meeting on THIS date's week.
     const senior = await getSeniorByEmail(sessionClaims.email);
     if (senior) {
+      // Only the current (check-in-active) week is bookable for seniors.
+      if (!isCurrentBookingWeek(requestedDate, now)) {
+        return Response.json({ slots: [], recommendations: [], unavailable: true });
+      }
       if (!PACKAGE_RULES[senior.package].denominations.includes(duration)) {
         return Response.json({ slots: [], recommendations: [], unavailable: true });
       }

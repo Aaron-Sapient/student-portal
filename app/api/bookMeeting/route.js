@@ -3,7 +3,7 @@ import { google } from 'googleapis';
 import nodemailer from 'nodemailer';
 import { DateTime } from 'luxon';
 import { getInstructor, validateInstructorHours } from '@/lib/instructors';
-import { getSeniorByEmail, checkedInThisWeek, canBook, countBookedForWeek } from '@/lib/seniors';
+import { getSeniorByEmail, checkedInThisWeek, isCurrentBookingWeek, canBook, countBookedForWeek } from '@/lib/seniors';
 
 // Human messages for canBook() rejection reasons.
 const SENIOR_DENY = {
@@ -124,6 +124,14 @@ export async function POST(request) {
         return Response.json(
           { error: "Complete this week's check-in before booking." },
           { status: 400 }
+        );
+      }
+      // The check-in only unlocks THIS week's booking — a senior can't pre-book
+      // future weeks (that would skip those weeks' compliance check-ins).
+      if (!isCurrentBookingWeek(startTime, nowLA)) {
+        return Response.json(
+          { error: "You can only book for the current week. Next week's meeting unlocks when you submit next week's check-in." },
+          { status: 409 }
         );
       }
       const mins = parseInt(String(duration).replace(/\D/g, ''), 10);

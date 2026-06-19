@@ -19,6 +19,7 @@ import {
   weekOfMonth,
   assignedPlanForWeek,
   canBook,
+  isCurrentBookingWeek,
   startOfSaturdayWeek,
   bookedForWeekOf,
   emptyWeek,
@@ -147,6 +148,15 @@ function pureLogicTests() {
     'Ess phase: a pre-existing primary 20 caps the cross-meeting at 20 (budget enforced)'
   );
 
+  console.log('\n── Current-week-only booking gate (no pre-booking future weeks) ──');
+  // "now" sits in wk3 (Jun 13-19). Same week → bookable; any other week → locked.
+  const now3 = D(16);
+  ok(isCurrentBookingWeek(D(17), now3), 'Jun 17 bookable when now is Jun 16 (same wk3)');
+  ok(isCurrentBookingWeek(D(13), now3), 'Jun 13 (wk3 start) bookable when now is Jun 16');
+  ok(!isCurrentBookingWeek(D(23), now3), 'Jun 23 (wk4) NOT bookable from wk3 — future week');
+  ok(!isCurrentBookingWeek(D(30), now3), 'Jun 30 (wk5) NOT bookable from wk3 — two weeks out');
+  ok(!isCurrentBookingWeek(D(10), now3), 'Jun 10 (wk2) NOT bookable from wk3 — past week');
+
   console.log('\n── 5th week never a phase week (phase only 1-4) ──');
   const wk5 = D(29);
   const vipP4 = { primary_teacher: 'ryan', package: 'vip', phase: 4 };
@@ -161,7 +171,8 @@ async function rosterTests(sb, live, get) {
     ok(false, `Supabase read failed: ${error.message}`);
     return;
   }
-  ok(seniors.length === 18, `18 active seniors (got ${seniors.length})`);
+  // 18 roster seniors + the permanent "Test Student" fixture (see ingestSeniors.cjs).
+  ok(seniors.length === 19, `19 active seniors (got ${seniors.length})`);
   for (const s of seniors) {
     ok(!!PACKAGE_RULES[s.package], `${s.student_name}: known package "${s.package}"`);
     ok(['aaron', 'ryan'].includes(s.primary_teacher), `${s.student_name}: valid teacher`);
