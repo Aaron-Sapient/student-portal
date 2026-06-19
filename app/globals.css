@@ -235,10 +235,10 @@ body {
    white "paper" still reads as the portal. The editor surface is transparent,
    so it shows this canvas through. */
 .write-zen {
+  /* Pure white/black canvas. Full-bleed drawer corners + the editor filling its
+     host are now canonical defaults (the editor is host-agnostic), so this scope
+     only carries the page's own skin: the canvas colour. */
   background: #ffffff;
-  /* Full-bleed: the tab drawer slides from the screen edge, so square its outer
-     corners (the 16px default is for an editor nested in a rounded card). */
-  --mde-drawer-radius: 0px;
 }
 @media (prefers-color-scheme: dark) {
   .write-zen { background: #000000; }

@@ -228,7 +228,12 @@
     --mde-tab-active-bg: var(--mde-leaf);
     --mde-tab-active-fg: var(--mde-green-deep);
   }
-  .mde-tabs { display: flex; flex-direction: row; align-items: stretch; min-height: 0; position: relative; container-type: inline-size; container-name: mde; }
+  /* height:100% so the editor fills a fill-height host (flex child / explicit
+     height) — this is what makes the narrow-mode overlay drawer + scrim cover
+     the whole surface instead of cropping to content. No-op for a content-sized
+     host. For the drawer to cover correctly, give the editor a fill-height host
+     (a flex:1 child or an explicit/100dvh height), NOT min-height alone. */
+  .mde-tabs { display: flex; flex-direction: row; align-items: stretch; min-height: 0; height: 100%; position: relative; container-type: inline-size; container-name: mde; }
   .mde-tabrail {
     flex: 0 0 var(--mde-rail-width); width: var(--mde-rail-width); display: flex; flex-direction: column;
     min-height: 0; overflow: hidden; border-right: 1px solid var(--mde-hairline);
@@ -350,17 +355,17 @@
       position: absolute; top: 0; bottom: 0; left: 0; z-index: 40;
       width: min(82%, 300px); flex-basis: auto; opacity: 1;
       background: var(--mde-card); border-right: 1px solid var(--mde-hairline);
-      /* Round the drawer's outer (left) corners so that, when the editor sits inside a
-         padded/rounded host card, the overlay reads as an intentional rounded panel
-         rather than a rectangle cropped flat against the card. --mde-drawer-radius is
-         host-overridable (default tracks a typical inner-card radius). */
-      border-radius: var(--mde-drawer-radius, 16px) 0 0 var(--mde-drawer-radius, 16px);
+      /* Full-bleed by default: the drawer slides from the edge with SQUARE outer
+         corners (--mde-drawer-radius defaults to 0). A consumer that nests the
+         editor in a rounded card sets --mde-drawer-radius to its inner radius so
+         the overlay reads as a rounded panel instead of a flat-cropped rectangle. */
+      border-radius: var(--mde-drawer-radius, 0px) 0 0 var(--mde-drawer-radius, 0px);
       transform: translateX(-115%); visibility: hidden;
       transition: transform .24s var(--mde-clay-ease), visibility 0s linear .24s;
     }
     .mde-tabs.railcollapsed .mde-tabrail { width: min(82%, 300px); flex-basis: auto; opacity: 1; transform: translateX(-115%); visibility: hidden; border-right-color: var(--mde-hairline); pointer-events: none; }
     .mde-tabs:not(.railcollapsed) .mde-tabrail { transform: none; visibility: visible; box-shadow: 8px 0 30px rgba(0,0,0,.20); transition: transform .24s var(--mde-clay-ease), visibility 0s linear 0s; }
-    .mde-tab-scrim { display: block; position: absolute; inset: 0; z-index: 35; background: rgba(0,0,0,.34); border-radius: var(--mde-drawer-radius, 16px); opacity: 0; pointer-events: none; transition: opacity .24s; }
+    .mde-tab-scrim { display: block; position: absolute; inset: 0; z-index: 35; background: rgba(0,0,0,.34); border-radius: var(--mde-drawer-radius, 0px); opacity: 0; pointer-events: none; transition: opacity .24s; }
     .mde-tabs:not(.railcollapsed) .mde-tab-scrim { opacity: 1; pointer-events: auto; }
   }
 
