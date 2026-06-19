@@ -5,12 +5,8 @@ import { getInstructor } from '@/lib/instructors';
 import { listBlocks, isDateBlocked, blockedWindowsForDate } from '@/lib/blocks';
 import {
   getSeniorByEmail,
-  canBook,
-  isCurrentBookingWeek,
-  fetchSeniorMeetings,
-  bucketByWeek,
-  startOfSaturdayWeek,
-  PACKAGE_RULES,
+  loadSeniorBookingState,
+  canBookOnDate,
 } from '@/lib/seniors';
 
 function getServiceAuth() {
@@ -65,25 +61,15 @@ export async function GET(request) {
     const calendar = google.calendar({ version: 'v3', auth: authClient });
     const sheets = google.sheets({ version: 'v4', auth: authClient });
 
-    // Senior gate: a day is bookable only if the requested length is on their
-    // package AND the teacher + per-week cap + secondary-first allow a meeting in
-    // THAT day's week. Fetch the senior's own bookings across the grid once and
-    // bucket by week so each day's check is O(1).
+    // Senior gate: a day is bookable only if the check-in token ledger allows a
+    // meeting that day (active grant → window → same-day → tokens → teacher/length/
+    // phase). Load the ledger state once; each day's check is pure/in-memory.
     const senior = await getSeniorByEmail(sessionClaims.email);
-    let seniorWeeks = null;
+    let seniorState = null;
     if (senior) {
-      if (!PACKAGE_RULES[senior.package].denominations.includes(duration)) {
-        return Response.json({ availableDates: [] });
-      }
-      const meetings = await fetchSeniorMeetings(
-        calendar,
-        senior,
-        gridStart.startOf('day').toISO(),
-        gridEnd.endOf('day').toISO()
-      );
-      seniorWeeks = bucketByWeek(meetings);
+      seniorState = await loadSeniorBookingState(senior.student_sheet_id);
+      if (!seniorState.grant) return Response.json({ availableDates: [] });
     }
-    const EMPTY_WEEK = { aaron: { count: 0, minutes: 0 }, ryan: { count: 0, minutes: 0 } };
 
     // Mirror getAvailableSlots: an Aaron block also blocks ART since they share a calendar.
     const blockSlugs = instructor.slug === 'art' ? ['art', 'aaron'] : [instructor.slug];
@@ -112,15 +98,10 @@ export async function GET(request) {
       const dateStr = cursor.toFormat('yyyy-LL-dd');
       const hours = instructor.hoursByWeekday[cursor.weekday];
 
-      // Seniors: only the current (check-in-active) week is bookable, then skip
-      // days their package/teacher/cap/secondary-first don't allow.
+      // Seniors: skip any day the token ledger won't authorize (out of the grant
+      // window, same-day collision, tokens used, wrong teacher/length/phase).
       if (senior) {
-        if (!isCurrentBookingWeek(cursor, now)) {
-          cursor = cursor.plus({ days: 1 });
-          continue;
-        }
-        const booked = seniorWeeks.get(startOfSaturdayWeek(cursor).toISODate()) || EMPTY_WEEK;
-        if (!canBook(senior, cursor, instructor.slug, duration, booked).ok) {
+        if (!canBookOnDate(senior, cursor, instructor.slug, duration, seniorState).ok) {
           cursor = cursor.plus({ days: 1 });
           continue;
         }

@@ -19,7 +19,10 @@ import {
   weekOfMonth,
   assignedPlanForWeek,
   canBook,
-  isCurrentBookingWeek,
+  grantWindow,
+  meetingInWindow,
+  grantRemaining,
+  canBookOnDate,
   startOfSaturdayWeek,
   bookedForWeekOf,
   emptyWeek,
@@ -148,14 +151,47 @@ function pureLogicTests() {
     'Ess phase: a pre-existing primary 20 caps the cross-meeting at 20 (budget enforced)'
   );
 
-  console.log('\n── Current-week-only booking gate (no pre-booking future weeks) ──');
-  // "now" sits in wk3 (Jun 13-19). Same week → bookable; any other week → locked.
-  const now3 = D(16);
-  ok(isCurrentBookingWeek(D(17), now3), 'Jun 17 bookable when now is Jun 16 (same wk3)');
-  ok(isCurrentBookingWeek(D(13), now3), 'Jun 13 (wk3 start) bookable when now is Jun 16');
-  ok(!isCurrentBookingWeek(D(23), now3), 'Jun 23 (wk4) NOT bookable from wk3 — future week');
-  ok(!isCurrentBookingWeek(D(30), now3), 'Jun 30 (wk5) NOT bookable from wk3 — two weeks out');
-  ok(!isCurrentBookingWeek(D(10), now3), 'Jun 10 (wk2) NOT bookable from wk3 — past week');
+  console.log('\n── Check-in grant model: window, tokens, same-day (no front-loading) ──');
+  // A check-in in wk3 (Jun 13-19) grants a window through the END of wk4 (Jun 26):
+  // one week's worth, cashable across this+next week so a late check-in isn't stranded.
+  const gw = grantWindow(D(16));
+  ok(gw.weekStart.toISODate() === '2026-06-13', `grant week_start = Jun 13 (got ${gw.weekStart.toISODate()})`);
+  ok(gw.validThrough.toISODate() === '2026-06-26', `grant valid_through = Jun 26 (got ${gw.validThrough.toISODate()})`);
+
+  const vipGrant = { week_start: '2026-06-13', valid_through: '2026-06-26', meeting_tokens: 2, budget_minutes: null, package: 'vip' };
+  ok(meetingInWindow(D(23), vipGrant), 'Jun 23 in window');
+  ok(meetingInWindow(D(26), vipGrant), 'Jun 26 (last day) in window');
+  ok(!meetingInWindow(D(30), vipGrant), 'Jun 30 NOT in window (week after next)');
+  ok(!meetingInWindow(D(10), vipGrant), 'Jun 10 NOT in window (past)');
+
+  // The Christine regression: VIP (primary ryan, phase 1 → wk3/wk4 are non-phase).
+  const vipSenior = { primary_teacher: 'ryan', package: 'vip', phase: 1, student_sheet_id: 'x' };
+  const st = (bookings) => ({ grant: vipGrant, bookings });
+  const b23 = { teacher: 'ryan', minutes: 30, meeting_date: '2026-06-23' };
+  const b25 = { teacher: 'ryan', minutes: 30, meeting_date: '2026-06-25' };
+  ok(canBookOnDate(vipSenior, D(23), 'ryan', 30, st([])).ok, 'VIP cashes token 1 (Jun 23)');
+  ok(canBookOnDate(vipSenior, D(25), 'ryan', 30, st([b23])).ok, 'VIP cashes token 2 (Jun 25)');
+  ok(canBookOnDate(vipSenior, D(30), 'ryan', 30, st([b23, b25])).reason === 'out-of-window',
+    'Christine 3rd booking (Jun 30) REFUSED — out of window');
+  ok(canBookOnDate(vipSenior, D(24), 'ryan', 30, st([b23, b25])).reason === 'tokens-used',
+    'an in-window 3rd is REFUSED — tokens used (one week\'s worth max)');
+  ok(canBookOnDate(vipSenior, D(23), 'ryan', 30, st([b23])).reason === 'same-day',
+    'two meetings same day REFUSED');
+  ok(canBookOnDate(vipSenior, D(23), 'ryan', 30, { grant: null, bookings: [] }).reason === 'no-grant',
+    'no active grant → no-grant (must check in)');
+  ok(grantRemaining(vipGrant, { count: 1, minutes: 30 }) === 1, 'VIP remaining 1 after 1 booked');
+  ok(grantRemaining(vipGrant, { count: 2, minutes: 60 }) === 0, 'VIP remaining 0 after 2 booked');
+
+  // Essential: one check-in = a 40-min budget across the window (1×40 or 2×20).
+  const essGrant = { week_start: '2026-06-13', valid_through: '2026-06-26', meeting_tokens: 0, budget_minutes: 40, package: 'essential' };
+  const essSenior = { primary_teacher: 'ryan', package: 'essential', phase: 1, student_sheet_id: 'y' };
+  const e23x20 = { teacher: 'ryan', minutes: 20, meeting_date: '2026-06-23' };
+  ok(canBookOnDate(essSenior, D(23), 'ryan', 40, { grant: essGrant, bookings: [] }).ok, 'Essential cashes 1×40');
+  ok(canBookOnDate(essSenior, D(25), 'ryan', 20, { grant: essGrant, bookings: [{ ...e23x20, minutes: 40 }] }).reason === 'tokens-used',
+    'Essential: budget spent (40) blocks a further meeting');
+  ok(canBookOnDate(essSenior, D(25), 'ryan', 20, { grant: essGrant, bookings: [e23x20] }).ok,
+    'Essential 2×20 across days within budget');
+  ok(grantRemaining(essGrant, { count: 1, minutes: 20 }) === 1, 'Essential remaining 1×20-slot after a 20 booked');
 
   console.log('\n── 5th week never a phase week (phase only 1-4) ──');
   const wk5 = D(29);

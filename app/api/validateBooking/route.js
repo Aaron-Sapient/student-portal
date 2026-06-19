@@ -2,7 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
-import { getSeniorByEmail, checkedInThisWeek, PACKAGE_RULES } from '@/lib/seniors';
+import { getSeniorByEmail, getActiveGrant, PACKAGE_RULES } from '@/lib/seniors';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -64,15 +64,15 @@ export async function GET(request) {
     });
     const studentName = nameRes.data.values?.[0]?.[0] || '';
 
-    // Senior path: deterministic, token-free. A weekly check-in (Master AY = col
-    // 50, the same column the senior check-in records) is the prerequisite; the
-    // per-week cap, assigned teacher, and secondary-first ordering are enforced
-    // per meeting date in getMonthAvailability/getAvailableSlots/bookMeeting, so
-    // this is just a lenient entry gate (checked in + a valid teacher).
+    // Senior path: an active check-in grant (the auditable record a check-in
+    // writes) is the prerequisite; the window, same-day, token cap, assigned
+    // teacher, and secondary-first ordering are enforced per meeting date in
+    // getMonthAvailability/getAvailableSlots/bookMeeting. This is a lenient entry
+    // gate (has tokens + a valid teacher).
     const senior = await getSeniorByEmail(email);
     if (senior) {
-      const now = DateTime.now().setZone('America/Los_Angeles');
-      if (!checkedInThisWeek(studentRow[50], now)) {
+      const grant = await getActiveGrant(senior.student_sheet_id);
+      if (!grant) {
         return Response.json({
           allowed: false,
           senior: true,

@@ -6,6 +6,7 @@ import { triggerReportGeneration } from '@/lib/generateReport';
 import { listBlocks, isDateBlocked } from '@/lib/blocks';
 import { makeApprovalToken } from '@/lib/checkinApproval';
 import { sendRyanMeetingRequestEmail } from '@/lib/checkinEmails';
+import { getSeniorBySheetId, createCheckinGrant } from '@/lib/seniors';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -174,8 +175,20 @@ export async function POST(request) {
       },
     });
 
-    // Senior check-in is record-only — booking is now unlocked for the week.
+    // Senior check-in is record-only — but it ALSO grants this week's booking
+    // tokens (one week's worth, spendable across the current+next Saturday-week).
+    // The grant is the auditable record that unlocks booking; a new check-in
+    // supersedes the prior grant. See lib/seniors.js createCheckinGrant.
     if (isSenior) {
+      try {
+        const senior = await getSeniorBySheetId(studentSheetId);
+        if (senior) {
+          await createCheckinGrant(senior, DateTime.now().setZone('America/Los_Angeles'));
+        }
+      } catch (grantErr) {
+        console.error('Failed to write senior check-in grant:', grantErr);
+        return Response.json({ error: 'Check-in saved, but unlocking booking failed. Please retry.' }, { status: 500 });
+      }
       return Response.json({ success: true, senior: true });
     }
 

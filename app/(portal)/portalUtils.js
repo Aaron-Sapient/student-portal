@@ -49,8 +49,9 @@ export function bookingHref(instructor, type) {
 // True when the student has any meeting they're currently entitled to book.
 export function hasBookingAvailable(data) {
   if (!data) return false;
-  // Seniors: deterministic — checked in this week AND allotment not yet used up.
-  if (data.senior) return data.senior.checkedIn && data.senior.remaining > 0;
+  // Seniors: tokens left on their active check-in grant (remaining > 0 already
+  // implies a grant exists; a late/leftover grant can still be cashable).
+  if (data.senior) return data.senior.remaining > 0;
   return (
     !!bookingHref('ryan', data.meetingType) ||
     !!bookingHref('aaron', data.aaronMeetingType) ||

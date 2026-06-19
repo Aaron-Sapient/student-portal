@@ -3,10 +3,14 @@ import { google } from 'googleapis';
 import nodemailer from 'nodemailer';
 import { DateTime } from 'luxon';
 import { getInstructor, validateInstructorHours } from '@/lib/instructors';
-import { getSeniorByEmail, checkedInThisWeek, isCurrentBookingWeek, canBook, countBookedForWeek } from '@/lib/seniors';
+import { getSeniorByEmail, loadSeniorBookingState, canBookOnDate, recordBooking } from '@/lib/seniors';
 
-// Human messages for canBook() rejection reasons.
+// Human messages for canBookOnDate() rejection reasons (grant gates + canBook rules).
 const SENIOR_DENY = {
+  'no-grant': 'Complete this week’s check-in to unlock booking.',
+  'out-of-window': 'You can only book for this week or next. Next week’s check-in unlocks the week after.',
+  'same-day': 'You already have a meeting that day — pick another day.',
+  'tokens-used': 'You’ve booked all the meetings this check-in unlocked.',
   'wrong-teacher': 'That isn’t your assigned teacher for that week.',
   'secondary-first': 'Book your cross-meeting with your other teacher first.',
   'secondary-done': 'You’ve already booked your once-a-month cross-meeting.',
@@ -105,44 +109,24 @@ export async function POST(request) {
       }, { status: 409 });
     }
 
-    // Senior path — deterministic enforcement (the final authority; the slot
-    // endpoints can be bypassed). Re-check the weekly check-in, then verify the
-    // teacher/length/cap/secondary-first for the MEETING's week against the live
-    // calendar count. Seniors never consume a token (guarded below).
+    // Senior path — the final authority (slot endpoints can be bypassed). Authorize
+    // against the auditable token ledger: an active check-in grant, the meeting in
+    // the grant's window, no same-day collision, tokens left, and the per-week
+    // teacher/length/secondary-first rules. On success the booking is recorded
+    // against the grant AFTER the calendar event is created (below).
     const senior = await getSeniorByEmail(email);
+    let seniorGrant = null;
+    const seniorMins = parseInt(String(duration).replace(/\D/g, ''), 10);
     if (senior) {
-      const nowLA = DateTime.now().setZone('America/Los_Angeles');
-      const masterFull = await sheets.spreadsheets.values.get({
-        spreadsheetId: MASTER_SHEET_ID,
-        range: `${MASTER_TAB}!A:BD`,
-        valueRenderOption: 'UNFORMATTED_VALUE',
-      });
-      const srow = (masterFull.data.values || []).find(
-        r => String(r[9] || '').trim().toLowerCase() === email.toLowerCase()
-      );
-      if (!srow || !checkedInThisWeek(srow[50], nowLA)) {
-        return Response.json(
-          { error: "Complete this week's check-in before booking." },
-          { status: 400 }
-        );
-      }
-      // The check-in only unlocks THIS week's booking — a senior can't pre-book
-      // future weeks (that would skip those weeks' compliance check-ins).
-      if (!isCurrentBookingWeek(startTime, nowLA)) {
-        return Response.json(
-          { error: "You can only book for the current week. Next week's meeting unlocks when you submit next week's check-in." },
-          { status: 409 }
-        );
-      }
-      const mins = parseInt(String(duration).replace(/\D/g, ''), 10);
-      const booked = await countBookedForWeek(calendar, senior, startTime);
-      const verdict = canBook(senior, startTime, instructor.slug, mins, booked);
+      const state = await loadSeniorBookingState(senior.student_sheet_id);
+      const verdict = canBookOnDate(senior, startTime, instructor.slug, seniorMins, state);
       if (!verdict.ok) {
         return Response.json(
           { error: SENIOR_DENY[verdict.reason] || 'You can’t book that meeting.' },
           { status: 409 }
         );
       }
+      seniorGrant = state.grant;
     }
 
     const agendaTrimmed = agenda?.trim() || '';
@@ -155,7 +139,7 @@ export async function POST(request) {
       ? `Zoom: ${instructor.zoomLink}\nAgenda: ${agendaTrimmed}`
       : `Zoom: ${instructor.zoomLink}`;
 
-    await calendar.events.insert({
+    const eventRes = await calendar.events.insert({
       calendarId: instructor.calendarId,
       requestBody: {
         summary: eventTitle,
@@ -173,6 +157,28 @@ export async function POST(request) {
         },
       },
     });
+
+    // Seniors: record the consumption against the grant. If the ledger write fails,
+    // delete the just-created event so we never leave an un-accounted booking.
+    if (senior && seniorGrant) {
+      try {
+        await recordBooking(seniorGrant, {
+          eventId: eventRes.data.id,
+          teacher: instructor.slug,
+          dt: startTime,
+          minutes: seniorMins,
+          studentSheetId: senior.student_sheet_id,
+        });
+      } catch (ledgerErr) {
+        console.error('Senior booking ledger write failed — rolling back event:', ledgerErr);
+        try {
+          await calendar.events.delete({ calendarId: instructor.calendarId, eventId: eventRes.data.id });
+        } catch (delErr) {
+          console.error('Failed to roll back orphaned event:', delErr);
+        }
+        return Response.json({ error: 'Booking could not be recorded. Please try again.' }, { status: 500 });
+      }
+    }
 
     // Find student row in master sheet
     const masterRes = await sheets.spreadsheets.values.get({

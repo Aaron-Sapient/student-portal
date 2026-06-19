@@ -114,9 +114,51 @@ drop trigger if exists seniors_set_updated on seniors;
 create trigger seniors_set_updated before update on seniors
   for each row execute function set_updated_at();
 
+-- Auditable senior booking ledger. Replaces stateless calendar-counting (which had
+-- no per-check-in cap — a single check-in could front-load several weeks of meetings).
+-- A check-in grants ONE WEEK'S WORTH of meetings (vip/comp = 2 meetings; essential =
+-- a 40-min budget), spendable across the current OR next Saturday-week so a late
+-- check-in never strands tokens. A newer check-in supersedes the prior grant
+-- (active=false): one active grant at a time, use-it-or-lose-it.
+create table if not exists senior_checkin_grants (
+  id               uuid primary key default gen_random_uuid(),
+  student_sheet_id text not null,
+  student_email    text not null,
+  granted_at       timestamptz not null default now(),
+  week_start       date not null,        -- startOfSaturdayWeek(check-in), America/Los_Angeles
+  valid_through    date not null,        -- week_start + 2 weeks - 1 day (end of next week)
+  package          text not null,
+  meeting_tokens   int  not null,        -- one week's worth: 2 (vip/comp). 0 for essential (uses budget_minutes).
+  budget_minutes   int,                  -- essential: 40; null for count-based packages
+  active           boolean not null default true,
+  created_at       timestamptz not null default now()
+);
+create index if not exists scg_active_idx
+  on senior_checkin_grants (student_sheet_id, active, valid_through desc);
+
+-- One row per booking, linked to the grant it spends + its calendar event. Cancel
+-- flips status to 'cancelled' (returns the token); reschedule updates meeting_date.
+create table if not exists senior_bookings (
+  id                uuid primary key default gen_random_uuid(),
+  grant_id          uuid not null references senior_checkin_grants(id),
+  student_sheet_id  text not null,
+  calendar_event_id text not null,
+  teacher           text not null check (teacher in ('aaron','ryan')),
+  meeting_date      date not null,        -- LA calendar day, for same-day enforcement
+  minutes           int  not null,
+  status            text not null default 'active' check (status in ('active','cancelled')),
+  booked_at         timestamptz not null default now(),
+  cancelled_at      timestamptz,
+  unique (calendar_event_id)
+);
+create index if not exists sb_grant_status_idx on senior_bookings (grant_id, status);
+create index if not exists sb_student_date_idx on senior_bookings (student_sheet_id, meeting_date);
+
 alter table md_documents          enable row level security;
 alter table md_tabs               enable row level security;
 alter table md_tab_revisions      enable row level security;
 alter table student_college_lists enable row level security;
 alter table seniors               enable row level security;
+alter table senior_checkin_grants enable row level security;
+alter table senior_bookings       enable row level security;
 -- No policies on purpose: only the service role reaches these tables.

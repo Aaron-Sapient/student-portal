@@ -1,7 +1,9 @@
 import { google } from 'googleapis';
+import { DateTime } from 'luxon';
 import { requireDeveloper } from '@/lib/developerAuth';
 import { getInstructor } from '@/lib/instructors';
 import { sendStudentRescheduleEmail } from '@/lib/studentEmails';
+import { rescheduleBookingByEventId } from '@/lib/seniors';
 
 function getServiceAuth() {
   return new google.auth.GoogleAuth({
@@ -34,6 +36,10 @@ export async function POST(request) {
         end: { dateTime: newEnd, timeZone: 'America/Los_Angeles' },
       },
     });
+
+    // Keep the senior ledger's meeting_date in sync (no-op for non-senior events),
+    // so same-day/window accounting stays correct after an admin move.
+    await rescheduleBookingByEventId(eventId, DateTime.fromISO(newStart, { zone: 'America/Los_Angeles' }));
 
     if (studentEmail) {
       try {

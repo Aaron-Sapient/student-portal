@@ -210,7 +210,7 @@ function SeniorBanner({ s }) {
       </p>
       <p className="mt-1 text-sm text-ink-soft">{s.packageNote}</p>
       <p className="mt-2 text-xs font-semibold uppercase tracking-[0.1em] text-ink-faint">
-        {s.remaining} meeting{s.remaining === 1 ? '' : 's'} left this week
+        {s.remaining} meeting{s.remaining === 1 ? '' : 's'} left this check-in
       </p>
     </section>
   );

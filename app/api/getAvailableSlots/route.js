@@ -3,7 +3,7 @@ import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
 import { listBlocks, isDateBlocked, blockedWindowsForDate } from '@/lib/blocks';
-import { getSeniorByEmail, canBook, isCurrentBookingWeek, countBookedForWeek, PACKAGE_RULES } from '@/lib/seniors';
+import { getSeniorByEmail, loadSeniorBookingState, canBookOnDate } from '@/lib/seniors';
 
 function getServiceAuth() {
   return new google.auth.GoogleAuth({
@@ -83,19 +83,12 @@ export async function GET(request) {
     const calendar = google.calendar({ version: 'v3', auth: authClient });
     const sheets = google.sheets({ version: 'v4', auth: authClient });
 
-    // Senior gate: the requested length must be on their package, and the teacher
-    // + per-week cap + secondary-first must allow a meeting on THIS date's week.
+    // Senior gate: authorize this date against the check-in token ledger (active
+    // grant → window → same-day → tokens → teacher/length/phase).
     const senior = await getSeniorByEmail(sessionClaims.email);
     if (senior) {
-      // Only the current (check-in-active) week is bookable for seniors.
-      if (!isCurrentBookingWeek(requestedDate, now)) {
-        return Response.json({ slots: [], recommendations: [], unavailable: true });
-      }
-      if (!PACKAGE_RULES[senior.package].denominations.includes(duration)) {
-        return Response.json({ slots: [], recommendations: [], unavailable: true });
-      }
-      const booked = await countBookedForWeek(calendar, senior, requestedDate);
-      if (!canBook(senior, requestedDate, instructor.slug, duration, booked).ok) {
+      const state = await loadSeniorBookingState(senior.student_sheet_id);
+      if (!canBookOnDate(senior, requestedDate, instructor.slug, duration, state).ok) {
         return Response.json({ slots: [], recommendations: [], unavailable: true });
       }
     }

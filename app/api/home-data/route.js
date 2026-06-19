@@ -7,9 +7,10 @@ import { activeProjectsFromRows } from '@/lib/projects'
 import {
   getSeniorBySheetId,
   weekSummary,
-  fetchSeniorMeetings,
-  bookedForWeekOf,
+  loadSeniorBookingState,
+  grantRemaining,
   startOfSaturdayWeek,
+  parseSheetDate,
   checkedInThisWeek,
   PACKAGE_RULES,
 } from '@/lib/seniors'
@@ -287,22 +288,30 @@ if (isART) {
   const senior = await getSeniorBySheetId(studentSheetId)
   let seniorContext = null
   if (senior) {
-    const ws = startOfSaturdayWeek(nowLA)
-    const meetings = await fetchSeniorMeetings(
-      calendar,
-      senior,
-      ws.toISO(),
-      ws.plus({ weeks: 1 }).toISO()
-    )
-    const booked = bookedForWeekOf(meetings, nowLA)
-    const summary = weekSummary(senior, nowLA, booked)
+    // Allowance now comes from the check-in token ledger (active grant + its active
+    // consumptions), not a live calendar count. weekSummary still renders the
+    // teacher/phase labels, fed by this week's ledger bookings.
+    const state = await loadSeniorBookingState(senior.student_sheet_id)
+    const usage = {
+      count: state.bookings.length,
+      minutes: state.bookings.reduce((a, b) => a + (b.minutes || 0), 0),
+    }
+    const wsKey = startOfSaturdayWeek(nowLA).toISODate()
+    const weekBooked = { aaron: { count: 0, minutes: 0 }, ryan: { count: 0, minutes: 0 } }
+    for (const b of state.bookings) {
+      if (startOfSaturdayWeek(parseSheetDate(b.meeting_date)).toISODate() === wsKey) {
+        weekBooked[b.teacher].count += 1
+        weekBooked[b.teacher].minutes += b.minutes || 0
+      }
+    }
+    const summary = weekSummary(senior, nowLA, weekBooked)
     const rule = PACKAGE_RULES[senior.package]
-    const totalCount = summary.booked[summary.primarySlug].count + summary.booked[summary.secondarySlug].count
-    const totalMin = summary.booked[summary.primarySlug].minutes + summary.booked[summary.secondarySlug].minutes
-    const remaining =
-      senior.package === 'essential'
-        ? Math.max(0, Math.floor((rule.budgetMin - totalMin) / 20))
-        : Math.max(0, rule.maxPerWeek - totalCount)
+    const remaining = grantRemaining(state.grant, usage)
+    // Tokens exhausted (or no grant) → nothing is bookable, whatever the teacher rules say.
+    const bookable =
+      remaining > 0
+        ? summary.bookable
+        : { [summary.primarySlug]: [], [summary.secondarySlug]: [] }
     seniorContext = {
       package: senior.package,
       packageLabel: rule.label,
@@ -314,7 +323,7 @@ if (isART) {
       secondarySlug: summary.secondarySlug,
       primaryName: summary.primaryName,
       secondaryName: summary.secondaryName,
-      bookable: summary.bookable, // { aaron:[durations], ryan:[durations] }
+      bookable,
       booked: summary.booked,
       denominations: rule.denominations,
       maxPerWeek: rule.maxPerWeek,
