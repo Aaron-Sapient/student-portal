@@ -249,19 +249,26 @@ body {
 .write-zen .mde-host { background: transparent; }
 .write-zen .mde-host .md-surface {
   min-height: 100%;
+  /* The editor floats its tab-reveal (top-left) + TOC (top-right) buttons over
+     the surface's top edge, but only reserves clearance for them in its own
+     <=600px phone query. Across the rest of the pre-desktop range they'd land
+     on the first line, so reserve the band ourselves up to the desktop
+     breakpoint — where the centered measure's side gutters clear them instead. */
+  padding-top: 56px;
   /* Generous reading gutters — the full-bleed surface lost the old card's
-     padding, so the text would otherwise hug the screen edge. Honors the
-     notch in landscape. (Top band stays from the editor's narrow-mode rule.) */
+     padding, so the text would otherwise hug the screen edge. Honors the notch. */
   padding-left: max(28px, env(safe-area-inset-left));
   padding-right: max(28px, env(safe-area-inset-right));
   padding-bottom: 44px;
 }
-@media (min-width: 768px) {
-  /* Desktop: a centered, comfortable measure instead of edge-to-edge. */
+@media (min-width: 860px) {
+  /* Desktop: a centered, comfortable measure with the formatting toolbar above.
+     The side gutters now clear the floating buttons, so the top band collapses
+     to a modest gap. (Read-only docs render no toolbar; this is their top air.) */
   .write-zen .mde-host .md-surface {
     max-width: 760px;
     margin-inline: auto;
-    padding-top: 48px;
+    padding-top: 16px;
     padding-left: 28px;
     padding-right: 28px;
   }
@@ -293,6 +300,36 @@ body {
 .write-tool-btn:active {
   box-shadow: inset 2px 2px 5px var(--neu-lo), inset -2px -2px 5px var(--neu-hi);
 }
+
+/* Desktop-only formatting toolbar (/write/[doc]) — an IN-FLOW centered clay pill.
+   The bar is a flex item at the top of the .write-zen column, so it reserves its
+   height and the flex-1 editor fills below it (the pill can never overlap the doc).
+   Hidden under 768px, where the editor's own selection palette + command search
+   (⌥/) cover formatting. */
+.write-toolbar-bar {
+  display: none;            /* desktop-only; shown via the min-width query below */
+  flex: none;
+  justify-content: center;
+  padding: 12px 12px 6px;
+}
+@media (min-width: 860px) { .write-toolbar-bar { display: flex; } }
+.write-toolbar {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 5px 7px; border-radius: 15px;
+  background: var(--neu-inset-bg);
+  box-shadow: 4px 4px 10px var(--neu-lo), -4px -4px 10px var(--neu-hi);
+}
+.write-tb-btn {
+  display: grid; place-items: center; width: 34px; height: 34px;
+  border-radius: 10px; color: var(--color-ink-soft);
+  background: transparent; transition: color 0.14s, box-shadow 0.14s;
+}
+.write-tb-btn:hover { color: var(--color-terracotta-deep); }
+.write-tb-btn:active {
+  color: var(--color-terracotta-deep);
+  box-shadow: inset 2px 2px 5px var(--neu-lo), inset -2px -2px 5px var(--neu-hi);
+}
+.write-tb-sep { width: 1px; height: 18px; margin: 0 4px; background: var(--neu-lo); opacity: 0.45; }
 
 /* Version history as a bottom-sheet (mobile) / centered modal (desktop). */
 .write-overlay {
