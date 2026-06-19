@@ -87,7 +87,7 @@ export async function GET(request) {
     // grant → window → same-day → tokens → teacher/length/phase).
     const senior = await getSeniorByEmail(sessionClaims.email);
     if (senior) {
-      const state = await loadSeniorBookingState(senior.student_sheet_id);
+      const state = await loadSeniorBookingState(senior);
       if (!canBookOnDate(senior, requestedDate, instructor.slug, duration, state).ok) {
         return Response.json({ slots: [], recommendations: [], unavailable: true });
       }

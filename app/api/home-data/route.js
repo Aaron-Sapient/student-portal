@@ -6,13 +6,9 @@ import { normEmail, sessionEmail } from '@/lib/identity'
 import { activeProjectsFromRows } from '@/lib/projects'
 import {
   getSeniorBySheetId,
-  weekSummary,
   loadSeniorBookingState,
-  grantRemaining,
-  startOfSaturdayWeek,
-  parseSheetDate,
+  seniorBookingPlan,
   checkedInThisWeek,
-  PACKAGE_RULES,
 } from '@/lib/seniors'
 import { DateTime } from 'luxon'
 
@@ -288,47 +284,35 @@ if (isART) {
   const senior = await getSeniorBySheetId(studentSheetId)
   let seniorContext = null
   if (senior) {
-    // Allowance now comes from the check-in token ledger (active grant + its active
-    // consumptions), not a live calendar count. weekSummary still renders the
-    // teacher/phase labels, fed by this week's ledger bookings.
-    const state = await loadSeniorBookingState(senior.student_sheet_id)
-    const usage = {
-      count: state.bookings.length,
-      minutes: state.bookings.reduce((a, b) => a + (b.minutes || 0), 0),
-    }
-    const wsKey = startOfSaturdayWeek(nowLA).toISODate()
-    const weekBooked = { aaron: { count: 0, minutes: 0 }, ryan: { count: 0, minutes: 0 } }
-    for (const b of state.bookings) {
-      if (startOfSaturdayWeek(parseSheetDate(b.meeting_date)).toISODate() === wsKey) {
-        weekBooked[b.teacher].count += 1
-        weekBooked[b.teacher].minutes += b.minutes || 0
-      }
-    }
-    const summary = weekSummary(senior, nowLA, weekBooked)
-    const rule = PACKAGE_RULES[senior.package]
-    const remaining = grantRemaining(state.grant, usage)
-    // Tokens exhausted (or no grant) → nothing is bookable, whatever the teacher rules say.
-    const bookable =
-      remaining > 0
-        ? summary.bookable
-        : { [summary.primarySlug]: [], [summary.secondarySlug]: [] }
+    // ONE plan drives both the meetings card and the booking calendar, so they
+    // can't disagree. (The old card summarized the *current* Saturday-week while
+    // the calendar only offered future days — a late-in-the-week check-in made
+    // them contradict, e.g. "Meet Ryan this week" over an empty calendar.)
+    const state = await loadSeniorBookingState(senior)
+    const plan = seniorBookingPlan(senior, nowLA, state)
+    // Durations actually reachable per teacher within the grant window.
+    const bookable = { [plan.primarySlug]: [], [plan.secondarySlug]: [] }
+    for (const m of plan.meetings) bookable[m.slug] = m.durations
     seniorContext = {
-      package: senior.package,
-      packageLabel: rule.label,
-      packageNote: rule.note,
-      phase: senior.phase,
-      isPhaseWeek: summary.isPhaseWeek,
-      secondaryRequired: summary.secondaryRequired,
-      primarySlug: summary.primarySlug,
-      secondarySlug: summary.secondarySlug,
-      primaryName: summary.primaryName,
-      secondaryName: summary.secondaryName,
+      package: plan.package,
+      packageLabel: plan.packageLabel,
+      packageNote: plan.packageNote,
+      phase: plan.phase,
+      primarySlug: plan.primarySlug,
+      secondarySlug: plan.secondarySlug,
+      primaryName: plan.primaryName,
+      secondaryName: plan.secondaryName,
+      denominations: plan.denominations,
+      maxPerWeek: plan.maxPerWeek,
       bookable,
-      booked: summary.booked,
-      denominations: rule.denominations,
-      maxPerWeek: rule.maxPerWeek,
+      meetings: plan.meetings, // [{ slug, name, kind, durations, window:{start,end} }]
+      thisWeek: plan.thisWeek, // actual current Saturday-week {start,end}
+      grantWindow: plan.grantWindow,
+      carriesCross: plan.carriesCross,
+      crossOwed: plan.crossOwed,
+      crossDone: plan.crossDone,
+      remaining: plan.remaining,
       checkedIn: checkedInThisWeek(studentRow[50], nowLA),
-      remaining,
     }
   }
 

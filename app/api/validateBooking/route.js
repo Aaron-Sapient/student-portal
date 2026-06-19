@@ -2,7 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
-import { getSeniorByEmail, getActiveGrant, PACKAGE_RULES } from '@/lib/seniors';
+import { getSeniorByEmail, loadSeniorBookingState, seniorBookingPlan } from '@/lib/seniors';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -64,27 +64,32 @@ export async function GET(request) {
     });
     const studentName = nameRes.data.values?.[0]?.[0] || '';
 
-    // Senior path: an active check-in grant (the auditable record a check-in
-    // writes) is the prerequisite; the window, same-day, token cap, assigned
-    // teacher, and secondary-first ordering are enforced per meeting date in
-    // getMonthAvailability/getAvailableSlots/bookMeeting. This is a lenient entry
-    // gate (has tokens + a valid teacher).
+    // Senior path: an active check-in grant is the prerequisite. The shared
+    // booking plan (same one the meetings card + calendar read) tells us whether
+    // THIS teacher is actually bookable on this check-in, so a direct visit to a
+    // teacher who isn't reachable (e.g. the cross-meeting isn't part of this
+    // grant, or it's already booked) gets a clear message instead of an empty
+    // calendar. Per-date gates still run in getAvailableSlots/bookMeeting.
     const senior = await getSeniorByEmail(email);
     if (senior) {
-      const grant = await getActiveGrant(senior.student_sheet_id);
-      if (!grant) {
+      const state = await loadSeniorBookingState(senior);
+      if (!state.grant) {
         return Response.json({
           allowed: false,
           senior: true,
           reason: "Complete this week's check-in to unlock booking.",
         });
       }
-      const secondary = senior.primary_teacher === 'aaron' ? 'ryan' : 'aaron';
-      if (instructor.slug !== senior.primary_teacher && instructor.slug !== secondary) {
+      const plan = seniorBookingPlan(senior, DateTime.now().setZone('America/Los_Angeles'), state);
+      const mine = plan.meetings.find((m) => m.slug === instructor.slug);
+      if (!mine) {
+        const isTeacher = instructor.slug === plan.primarySlug || instructor.slug === plan.secondarySlug;
         return Response.json({
           allowed: false,
           senior: true,
-          reason: 'That isn’t one of your assigned teachers.',
+          reason: isTeacher
+            ? `No ${instructor.displayName} meeting is available on this check-in right now.`
+            : 'That isn’t one of your assigned teachers.',
         });
       }
       return Response.json({
@@ -92,7 +97,12 @@ export async function GET(request) {
         senior: true,
         studentName,
         instructor: instructor.slug,
-        durations: PACKAGE_RULES[senior.package].denominations, // [30] or [40,20]
+        durations: mine.durations,
+        // Calendar context (phase-week coloring lands in the next pass).
+        phase: plan.phase,
+        grantWindow: plan.grantWindow,
+        eligibleWindow: mine.window,
+        kind: mine.kind,
       });
     }
 

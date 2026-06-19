@@ -5,17 +5,16 @@ import { DateTime } from 'luxon';
 import { getInstructor, validateInstructorHours } from '@/lib/instructors';
 import { getSeniorByEmail, loadSeniorBookingState, canBookOnDate, recordBooking } from '@/lib/seniors';
 
-// Human messages for canBookOnDate() rejection reasons (grant gates + canBook rules).
+// Human messages for canBookOnDate() rejection reasons (grant gates + package rules).
 const SENIOR_DENY = {
   'no-grant': 'Complete this week’s check-in to unlock booking.',
-  'out-of-window': 'You can only book for this week or next. Next week’s check-in unlocks the week after.',
+  'out-of-window': 'You can only book inside this check-in’s window. Next week’s check-in unlocks the week after.',
   'same-day': 'You already have a meeting that day — pick another day.',
   'tokens-used': 'You’ve booked all the meetings this check-in unlocked.',
-  'wrong-teacher': 'That isn’t your assigned teacher for that week.',
-  'secondary-first': 'Book your cross-meeting with your other teacher first.',
+  'wrong-teacher': 'That teacher isn’t bookable for you right now.',
+  'cross-reserved': 'A slot is reserved for your monthly cross-meeting with your other teacher — book that one.',
   'secondary-done': 'You’ve already booked your once-a-month cross-meeting.',
-  'week-full': 'You’ve booked all your meetings for that week.',
-  'budget-used': 'You’ve used all your meeting time for that week.',
+  'budget-used': 'You’ve used all your meeting time for this check-in.',
   'bad-duration': 'That meeting length isn’t available on your package.',
 };
 
@@ -118,7 +117,7 @@ export async function POST(request) {
     let seniorGrant = null;
     const seniorMins = parseInt(String(duration).replace(/\D/g, ''), 10);
     if (senior) {
-      const state = await loadSeniorBookingState(senior.student_sheet_id);
+      const state = await loadSeniorBookingState(senior);
       const verdict = canBookOnDate(senior, startTime, instructor.slug, seniorMins, state);
       if (!verdict.ok) {
         return Response.json(

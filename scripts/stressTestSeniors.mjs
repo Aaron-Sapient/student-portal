@@ -18,14 +18,14 @@ import {
   PACKAGE_RULES,
   weekOfMonth,
   assignedPlanForWeek,
-  canBook,
   grantWindow,
   meetingInWindow,
   grantRemaining,
   canBookOnDate,
+  grantCarriesCrossMeeting,
+  buildSeniorBookingPlan,
   startOfSaturdayWeek,
   bookedForWeekOf,
-  emptyWeek,
 } from '../lib/seniorsCore.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -51,153 +51,121 @@ function ok(cond, msg) {
   }
 }
 
-// Simulate a booking sequence; each step = [teacher, mins, expectedOk, expectedReason?].
-// On an ok step we accumulate the booking so later steps see it.
-function runSequence(label, senior, dt, steps) {
-  const booked = emptyWeek();
-  steps.forEach(([teacher, mins, expOk, expReason], i) => {
-    const v = canBook(senior, dt, teacher, mins, booked);
-    ok(
-      v.ok === expOk && (expOk || !expReason || v.reason === expReason),
-      `${label} step ${i + 1} (${teacher} ${mins}m): expected ${expOk ? 'OK' : 'DENY:' + expReason}, got ${v.ok ? 'OK' : 'DENY:' + v.reason}`
-    );
-    if (v.ok) {
-      booked[teacher].count += 1;
-      booked[teacher].minutes += mins;
-    }
-  });
-}
+const bk = (teacher, minutes, meeting_date) => ({ teacher, minutes, meeting_date });
 
 function pureLogicTests() {
-  console.log('\n── Week-of-month (Saturday-anchored, June 2026: 1=Jun30 wk… ) ──');
+  const D = (d) => DateTime.fromObject({ year: 2026, month: 6, day: d }, { zone: ZONE });
+
+  console.log('\n── Week-of-month (Saturday-anchored, June 2026) ──');
   // June 2026: Jun 1 = Mon; Sat-anchored weeks → wk1 Jun1-5, wk2 6-12, wk3 13-19, wk4 20-26, wk5 27-30
-  const wk = (d) => weekOfMonth(DateTime.fromObject({ year: 2026, month: 6, day: d }, { zone: ZONE }));
+  const wk = (d) => weekOfMonth(D(d));
   ok(wk(3) === 1, `Jun 3 → wk1 (got ${wk(3)})`);
   ok(wk(10) === 2, `Jun 10 → wk2 (got ${wk(10)})`);
   ok(wk(16) === 3, `Jun 16 → wk3 (got ${wk(16)})`);
   ok(wk(23) === 4, `Jun 23 → wk4 (got ${wk(23)})`);
   ok(wk(29) === 5, `Jun 29 → wk5 (got ${wk(29)})`);
 
-  const D = (d) => DateTime.fromObject({ year: 2026, month: 6, day: d }, { zone: ZONE });
-  const nonPhase = D(10); // wk2
-  const phase = D(16); // wk3
-
-  console.log('\n── VIP (primary=aaron, phase=3, secondary=ryan) ──');
-  const vip = { primary_teacher: 'aaron', package: 'vip', phase: 3 };
-  runSequence('VIP non-phase', vip, nonPhase, [
-    ['ryan', 30, false, 'wrong-teacher'],
-    ['aaron', 30, true],
-    ['aaron', 30, true],
-    ['aaron', 30, false, 'week-full'],
-  ]);
-  runSequence('VIP phase', vip, phase, [
-    ['aaron', 30, false, 'secondary-first'],
-    ['ryan', 30, true],
-    ['ryan', 30, false, 'secondary-done'],
-    ['aaron', 30, true],
-    ['aaron', 30, false, 'week-full'],
-  ]);
-
-  console.log('\n── Comprehensive (primary=aaron, phase=3) — up to 2 ──');
-  const comp = { primary_teacher: 'aaron', package: 'comprehensive', phase: 3 };
-  runSequence('Comp non-phase', comp, nonPhase, [
-    ['aaron', 30, true],
-    ['aaron', 30, true],
-    ['aaron', 30, false, 'week-full'],
-    ['ryan', 30, false, 'wrong-teacher'],
-  ]);
-  runSequence('Comp phase', comp, phase, [
-    ['aaron', 30, false, 'secondary-first'],
-    ['ryan', 30, true],
-    ['aaron', 30, true],
-    ['aaron', 30, false, 'week-full'],
-  ]);
-
-  console.log('\n── Essential (primary=aaron, phase=3) — 40-min budget ──');
-  const ess = { primary_teacher: 'aaron', package: 'essential', phase: 3 };
-  runSequence('Ess non-phase 1×40', ess, nonPhase, [
-    ['ryan', 40, false, 'wrong-teacher'],
-    ['aaron', 40, true],
-    ['aaron', 20, false, 'budget-used'],
-  ]);
-  runSequence('Ess non-phase 2×20', ess, nonPhase, [
-    ['aaron', 20, true],
-    ['aaron', 40, false, 'budget-used'],
-    ['aaron', 20, true],
-    ['aaron', 20, false, 'budget-used'],
-  ]);
-  runSequence('Ess phase 40→secondary', ess, phase, [
-    ['aaron', 40, false, 'secondary-first'],
-    ['ryan', 40, true],
-    ['aaron', 20, false, 'budget-used'],
-  ]);
-  runSequence('Ess phase 20/20 split', ess, phase, [
-    ['ryan', 20, true],
-    ['ryan', 20, false, 'secondary-done'],
-    ['aaron', 20, true],
-    ['aaron', 20, false, 'budget-used'],
-  ]);
-  // Anti-gaming: the 40-min budget spans BOTH teachers. A fresh phase week offers
-  // 40 or 20 for the cross-meeting, but once a 20 is booked with the primary, the
-  // cross-meeting can only be a 20 — a student can't split into 60 total min.
-  ok(
-    canBook(ess, phase, 'ryan', 40, emptyWeek()).ok && canBook(ess, phase, 'ryan', 20, emptyWeek()).ok,
-    'Ess phase fresh: cross-meeting offers BOTH 40 and 20'
-  );
-  const essPrimary20 = { aaron: { count: 1, minutes: 20 }, ryan: { count: 0, minutes: 0 } };
-  ok(
-    canBook(ess, phase, 'ryan', 40, essPrimary20).reason === 'budget-used' &&
-      canBook(ess, phase, 'ryan', 20, essPrimary20).ok,
-    'Ess phase: a pre-existing primary 20 caps the cross-meeting at 20 (budget enforced)'
-  );
-
-  console.log('\n── Check-in grant model: window, tokens, same-day (no front-loading) ──');
-  // A check-in in wk3 (Jun 13-19) grants a window through the END of wk4 (Jun 26):
-  // one week's worth, cashable across this+next week so a late check-in isn't stranded.
-  const gw = grantWindow(D(16));
-  ok(gw.weekStart.toISODate() === '2026-06-13', `grant week_start = Jun 13 (got ${gw.weekStart.toISODate()})`);
-  ok(gw.validThrough.toISODate() === '2026-06-26', `grant valid_through = Jun 26 (got ${gw.validThrough.toISODate()})`);
-
+  console.log('\n── Check-in grant window / tokens / same-day ──');
   const vipGrant = { week_start: '2026-06-13', valid_through: '2026-06-26', meeting_tokens: 2, budget_minutes: null, package: 'vip' };
   ok(meetingInWindow(D(23), vipGrant), 'Jun 23 in window');
   ok(meetingInWindow(D(26), vipGrant), 'Jun 26 (last day) in window');
   ok(!meetingInWindow(D(30), vipGrant), 'Jun 30 NOT in window (week after next)');
   ok(!meetingInWindow(D(10), vipGrant), 'Jun 10 NOT in window (past)');
-
-  // The Christine regression: VIP (primary ryan, phase 1 → wk3/wk4 are non-phase).
-  const vipSenior = { primary_teacher: 'ryan', package: 'vip', phase: 1, student_sheet_id: 'x' };
-  const st = (bookings) => ({ grant: vipGrant, bookings });
-  const b23 = { teacher: 'ryan', minutes: 30, meeting_date: '2026-06-23' };
-  const b25 = { teacher: 'ryan', minutes: 30, meeting_date: '2026-06-25' };
-  ok(canBookOnDate(vipSenior, D(23), 'ryan', 30, st([])).ok, 'VIP cashes token 1 (Jun 23)');
-  ok(canBookOnDate(vipSenior, D(25), 'ryan', 30, st([b23])).ok, 'VIP cashes token 2 (Jun 25)');
-  ok(canBookOnDate(vipSenior, D(30), 'ryan', 30, st([b23, b25])).reason === 'out-of-window',
-    'Christine 3rd booking (Jun 30) REFUSED — out of window');
-  ok(canBookOnDate(vipSenior, D(24), 'ryan', 30, st([b23, b25])).reason === 'tokens-used',
-    'an in-window 3rd is REFUSED — tokens used (one week\'s worth max)');
-  ok(canBookOnDate(vipSenior, D(23), 'ryan', 30, st([b23])).reason === 'same-day',
-    'two meetings same day REFUSED');
-  ok(canBookOnDate(vipSenior, D(23), 'ryan', 30, { grant: null, bookings: [] }).reason === 'no-grant',
-    'no active grant → no-grant (must check in)');
+  const gw = grantWindow(D(16));
+  ok(gw.weekStart.toISODate() === '2026-06-13', `grant week_start = Jun 13 (got ${gw.weekStart.toISODate()})`);
+  ok(gw.validThrough.toISODate() === '2026-06-26', `grant valid_through = Jun 26 (got ${gw.validThrough.toISODate()})`);
   ok(grantRemaining(vipGrant, { count: 1, minutes: 30 }) === 1, 'VIP remaining 1 after 1 booked');
   ok(grantRemaining(vipGrant, { count: 2, minutes: 60 }) === 0, 'VIP remaining 0 after 2 booked');
 
-  // Essential: one check-in = a 40-min budget across the window (1×40 or 2×20).
+  console.log('\n── grantCarriesCrossMeeting: window must include the phase week ──');
+  const p3 = { primary_teacher: 'aaron', package: 'vip', phase: 3 };
+  ok(grantCarriesCrossMeeting(p3, { week_start: '2026-06-13' }) === true, 'check-in DURING the phase week (wk3) carries the cross-meeting');
+  ok(grantCarriesCrossMeeting(p3, { week_start: '2026-06-06' }) === true, 'check-in the WEEK BEFORE the phase week carries it (window reaches wk3)');
+  ok(grantCarriesCrossMeeting(p3, { week_start: '2026-06-20' }) === false, 'check-in AFTER the phase week does NOT carry it');
+  ok(grantCarriesCrossMeeting({ primary_teacher: 'ryan', package: 'vip', phase: 1 }, { week_start: '2026-06-13' }) === false,
+    'phase-1 senior, wk3/wk4 grant → no cross-meeting');
+
+  console.log('\n── VIP carrying the cross (primary=aaron, phase=3) — capacity reservation, any-day cross ──');
+  const vip = { primary_teacher: 'aaron', package: 'vip', phase: 3, student_sheet_id: 'x' };
+  const st = (bookings) => ({ grant: vipGrant, bookings });
+  // The reachability fix: the cross-meeting is bookable on ANY in-window day, not just phase-week days.
+  ok(canBookOnDate(vip, D(23), 'ryan', 30, st([])).ok, 'cross (ryan) bookable on Jun 23 — wk4, NOT the phase week');
+  ok(canBookOnDate(vip, D(23), 'aaron', 30, st([])).ok, 'primary (aaron) bookable while cross owed (one slot reserved, no hard "first")');
+  const bA23 = bk('aaron', 30, '2026-06-23');
+  ok(canBookOnDate(vip, D(24), 'aaron', 30, st([bA23])).reason === 'cross-reserved', '2nd primary blocked — last slot reserved for the cross');
+  ok(canBookOnDate(vip, D(24), 'ryan', 30, st([bA23])).ok, 'cross still bookable after a primary');
+  const bR24 = bk('ryan', 30, '2026-06-24');
+  ok(canBookOnDate(vip, D(25), 'ryan', 30, st([bA23, bR24])).reason === 'secondary-done', 'only one cross-meeting per grant');
+  ok(canBookOnDate(vip, D(25), 'aaron', 30, st([bA23, bR24])).reason === 'tokens-used', 'both tokens spent (1 primary + 1 cross)');
+  ok(canBookOnDate(vip, D(23), 'aaron', 20, st([])).reason === 'bad-duration', 'VIP only books 30-min');
+  ok(canBookOnDate(vip, D(23), 'aaron', 30, st([bA23])).reason === 'same-day', 'two meetings same day REFUSED');
+  ok(canBookOnDate(vip, D(30), 'aaron', 30, st([])).reason === 'out-of-window', 'out-of-window REFUSED');
+  ok(canBookOnDate(vip, D(23), 'aaron', 30, { grant: null, bookings: [] }).reason === 'no-grant', 'no active grant → must check in');
+
+  console.log('\n── VIP NOT carrying the cross (primary=ryan, phase=1) — the Christine case ──');
+  const vipR = { primary_teacher: 'ryan', package: 'vip', phase: 1, student_sheet_id: 'y' };
+  ok(canBookOnDate(vipR, D(23), 'ryan', 30, st([])).ok, 'primary cashes token 1 (Jun 23)');
+  const bR23 = bk('ryan', 30, '2026-06-23');
+  ok(canBookOnDate(vipR, D(25), 'ryan', 30, st([bR23])).ok, 'primary cashes token 2 (no slot reserved — no cross this grant)');
+  const bR25 = bk('ryan', 30, '2026-06-25');
+  ok(canBookOnDate(vipR, D(24), 'ryan', 30, st([bR23, bR25])).reason === 'tokens-used', 'in-window 3rd REFUSED — tokens used');
+  ok(canBookOnDate(vipR, D(23), 'aaron', 30, st([])).reason === 'wrong-teacher', 'secondary NOT bookable when the grant carries no cross-meeting');
+
+  console.log('\n── Once-a-month cross-meeting (month-level, across grants) ──');
+  // A fresh grant (no bookings of its own) that still reaches the phase week, but
+  // the student already booked a cross-meeting earlier this month under a PRIOR grant.
+  const stCross = (crossDates) => ({ grant: vipGrant, bookings: [], crossMeetings: crossDates });
+  ok(canBookOnDate(vip, D(23), 'ryan', 30, stCross(['2026-06-15'])).reason === 'secondary-done',
+    'no 2nd cross-meeting in the same month (a prior-grant cross counts)');
+  ok(canBookOnDate(vip, D(23), 'aaron', 30, stCross(['2026-06-15'])).ok,
+    'primary is NOT reserved once the month’s cross is already booked');
+  ok(canBookOnDate(vip, D(24), 'aaron', 30, { grant: vipGrant, bookings: [bk('aaron', 30, '2026-06-23')], crossMeetings: ['2026-06-15'] }).ok,
+    'both primary tokens usable when the cross is already done for the month');
+  ok(canBookOnDate(vip, D(23), 'ryan', 30, stCross(['2026-07-04'])).ok,
+    'a cross in a DIFFERENT month does not block this month’s cross');
+
+  console.log('\n── Comprehensive carrying (primary=aaron, phase=3) — up to 2 ──');
+  const compGrant = { ...vipGrant, package: 'comprehensive' };
+  const comp = { primary_teacher: 'aaron', package: 'comprehensive', phase: 3, student_sheet_id: 'z' };
+  const stC = (bookings) => ({ grant: compGrant, bookings });
+  ok(canBookOnDate(comp, D(23), 'aaron', 30, stC([])).ok, 'comp primary bookable');
+  ok(canBookOnDate(comp, D(23), 'ryan', 30, stC([])).ok, 'comp cross bookable on any in-window day');
+  ok(canBookOnDate(comp, D(24), 'aaron', 30, stC([bk('aaron', 30, '2026-06-23')])).reason === 'cross-reserved', 'comp reserves a slot for the cross');
+
+  console.log('\n── Essential carrying (40-min budget, primary=aaron, phase=3) ──');
   const essGrant = { week_start: '2026-06-13', valid_through: '2026-06-26', meeting_tokens: 0, budget_minutes: 40, package: 'essential' };
-  const essSenior = { primary_teacher: 'ryan', package: 'essential', phase: 1, student_sheet_id: 'y' };
-  const e23x20 = { teacher: 'ryan', minutes: 20, meeting_date: '2026-06-23' };
-  ok(canBookOnDate(essSenior, D(23), 'ryan', 40, { grant: essGrant, bookings: [] }).ok, 'Essential cashes 1×40');
-  ok(canBookOnDate(essSenior, D(25), 'ryan', 20, { grant: essGrant, bookings: [{ ...e23x20, minutes: 40 }] }).reason === 'tokens-used',
-    'Essential: budget spent (40) blocks a further meeting');
-  ok(canBookOnDate(essSenior, D(25), 'ryan', 20, { grant: essGrant, bookings: [e23x20] }).ok,
-    'Essential 2×20 across days within budget');
-  ok(grantRemaining(essGrant, { count: 1, minutes: 20 }) === 1, 'Essential remaining 1×20-slot after a 20 booked');
+  const ess = { primary_teacher: 'aaron', package: 'essential', phase: 3, student_sheet_id: 'e' };
+  const stE = (bookings) => ({ grant: essGrant, bookings });
+  ok(canBookOnDate(ess, D(23), 'aaron', 40, stE([])).reason === 'cross-reserved', 'primary 1×40 blocked while cross owed — 20 held for the cross');
+  ok(canBookOnDate(ess, D(23), 'aaron', 20, stE([])).ok, 'primary 20 ok (leaves 20 for the cross)');
+  ok(canBookOnDate(ess, D(23), 'ryan', 40, stE([])).ok, 'cross can take the full 40 if booked first');
+  const eA20 = bk('aaron', 20, '2026-06-23');
+  ok(canBookOnDate(ess, D(24), 'aaron', 20, stE([eA20])).reason === 'cross-reserved', '2nd primary 20 blocked — cross still owed');
+  ok(canBookOnDate(ess, D(24), 'ryan', 20, stE([eA20])).ok, 'cross 20 fits the remaining budget');
+  ok(canBookOnDate(ess, D(25), 'aaron', 20, stE([eA20, bk('ryan', 20, '2026-06-24')])).reason === 'budget-used', 'budget spent (20 primary + 20 cross)');
+
+  console.log('\n── Essential NOT carrying (primary=ryan, phase=1) ──');
+  const essR = { primary_teacher: 'ryan', package: 'essential', phase: 1, student_sheet_id: 'er' };
+  ok(canBookOnDate(essR, D(23), 'ryan', 40, { grant: essGrant, bookings: [] }).ok, 'primary 1×40 ok when no cross is owed');
+  ok(canBookOnDate(essR, D(23), 'aaron', 20, { grant: essGrant, bookings: [] }).reason === 'wrong-teacher', 'secondary not bookable (no cross this grant)');
+
+  console.log('\n── buildSeniorBookingPlan: the reported bug, fixed (now = Fri Jun 19) ──');
+  const now = D(19);
+  // Srikar: comprehensive, primary aaron, phase 3, grant Jun 13–26 (carries the cross).
+  const srikarPlan = buildSeniorBookingPlan(comp, now, stC([]));
+  const srikarSlugs = srikarPlan.meetings.map((m) => m.slug).sort().join(',');
+  ok(srikarSlugs === 'aaron,ryan', `Srikar can book BOTH teachers (got ${srikarSlugs || 'none'})`);
+  ok(srikarPlan.meetings.some((m) => m.slug === 'ryan' && m.kind === 'cross'), 'Srikar: Ryan offered as the cross-meeting (the original complaint, now fixed)');
+  ok(srikarPlan.thisWeek.start === '2026-06-13' && srikarPlan.thisWeek.end === '2026-06-19', 'plan surfaces the real "this week" range (Jun 13–19)');
+  // Test Student: VIP, primary ryan, phase 4, grant Jun 13–26 (carries: phase wk4 is the 2nd week of the window).
+  const ts = { primary_teacher: 'ryan', package: 'vip', phase: 4, student_sheet_id: 't' };
+  const tsPlan = buildSeniorBookingPlan(ts, now, st([]));
+  const tsSlugs = tsPlan.meetings.map((m) => m.slug).sort().join(',');
+  ok(tsSlugs === 'aaron,ryan', `Test Student can book BOTH teachers (got ${tsSlugs || 'none'})`);
+  ok(tsPlan.carriesCross === true, 'Test Student grant carries the cross-meeting (phase wk4 in window)');
 
   console.log('\n── 5th week never a phase week (phase only 1-4) ──');
-  const wk5 = D(29);
-  const vipP4 = { primary_teacher: 'ryan', package: 'vip', phase: 4 };
-  ok(!assignedPlanForWeek(vipP4, wk5).isPhaseWeek, 'phase-4 senior in wk5 is NOT a phase week');
-  ok(assignedPlanForWeek(vipP4, wk5).secondaryRequired === false, 'wk5 → no cross-meeting required');
+  ok(!assignedPlanForWeek({ primary_teacher: 'ryan', package: 'vip', phase: 4 }, D(29)).isPhaseWeek, 'phase-4 senior in wk5 is NOT a phase week');
 }
 
 async function rosterTests(sb, live, get) {

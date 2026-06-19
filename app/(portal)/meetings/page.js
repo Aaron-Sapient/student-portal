@@ -188,27 +188,48 @@ function BookSection({ data, loading }) {
 
 // ── Senior essay-program booking ─────────────────────────────────────────────
 // Seniors don't see the Ryan/Aaron/ART check-in cards. Their cadence is
-// deterministic: a weekly check-in unlocks booking, then they book their package
-// allotment with the assigned teacher for the week (primary, or — in their phase
-// week — the secondary teacher for the one required monthly cross-meeting, which
-// must be booked FIRST). All of this is precomputed server-side into data.senior.
+// deterministic: a weekly check-in grants one week's worth of meetings, bookable
+// across this + next Saturday-week. When that window includes their phase week
+// they also get the once-a-month cross-meeting with the OTHER teacher (bookable
+// any day in the window; one slot is reserved so it can't be crowded out). The
+// shared booking plan (server-side data.senior) is the single source the calendar
+// also reads, so the card and the calendar can never disagree — each meeting card
+// shows the date range it's actually bookable in.
 const teacherIcon = (slug) => (slug === 'ryan' ? GraduationCap : Trophy);
 const lenLabel = (durs) =>
   durs.length === 1 ? `${durs[0]}-min Zoom` : `${durs.join('/')}-min Zoom`;
 
+// "Jun 20–26", or "Jun 27 – Jul 2" across a month boundary.
+function fmtRange(startISO, endISO) {
+  const a = DateTime.fromISO(startISO, { zone: ZONE });
+  const b = DateTime.fromISO(endISO, { zone: ZONE });
+  if (!a.isValid || !b.isValid) return '';
+  return a.month === b.month
+    ? `${a.toFormat('LLL d')}–${b.toFormat('d')}`
+    : `${a.toFormat('LLL d')} – ${b.toFormat('LLL d')}`;
+}
+
 function SeniorBanner({ s }) {
-  const whoName = s.secondaryRequired ? s.secondaryName : s.primaryName;
+  const range = s.thisWeek ? fmtRange(s.thisWeek.start, s.thisWeek.end) : '';
+  const names = (s.meetings || []).map((m) => m.name);
+  const headline = names.length === 0 ? 'You’re all set' : `Meet ${names.join(' & ')}`;
   return (
     <section className="portal-rise neu-raised rounded-[2rem] p-5" style={{ animationDelay: '40ms' }}>
       <div className="flex items-baseline justify-between gap-3">
-        <Eyebrow>This week</Eyebrow>
+        <Eyebrow>This week{range ? ` · ${range}` : ''}</Eyebrow>
         <span className="text-[11px] font-semibold text-ink-soft">{s.packageLabel}</span>
       </div>
       <p className="mt-2 font-display text-xl font-semibold leading-tight text-ink">
-        Meet <span className="text-terracotta">{whoName}</span>
-        {s.isPhaseWeek && <span className="text-ink-soft"> · phase week</span>}
+        {names.length === 0 ? headline : (
+          <>Meet <span className="text-terracotta">{names.join(' & ')}</span></>
+        )}
       </p>
       <p className="mt-1 text-sm text-ink-soft">{s.packageNote}</p>
+      {s.crossOwed && (
+        <p className="mt-1 text-sm text-ink-soft">
+          Includes your monthly cross-meeting with <span className="text-terracotta">{s.secondaryName}</span>.
+        </p>
+      )}
       <p className="mt-2 text-xs font-semibold uppercase tracking-[0.1em] text-ink-faint">
         {s.remaining} meeting{s.remaining === 1 ? '' : 's'} left this check-in
       </p>
@@ -240,27 +261,15 @@ function SeniorBookSection({ data, loading }) {
     );
   }
 
-  // Which teacher(s) can they book right now?
-  const cards = [];
-  if (s.secondaryRequired) {
-    cards.push({
-      slug: s.secondarySlug,
-      name: s.secondaryName,
-      role: 'Your once-a-month meeting · book this first',
-      durations: s.bookable[s.secondarySlug] || s.denominations,
-    });
-  } else {
-    for (const slug of [s.primarySlug, s.secondarySlug]) {
-      const durs = s.bookable[slug] || [];
-      if (!durs.length) continue;
-      cards.push({
-        slug,
-        name: slug === s.primarySlug ? s.primaryName : s.secondaryName,
-        role: slug === s.primarySlug ? 'Your teacher' : 'This week only',
-        durations: durs,
-      });
-    }
-  }
+  // One card per bookable meeting, each tagged with the window it's bookable in.
+  const cards = (s.meetings || []).map((m) => ({
+    slug: m.slug,
+    name: m.name,
+    role:
+      (m.kind === 'cross' ? 'Monthly cross-meeting' : 'Your teacher') +
+      (m.window ? ` · ${fmtRange(m.window.start, m.window.end)}` : ''),
+    durations: m.durations,
+  }));
 
   return (
     <div className="space-y-7">
@@ -270,14 +279,14 @@ function SeniorBookSection({ data, loading }) {
           className="portal-rise px-1 text-xs font-semibold uppercase tracking-[0.13em] text-ink-faint"
           style={{ animationDelay: '70ms' }}
         >
-          {s.secondaryRequired ? 'Book this first' : 'Book your meeting'}
+          {cards.length > 1 ? 'Book your meetings' : 'Book your meeting'}
         </p>
         {cards.length === 0 ? (
           <OptionCard
             icon={teacherIcon(s.primarySlug)}
             name="You’re all set"
-            role="All your meetings for this week are booked"
-            state={{ checkedIn: true, note: 'Nothing left to book this week' }}
+            role="All your meetings for this check-in are booked"
+            state={{ checkedIn: true, note: 'Nothing left to book' }}
             loading={loading}
             delay={110}
           />

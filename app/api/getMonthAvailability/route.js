@@ -67,7 +67,7 @@ export async function GET(request) {
     const senior = await getSeniorByEmail(sessionClaims.email);
     let seniorState = null;
     if (senior) {
-      seniorState = await loadSeniorBookingState(senior.student_sheet_id);
+      seniorState = await loadSeniorBookingState(senior);
       if (!seniorState.grant) return Response.json({ availableDates: [] });
     }
 
