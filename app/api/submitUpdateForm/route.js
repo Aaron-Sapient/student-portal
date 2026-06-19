@@ -135,13 +135,34 @@ export async function POST(request) {
 
     const now = new Date().toISOString();
 
-    // ── 2. Overwrite AY timestamp in 👩‍🎓 All Data ───────────────────────────
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${MASTER_TAB}!AY${studentRowIndex}`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [[now]] },
-    });
+    // ── 2. Stamp the check-in timestamp(s) in 👩‍🎓 All Data ──────────────────
+    // AY = Ryan/primary check-in. SENIORS are a unified program with ONE weekly
+    // check-in instead of separate Ryan + Aaron tracks, so we also stamp BA
+    // (Aaron's column). The Friday reminder checker — and the dev Compliance
+    // dashboard that mirrors it — count a student "engaged" only when BOTH AY
+    // and BA are recent; without the BA stamp a senior who just checked in still
+    // gets a "reconnect with Aaron" nudge, because BA never moves for them (they
+    // have no separate Aaron check-in). Keep both columns in lockstep for seniors.
+    // See Google Apps Scripts/checkin-reminder/checkinReminder.gs.
+    if (isSenior) {
+      await sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: MASTER_SHEET_ID,
+        requestBody: {
+          valueInputOption: 'USER_ENTERED',
+          data: [
+            { range: `${MASTER_TAB}!AY${studentRowIndex}`, values: [[now]] },
+            { range: `${MASTER_TAB}!BA${studentRowIndex}`, values: [[now]] },
+          ],
+        },
+      });
+    } else {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: MASTER_SHEET_ID,
+        range: `${MASTER_TAB}!AY${studentRowIndex}`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[now]] },
+      });
+    }
 
     // ── 3. Build concatenated strings for CheckinForm ────────────────────────
     const gradeSnapshot = classes?.length
