@@ -139,13 +139,19 @@ export default function ReportsTab() {
 
   const patch = async (rowIndex, field, value) => {
     try {
-      await fetch('/api/developer/writtenReports', {
+      const res = await fetch('/api/developer/writtenReports', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rowIndex, field, value }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert('Save failed: ' + (data.error || 'unknown'));
+        refresh('reports'); // re-sync the textarea to the last saved value
+      }
     } catch (err) {
       alert('Save failed: ' + err.message);
+      refresh('reports');
     }
   };
 

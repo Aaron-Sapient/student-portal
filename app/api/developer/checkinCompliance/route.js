@@ -46,8 +46,14 @@ function parseTimestamp(raw) {
   if (!s || /^n\/?a$/i.test(s) || /^tbd$/i.test(s) || s === '-') return null;
   let dt = DateTime.fromISO(s, { zone: ZONE });
   if (!dt.isValid) {
-    const js = new Date(s);
-    if (!isNaN(js.getTime())) dt = DateTime.fromJSDate(js).setZone(ZONE);
+    // Parse common Sheets/Forms text formats IN the LA zone. Native new Date(s)
+    // would parse a date-only string in the server zone (UTC on Vercel) and land
+    // it on the previous Pacific day — the off-by-one this project forbids.
+    const FORMATS = ['M/d/yyyy H:mm:ss', 'M/d/yyyy H:mm', 'M/d/yyyy', 'yyyy-MM-dd H:mm:ss', 'M/d/yy'];
+    for (const fmt of FORMATS) {
+      dt = DateTime.fromFormat(s, fmt, { zone: ZONE });
+      if (dt.isValid) break;
+    }
   }
   return dt.isValid ? dt : null;
 }

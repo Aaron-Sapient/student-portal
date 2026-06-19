@@ -99,7 +99,10 @@ export default function MeetingsTab() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) alert('Cancel failed: ' + (data.error || 'unknown'));
+      if (!res.ok) {
+        alert('Cancel failed: ' + (data.error || 'unknown'));
+        return;
+      }
       await refresh('meetings');
     } finally {
       setBusyId(null);
@@ -135,7 +138,10 @@ export default function MeetingsTab() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) alert('Reschedule failed: ' + (data.error || 'unknown'));
+      if (!res.ok) {
+        alert('Reschedule failed: ' + (data.error || 'unknown'));
+        return;
+      }
       setReschedTarget(null);
       await refresh('meetings');
     } finally {

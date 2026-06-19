@@ -172,7 +172,10 @@ export async function GET() {
         parentNotified: r[7] === true || r[7] === 'TRUE' || r[7] === 'true',
       }))
       .filter(r => r.student)
-      .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+      // date is an UNFORMATTED sheet serial (a number); sort numerically so
+      // newest-first holds across digit-count boundaries (a string localeCompare
+      // sorts "9999" after "46100" lexically). Blank/non-numeric dates sink last.
+      .sort((a, b) => (Number(b.date) || 0) - (Number(a.date) || 0));
     return Response.json({ reports });
   } catch (err) {
     console.error('writtenReports GET error:', err);
