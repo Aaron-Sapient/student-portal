@@ -1,5 +1,5 @@
 import { getSupabaseClient } from '@/lib/supabase'
-import { resolveActor, canEditStudent } from '@/lib/writingAuth'
+import { resolveActorOrLink, canEditStudent } from '@/lib/writingAuth'
 import {
   docContext,
   tabContext,
@@ -13,7 +13,7 @@ import {
 //   { action:'rename',  tab_id, title }
 //   { action:'reorder', document_id, orderedIds:[...] }
 export async function POST(request) {
-  const actor = await resolveActor()
+  const actor = await resolveActorOrLink()
   if (actor.error) return actor.error
 
   let body

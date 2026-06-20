@@ -16,6 +16,22 @@ import { ZONE, daysUntil, relativeLabel } from '../portalUtils';
 import { Bar, ClayLandmark, DocLink, Eyebrow, Halo, SectionDial, Stat } from '../neu';
 import { normalizeKey } from '@/lib/collegeKey';
 
+// A senior must NEVER be locked out of their essays because the 🏫 College List
+// sheet is missing, old-format, or unreadable. The essay docs (Common App + UC
+// PIQs) live in Supabase, independent of the college list, and load from the
+// SEPARATE writing-map fetch below — so on any college-load failure we still
+// render the shell with this empty payload (the tabs degrade to their friendly
+// "list on the way" states) and land on Essays, rather than dead-ending.
+const EMPTY_COLLEGE_DATA = {
+  summary: { privatesPlanned: null, totalProgress: null },
+  tasks: [],
+  piqs: [],
+  schools: [],
+  ucs: [],
+  recommenders: [],
+  meetings: [],
+};
+
 /* ── Season model ───────────────────────────────────────────────────────────
    The senior cycle: Summer essays → Round 1 supps → Round 2 supps. The cycle
    "belongs" to the calendar year of its fall deadlines. */
@@ -735,8 +751,12 @@ export default function CollegesView({ endpoint = '/api/colleges' }) {
       .then((r) => r.json())
       .then((data) => {
         if (!alive) return;
-        if (data?.error) setState({ loading: false, error: data.error, data: null });
-        else setState({ loading: false, error: null, data });
+        if (data?.error) {
+          // No (readable) college list — don't dead-end; surface Essays, which
+          // are reachable via the independent writing map regardless.
+          setState({ loading: false, error: data.error, data: null });
+          setSection('essays');
+        } else setState({ loading: false, error: null, data });
       })
       .catch(() => {
         if (!alive) return;
@@ -745,6 +765,7 @@ export default function CollegesView({ endpoint = '/api/colleges' }) {
           error: 'We couldn’t load your college list. Try again shortly.',
           data: null,
         });
+        setSection('essays');
       });
     return () => {
       alive = false;
@@ -753,22 +774,12 @@ export default function CollegesView({ endpoint = '/api/colleges' }) {
 
   if (state.loading) return <Skeleton />;
 
-  if (state.error) {
-    const noList = /college list yet/i.test(state.error);
-    return (
-      <div className="portal-rise mt-10 rounded-3xl border border-terracotta/25 bg-clay-50 p-6 text-center">
-        <CircleAlert className="mx-auto h-7 w-7 text-terracotta" strokeWidth={2} />
-        <p className="mt-3 font-display text-lg font-semibold text-ink">
-          {noList ? 'Coming soon' : 'Something’s off'}
-        </p>
-        <p className="mt-1 text-sm text-ink-soft">
-          {noList
-            ? 'Your college list hasn’t been set up yet — we’ll build it together.'
-            : state.error}
-        </p>
-      </div>
-    );
-  }
+  // On any college-load failure, render the shell with empty data so the Essays
+  // subtab stays reachable (the fetch effect already lands the user there). The
+  // other sections fall back to their own friendly empty states.
+  const degraded = !!state.error || !state.data;
+  const data = degraded ? EMPTY_COLLEGE_DATA : state.data;
+  const noList = degraded && (!state.error || /college list yet/i.test(state.error));
 
   const writing = buildWritingLinks(writingMap);
 
@@ -796,16 +807,32 @@ export default function CollegesView({ endpoint = '/api/colleges' }) {
         </div>
       </header>
 
+      {degraded && (
+        <div
+          className="portal-rise neu-inset flex items-start gap-3 rounded-2xl px-4 py-3.5"
+          style={{ animationDelay: '30ms' }}
+        >
+          <PenLine className="mt-0.5 h-4.5 w-4.5 shrink-0 text-terracotta-deep" strokeWidth={2.1} />
+          <p className="text-sm leading-relaxed text-ink-soft">
+            {noList
+              ? 'Your college list isn’t set up here yet — we’ll build it together. '
+              : 'We couldn’t load your college list just now. '}
+            <span className="font-semibold text-ink">Your essays are ready below</span> — open
+            your Common App and UC PIQ drafts any time.
+          </p>
+        </div>
+      )}
+
       <div className="portal-rise" style={{ animationDelay: '50ms' }}>
         <SectionDial sections={SECTIONS} value={section} onChange={setSection} />
       </div>
 
       {/* Keyed so each section replays the staggered rise on switch. */}
       <div key={section}>
-        {section === 'overview' && <Overview data={state.data} now={now} phases={phases} />}
-        {section === 'schools' && <Schools data={state.data} writing={writing} />}
-        {section === 'essays' && <Essays data={state.data} writing={writing} />}
-        {section === 'sessions' && <Sessions data={state.data} />}
+        {section === 'overview' && <Overview data={data} now={now} phases={phases} />}
+        {section === 'schools' && <Schools data={data} writing={writing} />}
+        {section === 'essays' && <Essays data={data} writing={writing} />}
+        {section === 'sessions' && <Sessions data={data} />}
       </div>
     </div>
   );

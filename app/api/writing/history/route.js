@@ -1,12 +1,12 @@
 import { getSupabaseClient } from '@/lib/supabase'
-import { resolveActor, canEditStudent } from '@/lib/writingAuth'
+import { resolveActorOrLink, canEditStudent } from '@/lib/writingAuth'
 import { tabContext, getTabHistory, getTabBody, appendRevision } from '@/lib/writingDocs'
 
 // GET /api/writing/history?tab_id=<id>[&revision=N]
 //   no revision → the WHO-edited timeline (newest first)
 //   &revision=N → that revision's body (for preview / pre-restore)
 export async function GET(request) {
-  const actor = await resolveActor()
+  const actor = await resolveActorOrLink()
   if (actor.error) return actor.error
 
   const url = new URL(request.url)
@@ -33,7 +33,7 @@ export async function GET(request) {
 // Restore a prior revision by APPENDING it as a new revision (never mutates
 // history), stamped with the restoring editor.
 export async function POST(request) {
-  const actor = await resolveActor()
+  const actor = await resolveActorOrLink()
   if (actor.error) return actor.error
 
   let body

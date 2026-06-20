@@ -1,5 +1,5 @@
 import { getSupabaseClient, STUDENT_COLLEGE_LISTS } from '@/lib/supabase'
-import { resolveActor, canViewStudent, canEditStudent } from '@/lib/writingAuth'
+import { resolveActorOrLink, canViewStudent, canEditStudent } from '@/lib/writingAuth'
 import { studentBySheetId } from '@/lib/identity'
 import {
   docContext,
@@ -20,7 +20,7 @@ const DOC_LABEL = {
 }
 
 export async function GET(request) {
-  const actor = await resolveActor()
+  const actor = await resolveActorOrLink()
   if (actor.error) return actor.error
 
   const docId = new URL(request.url).searchParams.get('doc')

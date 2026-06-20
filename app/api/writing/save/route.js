@@ -1,12 +1,12 @@
 import { getSupabaseClient } from '@/lib/supabase'
-import { resolveActor, canEditStudent } from '@/lib/writingAuth'
+import { resolveActorOrLink, canEditStudent } from '@/lib/writingAuth'
 import { tabContext, appendRevision } from '@/lib/writingDocs'
 
 // POST /api/writing/save  body: { tab_id, body_markdown, note? }
 // Appends a new revision (becomes canonical). Editor identity is derived
 // server-side from the Clerk session — never trusted from the client.
 export async function POST(request) {
-  const actor = await resolveActor()
+  const actor = await resolveActorOrLink()
   if (actor.error) return actor.error
 
   let body
