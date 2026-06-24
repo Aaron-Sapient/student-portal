@@ -16,6 +16,7 @@
   --mde-green:       #386840;
   --mde-green-deep:  #2a5232;
   --mde-green-soft:  #5a9a6f;
+  --mde-on-green:    #ffffff;   /* readable ink ON a --mde-green fill (dark green here → white) */
   --mde-leaf:        #F2FCE2;
   --mde-leaf-line:   #dcedc8;
   --mde-paper:       #fbfaf7;
@@ -61,13 +62,18 @@
   .md-surface .ln.h4 { font-size: 17.5px; margin: .4em 0 .1em; }
   .md-surface .ln.h5, .md-surface .ln.h6 { font-size: 16px; color: var(--mde-ink-soft); margin: .3em 0 .1em; }
 
-  /* list lines */
-  .md-surface .ln.li { padding-left: 1.5em; position: relative; }
-  .md-surface .ln.li::before { content: "•"; position: absolute; left: .5em;
-    color: var(--mde-green-soft); font-weight: 700; }
-  .md-surface .ln.li.active::before { content: none; }
-  .md-surface .ln.ol { padding-left: 1.7em; }
-  .md-surface .ln.ol::before { content: none; }
+  /* list lines — STATIC Word/Docs-style markers drawn from data-marker (never the raw
+     "- "/"1." source, which is a hidden atomic .lmk leaf). --li-depth sets the indent;
+     numbers/letters auto-renumber by position, bullets cycle • ◦ ▪ by depth. */
+  .md-surface .ln.li, .md-surface .ln.ol {
+    position: relative; padding-left: calc(1.6em + var(--li-depth, 0) * 1.5em);
+  }
+  .md-surface .ln.li::before, .md-surface .ln.ol::before {
+    content: attr(data-marker); position: absolute;
+    left: calc(var(--li-depth, 0) * 1.5em); width: 1.35em; text-align: right;
+    color: var(--mde-green-soft); font-weight: 700;
+  }
+  .md-surface .ln.ol::before { font-family: var(--mde-mono); font-size: .9em; font-weight: 600; }
 
   /* blockquote */
   .md-surface .ln.bq { padding-left: 1.1em; position: relative; color: var(--mde-ink-soft); font-style: italic; }
@@ -92,16 +98,19 @@
     text-underline-offset: 2px; cursor: pointer; }
   .md-surface .tok.a > .url, .md-surface .tok.a.on > .ltext { color: var(--mde-green-soft); }
 
-  /* markers — hidden until their span/line is active */
+  /* markers — hidden until their span/line is active (headings/quotes still peek) */
   .md-surface .mk { color: var(--mde-ink-faint); font-weight: 400; }
   .md-surface .blockmk { display: none; }
   .md-surface .ln.active > .blockmk { display: inline; color: var(--mde-ink-faint); }
-  .md-surface .ln.ol > .blockmk { display: inline; color: var(--mde-green-soft); font-family: var(--mde-mono); font-size: .85em; }
+  /* list source markers ("- "/"1. ") NEVER render — the visible marker is the CSS ::before above */
+  .md-surface .lmk { display: none; }
   .md-surface .tok > .mk, .md-surface .tok.a > .url { display: none; }
   .md-surface .tok.on > .mk, .md-surface .tok.on > .url { display: inline; }
 
-  /* ---------- %%…%% comments (ignored by render; round-trip as plain text) ---------- */
-  /* inline %%…%%: hidden until the caret is on the same line, then shown dim */
+  /* ---------- comments: %%…%% and <!--…--> (ignored by render; round-trip as plain text) ---------- */
+  /* both styles share the .tok.cm / .ln.meta machinery — an <!--…--> HTML comment
+     collapses by default exactly like a %%…%% comment (see the tokenizer + classify) */
+  /* inline comment: hidden until the caret is on the same line, then shown dim */
   .md-surface .tok.cm { display: none; }
   .md-surface .ln.active .tok.cm { display: inline; color: var(--mde-ink-faint); font-style: italic; opacity: .72; }
   .md-surface .ln.active .tok.cm > .mk { display: inline; }
@@ -109,6 +118,12 @@
   .md-surface .ln.meta { min-height: 0; line-height: 0; overflow: hidden; opacity: 0; margin: 0; }
   .md-surface .ln.meta.active { min-height: 1.7em; line-height: 1.7; overflow: visible; opacity: 1; }
   .md-surface .ln.meta.active .tok.cm, .md-surface .ln.meta.active .tok.cm > .mk { display: inline; }
+  /* a whole <!--…--> comment block (single- or multi-line): never rendered. display:none
+     keeps it OUT of layout entirely — no caret, selection, or highlight can enter it —
+     unlike the zero-height %% meta line above, which stays in flow so it can peek open.
+     The block is held by one atomic leaf, so the caret only ever sits at its edges. The
+     comment stays verbatim in the source/backend; it just isn't shown or exported. */
+  .md-surface .ln.cmh { display: none; }
 
   /* ---------- DOCS-8 invisible styling (@{s:…}…@{/s}) ---------- */
   /* The styled run gets its colour/font/size from inline styles set in JS (sanitized).
@@ -194,7 +209,10 @@
   .md-surface .mtable tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--mde-leaf) 55%, var(--mde-card)); }
   .md-surface .mcell { outline: none; min-width: 26px; }
   .md-surface .mcell:empty::after { content: "\200b"; color: transparent; }
-  .md-surface .mcell:focus { box-shadow: inset 0 0 0 2px var(--mde-green-soft); border-radius: 3px; }
+  /* rich cell content: bold/italic inherit; give inline code the house chip look */
+  .md-surface .mcell code { font-family: var(--mde-mono); font-size: .88em; background: var(--mde-leaf);
+    border: 1px solid var(--mde-leaf-line); border-radius: 4px; padding: .03em .3em; }
+  .md-surface .mtable thead th code { background: rgba(255,255,255,.18); border-color: rgba(255,255,255,.25); color: #fff; }
   .md-surface .mtable-tools {
     position: absolute; top: -13px; right: 4px; display: flex; gap: 5px; opacity: 0;
     transition: opacity .15s; pointer-events: none;
@@ -217,6 +235,11 @@
   .md-surface .mcol-grip::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; transform: translateX(-50%); background: transparent; border-radius: 2px; transition: background .12s; }
   .md-surface .mtable-wrap:hover .mcol-grip::before { background: color-mix(in srgb, var(--mde-green-soft) 45%, transparent); }
   .md-surface .mcol-grip:hover::before, .md-surface .mcol-grip.dragging::before { background: var(--mde-green); }
+  /* whole-table width handle: right-edge grip (drag to narrow the table below full width) */
+  .md-surface .mwidth-grip { position: absolute; width: 14px; transform: translateX(-50%); cursor: ew-resize; pointer-events: auto; touch-action: none; }
+  .md-surface .mwidth-grip::before { content: ""; position: absolute; left: 50%; top: 50%; height: 34px; width: 3px; transform: translate(-50%, -50%); background: transparent; border-radius: 3px; transition: background .12s; }
+  .md-surface .mtable-wrap:hover .mwidth-grip::before { background: color-mix(in srgb, var(--mde-green-soft) 55%, transparent); }
+  .md-surface .mwidth-grip:hover::before, .md-surface .mwidth-grip.dragging::before { background: var(--mde-green); height: 100%; }
 
   /* ---------- document tabs (MarkdownTabs wrapper) — LEFT rail, collapsible ----------
      A vertical sidebar separated from the editor by a single hairline (no shadow);
@@ -394,6 +417,63 @@
   .mde-cmd-sw.blank { background: transparent; box-shadow: none; }
   .mde-cmd-empty { padding: 16px 12px; font-size: 13px; color: var(--mde-ink-faint); text-align: center; }
 
+  /* ---------- DOCS-WC — word count ----------
+     .mde-wc-root is positioned by JS to overlay the editor stage (like .mde-toc-root);
+     the pill pins to the bottom-left of the editing area. The modal is a centered,
+     scrim-backed Google-Docs-style dialog. Both inherit the active --mde-* theme. */
+  .mde-wc-root {
+    position: fixed; z-index: 270; overflow: hidden; pointer-events: none;
+    font-family: var(--mde-sans);
+  }
+  .mde-wc-pill {
+    position: absolute; left: 14px; bottom: 14px; pointer-events: auto;
+    border: none; cursor: pointer; border-radius: 999px; padding: 7px 14px;
+    font-family: var(--mde-sans); font-size: 12.5px; font-weight: 600; line-height: 1;
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+    color: var(--mde-ink-soft); background: var(--mde-clay-card); box-shadow: var(--mde-clay-raise-sm);
+    transition: color .14s, box-shadow .14s, opacity .18s var(--mde-clay-ease);
+  }
+  .mde-wc-pill:hover { color: var(--mde-green-deep); }
+  .mde-wc-pill:active { box-shadow: var(--mde-clay-sink-sm); }
+  .mde-wc-pill.hidden { display: none; }
+  /* fade with the TOC button while a host drawer/overlay covers the editor */
+  .mde-wc-root.rail-open .mde-wc-pill { opacity: 0; pointer-events: none; }
+
+  .mde-wcmodal-scrim {
+    position: fixed; inset: 0; z-index: 340; display: none;
+    align-items: center; justify-content: center; padding: 22px;
+    background: rgba(20, 22, 18, .5);
+  }
+  .mde-wcmodal-scrim.open { display: flex; animation: atIn .14s var(--mde-clay-ease) both; }
+  .mde-wcmodal {
+    width: min(420px, 100%); box-sizing: border-box;
+    background: var(--mde-card); color: var(--mde-ink);
+    border: 1px solid var(--mde-hairline); border-radius: 16px;
+    box-shadow: 0 24px 64px rgba(0,0,0,.28), 0 6px 16px rgba(0,0,0,.12);
+    padding: 26px 28px 18px; font-family: var(--mde-sans);
+  }
+  .mde-wc-h { font-size: 22px; font-weight: 600; letter-spacing: -.01em; margin: 0 0 14px; }
+  .mde-wc-rows { margin: 0 0 4px; }
+  .mde-wc-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 2px; }
+  .mde-wc-row + .mde-wc-row { border-top: 1px solid var(--mde-hairline); }
+  .mde-wc-k { font-size: 15.5px; color: var(--mde-ink); }
+  .mde-wc-v { font-size: 15.5px; color: var(--mde-ink); font-variant-numeric: tabular-nums; }
+  .mde-wc-toggle { display: flex; align-items: center; gap: 12px; cursor: pointer; font-size: 15px; color: var(--mde-ink); padding: 14px 2px 6px; }
+  .mde-wc-cb { width: 18px; height: 18px; flex: none; accent-color: var(--mde-green); cursor: pointer; }
+  .mde-wc-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 14px; }
+  .mde-wc-cancel, .mde-wc-ok {
+    font-family: var(--mde-sans); font-size: 14px; font-weight: 600; cursor: pointer;
+    border: none; border-radius: 999px; transition: background .14s, box-shadow .14s, color .14s;
+  }
+  .mde-wc-cancel { background: transparent; color: var(--mde-green-deep); padding: 9px 16px; }
+  .mde-wc-cancel:hover { background: var(--mde-leaf); }
+  .mde-wc-ok { background: var(--mde-green); color: var(--mde-on-green); padding: 9px 24px; box-shadow: var(--mde-clay-raise-sm); }
+  .mde-wc-ok:hover { background: var(--mde-green-deep); }
+  .mde-wc-ok:active { box-shadow: var(--mde-clay-sink-sm); }
+  /* themed keyboard ring; suppress the default blue ring (incl. on programmatic focus) */
+  .mde-wc-ok:focus, .mde-wc-cancel:focus { outline: none; }
+  .mde-wc-ok:focus-visible, .mde-wc-cancel:focus-visible { outline: 2px solid var(--mde-green-soft); outline-offset: 2px; }
+
   /* ---------- DOCS-TOC — table of contents (right-docked H1/H2 outline) ----------
      .mde-toc-root is positioned by JS to overlay the editor stage; the button and
      panel dock within it. Inherits the active --mde-* theme. */
@@ -467,6 +547,7 @@
     --mde-green:       #6fbf86;
     --mde-green-deep:  #8fd6a3;
     --mde-green-soft:  #5a9a6f;
+    --mde-on-green:    #0c0c0c;   /* dark ink — the dark-mode green fill is LIGHT, so white text would be unreadable */
     --mde-leaf:        #18181b;
     --mde-leaf-line:   #27272a;
     --mde-paper:       #000000;
@@ -486,6 +567,7 @@
       --mde-green:       #6fbf86;
       --mde-green-deep:  #8fd6a3;
       --mde-green-soft:  #5a9a6f;
+      --mde-on-green:    #0c0c0c;   /* dark ink for the light dark-mode green fill (auto/system) */
       --mde-leaf:        #18181b;
       --mde-leaf-line:   #27272a;
       --mde-paper:       #000000;

@@ -74,6 +74,7 @@
     let suppress = false;
     let undo = [], redo = [], lastType = null, lastAt = 0;
     let tocRefresh = null;   // DOCS-TOC: set by the table-of-contents feature; called after every render
+    let wcRefresh = null;    // DOCS-WC:  set by the word-count feature; called after every render
 
     /* ----- inline tokenizer (operates in absolute source offsets) ----- */
     function findSingle(s, ch, from) {
@@ -123,8 +124,13 @@
         }
         if (c === "%" && content[i + 1] === "%") {
           const cl = content.indexOf("%%", i + 2);   // a %%…%% comment: hidden by render, kept in source
-          if (cl > i + 1) { pushText(i); out.push({ kind: "comment", s: base + i, e: base + cl + 2, inner: content.slice(i + 2, cl) }); i = cl + 2; ts = i; continue; }
+          if (cl > i + 1) { pushText(i); out.push({ kind: "comment", open: "%%", close: "%%", s: base + i, e: base + cl + 2, inner: content.slice(i + 2, cl) }); i = cl + 2; ts = i; continue; }
           // unclosed %% (mid-typing): fall through to plain text
+        }
+        if (c === "<" && content[i + 1] === "!" && content[i + 2] === "-" && content[i + 3] === "-") {
+          const cl = content.indexOf("-->", i + 4);   // an <!--…--> HTML comment: same hidden-by-render treatment as %%
+          if (cl >= i + 4) { pushText(i); out.push({ kind: "comment", open: "<!--", close: "-->", s: base + i, e: base + cl + 3, inner: content.slice(i + 4, cl) }); i = cl + 3; ts = i; continue; }
+          // unclosed <!-- (mid-typing / multiline): fall through to plain text
         }
         if (c === "`") {
           const cl = content.indexOf("`", i + 1);
@@ -164,8 +170,36 @@
       if ((m = ln.match(/^(\s*\d+\.\s+)(.*)$/)))  return { type: "ol", mlen: m[1].length, s, e, raw: ln };
       if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(ln)) return { type: "hr", s, e, raw: ln };
       if (/^\s*%%.*%%\s*$/.test(ln))               return { type: "meta", s, e, raw: ln };
+      if (/^\s*<!--.*-->\s*$/.test(ln))            return { type: "meta", s, e, raw: ln };
       if (ln.length === 0)                         return { type: "blank", s, e, raw: ln };
       return { type: "p", s, e, raw: ln };
+    }
+
+    // Which lines sit inside a CLEAN <!--…--> HTML-comment block (single- OR multi-
+    // line). Those lines never render and never clean-export — but they stay in `text`,
+    // so they round-trip to disk / the backend untouched.
+    //   • Whole-line single comment (`^\s*<!--…-->\s*$`)  → hidden.
+    //   • Block: a line that OPENS with `<!--` (no `-->` on it) … through a line that
+    //     CLOSES with `-->` at its end  → every line in between hidden.
+    // Deliberately conservative so a stray edit can't swallow real text: a mid-line
+    // inline `text <!--…--> text` is left to parseInline's `tok.cm` (surrounding text
+    // still shows); an open block whose close line has trailing text after `-->`, or
+    // an UNCLOSED `<!--` (e.g. mid-typing), is left fully visible as plain text rather
+    // than blanking content.
+    function commentLines(lines) {
+      const hidden = new Array(lines.length).fill(false);
+      let open = -1;   // first line of a cleanly-opened, still-unclosed <!-- block, else -1
+      for (let k = 0; k < lines.length; k++) {
+        if (open < 0) {
+          if (/^\s*<!--.*-->\s*$/.test(lines[k])) { hidden[k] = true; continue; }   // whole-line single
+          if (/^\s*<!--/.test(lines[k]) && lines[k].indexOf("-->") < 0) open = k;    // clean block open
+        } else if (/-->\s*$/.test(lines[k])) {                                        // clean block close
+          for (let m = open; m <= k; m++) hidden[m] = true; open = -1;
+        } else if (lines[k].indexOf("-->") >= 0) {                                    // text after --> ⇒ not clean
+          open = -1;                                                                  // bail: leave the block visible
+        }
+      }
+      return hidden;
     }
 
     /* ----- DOM building ----- */
@@ -182,6 +216,18 @@
     function styleMarkerLeaf(str, s) {
       const sp = document.createElement("span");
       sp.className = "stymk"; sp.dataset.s = s; sp.dataset.len = str.length;
+      sp.setAttribute("contenteditable", "false");
+      sp.appendChild(document.createTextNode(str));
+      leaves.push({ el: sp, s, len: str.length, atomic: true });
+      return sp;
+    }
+    // a list marker source ("- " / "  1. ") carried as ONE atomic, contenteditable-false,
+    // NEVER-rendered leaf — like styleMarkerLeaf. The visible bullet/number is drawn by CSS
+    // ::before from div.dataset.marker, so the raw markdown never shows (Word/Docs feel) and
+    // backspace at content-start removes the whole marker (de-lists), via atomicBefore.
+    function listMarkerLeaf(str, s) {
+      const sp = document.createElement("span");
+      sp.className = "lmk"; sp.dataset.s = s; sp.dataset.len = str.length;
       sp.setAttribute("contenteditable", "false");
       sp.appendChild(document.createTextNode(str));
       leaves.push({ el: sp, s, len: str.length, atomic: true });
@@ -210,12 +256,14 @@
           parent.appendChild(tok); continue;   // intentionally NOT added to `toks` (never reveals)
         }
         if (t.kind === "comment") {
-          // three leaves (%% + inner + %%) keep the leaf-coverage invariant; CSS hides it
+          // three leaves (open + inner + close) keep the leaf-coverage invariant; CSS hides it.
+          // markers vary: a %%…%% or an <!--…--> HTML comment — both collapse the same way.
+          const open = t.open || "%%", close = t.close || "%%";
           const tok = document.createElement("span"); tok.className = "tok cm";
           toks.push({ el: tok, s: t.s, e: t.e });
-          tok.appendChild(leafSpan("%%", t.s, "mk"));
-          tok.appendChild(leafSpan(t.inner, t.s + 2, "seg"));
-          tok.appendChild(leafSpan("%%", t.e - 2, "mk"));
+          tok.appendChild(leafSpan(open, t.s, "mk"));
+          tok.appendChild(leafSpan(t.inner, t.s + open.length, "seg"));
+          tok.appendChild(leafSpan(close, t.e - close.length, "mk"));
           parent.appendChild(tok); continue;
         }
         if (t.kind === "code") {
@@ -247,14 +295,63 @@
         parent.appendChild(tok);
       }
     }
+    /* ----- Word/Docs-style list markers: each list line's depth (from leading-space
+       indent) and STATIC marker are computed here; numbers/letters auto-renumber by
+       position (1,2,3 / a,b,c / i,ii,iii), bullets cycle • ◦ ▪ by depth. The raw "- "/
+       "1. " source is hidden (listMarkerLeaf); CSS draws the marker from data-marker. */
+    const LIST_INDENT = 2;                  // spaces per nesting level
+    const BULLET_GLYPHS = ["•", "◦", "▪"];
+    function toAlpha(n) { let s = ""; while (n > 0) { n--; s = String.fromCharCode(97 + (n % 26)) + s; n = Math.floor(n / 26); } return s || "a"; }
+    function toRoman(n) {
+      if (n <= 0) return "i";
+      const map = [[1000,"m"],[900,"cm"],[500,"d"],[400,"cd"],[100,"c"],[90,"xc"],[50,"l"],[40,"xl"],[10,"x"],[9,"ix"],[5,"v"],[4,"iv"],[1,"i"]];
+      let s = ""; for (const [v, sym] of map) while (n >= v) { s += sym; n -= v; } return s;
+    }
+    function listMarker(type, count, depth) {
+      if (type === "ul") return BULLET_GLYPHS[depth % 3];
+      const d = depth % 3, num = d === 1 ? toAlpha(count) : d === 2 ? toRoman(count) : String(count);
+      return num + ".";
+    }
+    // → array indexed by line: { depth, marker } for each list line, else null. Ordered
+    // counters reset on a shallower line, a type switch, or any non-list non-blank line.
+    function computeListMarkers(lines, hidden) {
+      const out = new Array(lines.length).fill(null), counts = [];
+      for (let k = 0; k < lines.length; k++) {
+        if (hidden[k]) continue;            // no-render comment block — leave counters as-is
+        const ln = lines[k]; let mm, type = null, depth = 0;
+        if ((mm = ln.match(/^( *)([-*+])\s+/)))      { type = "ul"; depth = Math.floor(mm[1].length / LIST_INDENT); }
+        else if ((mm = ln.match(/^( *)(\d+)\.\s+/))) { type = "ol"; depth = Math.floor(mm[1].length / LIST_INDENT); }
+        if (!type) { if (ln.trim() !== "") counts.length = 0; continue; }   // blanks keep the list alive
+        counts.length = depth + 1;          // drop deeper counters (restart on re-descent)
+        if (type === "ol") { counts[depth] = (counts[depth] || 0) + 1; out[k] = { depth, marker: listMarker("ol", counts[depth], depth) }; }
+        else { counts[depth] = 0; out[k] = { depth, marker: listMarker("ul", 0, depth) }; }   // a bullet breaks the ordered run at its depth
+      }
+      return out;
+    }
     function render() {
       suppress = true;
       surface.textContent = "";
       leaves = []; blocks = []; toks = [];
       const lines = text.split("\n");
       const starts = []; { let o = 0; for (let k = 0; k < lines.length; k++) { starts.push(o); o += lines[k].length + 1; } }
+      const hidden = commentLines(lines);
+      const listInfo = computeListMarkers(lines, hidden);
       let i = 0;
       while (i < lines.length) {
+        // A whole <!--…--> comment block: kept verbatim in `text`, but NOT rendered.
+        // display:none takes it out of layout entirely — no caret, selection, or
+        // highlight can ever enter it (unlike a zero-height line, which stays in flow).
+        // One ATOMIC leaf spans the block so offset-mapping treats it as a single unit
+        // the caret only ever sits beside, exactly like a table/chip island.
+        if (hidden[i]) {
+          let j = i; while (j < lines.length && hidden[j]) j++;
+          const hs = starts[i], he = starts[j - 1] + lines[j - 1].length;
+          const ph = document.createElement("div"); ph.className = "ln cmh";
+          blocks.push({ el: ph, s: hs, e: he });
+          leaves.push({ el: ph, s: hs, len: he - hs, atomic: true });
+          surface.appendChild(ph);
+          i = j; continue;
+        }
         // a table run = optional "%%cols%%" line + header row + delimiter + body rows.
         // Look AHEAD so a preceding cols line is claimed INTO the table's source range.
         const colsMeta = isColsLine(lines[i]) && i + 2 < lines.length && isRow(lines[i + 1]) && isDelim(lines[i + 2]);
@@ -270,8 +367,13 @@
         const div = document.createElement("div");
         div.className = "ln " + ({ h: "h h" + b.lvl, bq: "bq", li: "li", ol: "ol", hr: "hr", blank: "blank", p: "p", meta: "meta" }[b.type] || "p");
         blocks.push({ el: div, s: b.s, e: b.e });
-        if (b.type === "h" || b.type === "bq" || b.type === "li" || b.type === "ol") {
+        if (b.type === "h" || b.type === "bq") {
           div.appendChild(leafSpan(b.raw.slice(0, b.mlen), b.s, "blockmk"));
+          appendInline(div, b.raw.slice(b.mlen), b.s + b.mlen);
+        } else if (b.type === "li" || b.type === "ol") {
+          const info = listInfo[i] || { depth: 0, marker: b.type === "ol" ? "1." : "•" };
+          div.dataset.marker = info.marker; div.style.setProperty("--li-depth", info.depth);
+          div.appendChild(listMarkerLeaf(b.raw.slice(0, b.mlen), b.s));   // hidden atomic source marker
           appendInline(div, b.raw.slice(b.mlen), b.s + b.mlen);
         } else if (b.type === "hr") {
           div.appendChild(leafSpan(b.raw, b.s, "seg"));
@@ -288,6 +390,7 @@
       applyReveal();
       suppress = false;
       if (tocRefresh) tocRefresh();
+      if (wcRefresh) wcRefresh();
     }
 
     /* ----- tables: GFM detected in source, rendered house-style; cells are
@@ -298,6 +401,8 @@
     function isColsLine(ln) { return /^\s*%%cols:[^%]*%%\s*$/.test(ln); }
     function colsFromCSV(csv) { if (!csv) return null; const a = String(csv).split(",").map(x => parseFloat(x)).filter(n => !isNaN(n) && n > 0); return a.length ? a : null; }
     function parseCols(ln) { const m = /^\s*%%cols:([^%]*)%%\s*$/.exec(ln); return m ? colsFromCSV(m[1]) : null; }
+    // optional table width rides the SAME %%cols%% line as "w:NN" (percent of the surface, 20–100)
+    function parseTW(ln) { const m = /\bw:(\d+(?:\.\d+)?)/.exec(ln || ""); if (!m) return null; const v = parseFloat(m[1]); return (v >= 20 && v <= 100) ? v : null; }
     function normalizeCols(ws) {
       const MIN = 5, sum = ws.reduce((a, b) => a + b, 0) || 1;
       const r = ws.map(w => Math.max(MIN, Math.round(w / sum * 100)));
@@ -308,11 +413,82 @@
     // strip only the single padding space GFM puts around cell content, so spaces the user types survive a re-render
     function splitCells(row) { let t = row.trim(); if (t[0] === "|") t = t.slice(1); if (t[t.length - 1] === "|") t = t.slice(0, -1); return t.split("|").map(c => c.replace(/^ /, "").replace(/ $/, "")); }
     function cellText(cell) { return (cell.textContent || "").replace(/​/g, "").replace(/[\r\n]+/g, " ").replace(/\|/g, "/"); }
+    /* ---- rich table cells (Feature 1): a cell's content is stored as markdown in the GFM
+       source cell — <br> for hard line breaks, ** / * / ` inline, "• " prefix for a bulleted
+       line; "|" -> "/" (can't appear in a GFM cell). It renders STATICALLY formatted (real
+       <strong>, line breaks, no visible markers) and re-serializes on every edit. ---- */
+    function wrapCellInline(t, b, i, c) {   // wrap a same-style run back into markdown markers
+      if (c) return "`" + t + "`";
+      const pre = (/^\s*/.exec(t) || [""])[0], post = (/\s*$/.exec(t) || [""])[0];
+      const mid = t.slice(pre.length, t.length - post.length);
+      if (!mid) return t;                                   // whitespace-only: no markers
+      let m = mid;
+      if (b && i) m = "**_" + m + "_**"; else if (b) m = "**" + m + "**"; else if (i) m = "*" + m + "*";
+      return pre + m + post;
+    }
+    function cellInlineToHtml(seg) {   // minimal ** / * / _ / ` parser; everything else literal+escaped (no links/chips in cells)
+      let out = "", i = 0; const n = seg.length;
+      while (i < n) {
+        const c = seg[i];
+        if (c === "`") { const cl = seg.indexOf("`", i + 1); if (cl > i) { out += "<code>" + esc(seg.slice(i + 1, cl)) + "</code>"; i = cl + 1; continue; } }
+        if ((c === "*" && seg[i + 1] === "*") || (c === "_" && seg[i + 1] === "_")) { const mk = seg.slice(i, i + 2), cl = seg.indexOf(mk, i + 2); if (cl > i + 1) { out += "<strong>" + cellInlineToHtml(seg.slice(i + 2, cl)) + "</strong>"; i = cl + 2; continue; } }
+        if ((c === "*" || c === "_") && seg[i + 1] !== c) { const cl = seg.indexOf(c, i + 1); if (cl > i + 1) { out += "<em>" + cellInlineToHtml(seg.slice(i + 1, cl)) + "</em>"; i = cl + 1; continue; } }
+        out += esc(c); i++;
+      }
+      return out;
+    }
+    function cellMdToHtml(md) { return String(md == null ? "" : md).split("<br>").map(cellInlineToHtml).join("<br>"); }
+    function cellToMd(cell) {   // walk the rich-contenteditable cell DOM back into markdown
+      const runs = [];
+      (function walk(node, b, i, c) {
+        for (const ch of node.childNodes) {
+          if (ch.nodeType === 3) { const t = ch.nodeValue.replace(/​/g, ""); if (t) runs.push({ t: t.replace(/\|/g, "/"), b, i, c }); }
+          else if (ch.nodeType === 1) {
+            const tag = ch.tagName.toLowerCase();
+            if (tag === "br") { runs.push({ br: true }); continue; }
+            const st = ch.style || {};
+            const nb = b || tag === "b" || tag === "strong" || /^(bold|[6-9]00)$/.test(st.fontWeight || "");
+            const ni = i || tag === "i" || tag === "em" || st.fontStyle === "italic";
+            const nc = c || tag === "code" || tag === "tt";
+            if ((tag === "div" || tag === "p") && runs.length && !runs[runs.length - 1].br) runs.push({ br: true });   // block boundary → line break
+            walk(ch, nb, ni, nc);
+          }
+        }
+      })(cell, false, false, false);
+      let md = "";
+      for (let k = 0; k < runs.length; k++) {
+        const r = runs[k];
+        if (r.br) { md += "<br>"; continue; }
+        let txt = r.t;
+        while (k + 1 < runs.length && !runs[k + 1].br && runs[k + 1].b === r.b && runs[k + 1].i === r.i && runs[k + 1].c === r.c) txt += runs[++k].t;   // coalesce same-style runs
+        md += wrapCellInline(txt, r.b, r.i, r.c);
+      }
+      return md;
+    }
+    function cellLen(cell) { let n = 0; const w = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, { acceptNode: x => (x.nodeType === 3 || x.nodeName === "BR") ? 1 : 3 }); let k; while ((k = w.nextNode())) n += k.nodeName === "BR" ? 1 : k.nodeValue.length; return n; }
+    function cellLineStartNode(cell) {   // first top-level child of the caret's visual line (after the previous <br>)
+      const sel = document.getSelection(); if (!sel.rangeCount || !cell.contains(sel.focusNode)) return null;
+      let fc = sel.focusNode; while (fc && fc.parentNode !== cell) fc = fc.parentNode;
+      const kids = [...cell.childNodes]; let fi = kids.indexOf(fc); if (fi < 0) fi = kids.length - 1;
+      let start = fi; while (start > 0 && kids[start - 1].nodeName !== "BR") start--;
+      return kids[start] || null;
+    }
+    function cellLineIsBullet(cell) { const fn = cellLineStartNode(cell); return /^•\s/.test((fn && fn.textContent) || ""); }
+    function cellToggleBullet(cell) {   // Cmd/Ctrl+Shift+8: toggle a "• " prefix on the caret's line
+      const fn = cellLineStartNode(cell); if (fn === null && !document.getSelection().rangeCount) return;
+      const ft = fn && fn.nodeType === 3 ? fn : (fn && fn.firstChild && fn.firstChild.nodeType === 3 ? fn.firstChild : null);
+      if (ft && /^•\s/.test(ft.nodeValue)) ft.nodeValue = ft.nodeValue.replace(/^•\s/, "");
+      else cell.insertBefore(document.createTextNode("• "), fn || null);
+      syncTable(cell);
+    }
     function rowGFM(cells, cols) { let o = "|"; for (let c = 0; c < cols; c++) o += " " + (cells[c] != null ? String(cells[c]) : "") + " |"; return o; }
-    function emitTable(head, body, widths) {
+    function emitTable(head, body, widths, tw) {
       const cols = head.length;
       const out = [];
-      if (widths && widths.length) out.push("%%cols:" + widths.slice(0, cols).join(",") + "%%");  // re-emitted on EVERY edit so widths survive
+      // column widths AND optional table width (w:NN) ride one %%cols%% meta line above the table
+      const colsCsv = (widths && widths.length) ? widths.slice(0, cols).join(",") : "";
+      const twPart = (tw != null && tw < 100) ? (colsCsv ? " " : "") + "w:" + tw : "";
+      if (colsCsv || twPart) out.push("%%cols:" + colsCsv + twPart + "%%");   // re-emitted on EVERY edit so it survives
       out.push(rowGFM(head, cols), "|" + " --- |".repeat(cols));
       body.forEach(r => out.push(rowGFM(r, cols)));
       return out.join("\n");
@@ -322,25 +498,27 @@
 
     function mkCell(tag, content, r, c) {
       const cell = document.createElement(tag); cell.className = "mcell";
-      cell.setAttribute("contenteditable", "plaintext-only");
-      cell.dataset.r = r; cell.dataset.c = c; cell.textContent = content;
+      cell.setAttribute("contenteditable", "true");   // rich (was plaintext-only): allows <br>, bold, italic
+      cell.dataset.r = r; cell.dataset.c = c; cell.innerHTML = cellMdToHtml(content);
       cell.addEventListener("input", e => { e.stopPropagation(); if (!composing) syncTable(cell); });
       cell.addEventListener("keydown", onCellKey);
-      cell.addEventListener("paste", e => { e.stopPropagation(); e.preventDefault(); const d = ((e.clipboardData || window.clipboardData).getData("text/plain") || "").replace(/[\r\n|]+/g, " "); document.execCommand("insertText", false, d); });
+      cell.addEventListener("paste", e => { e.stopPropagation(); e.preventDefault(); let d = ((e.clipboardData || window.clipboardData).getData("text/plain") || "").replace(/\|/g, "/"); d = esc(d).replace(/\r?\n/g, "<br>"); document.execCommand("insertHTML", false, d); });
       cell.addEventListener("copy", e => e.stopPropagation());
       cell.addEventListener("cut", e => e.stopPropagation());
       return cell;
     }
     function renderTable(rawLines, s, e) {
-      let widths = null, off = 0;
-      if (isColsLine(rawLines[0])) { widths = parseCols(rawLines[0]); off = 1; }   // claim a leading %%cols%% line
+      let widths = null, tw = null, off = 0;
+      if (isColsLine(rawLines[0])) { widths = parseCols(rawLines[0]); tw = parseTW(rawLines[0]); off = 1; }   // claim a leading %%cols%% line
       const head = splitCells(rawLines[off]);
       const body = rawLines.slice(off + 2).map(splitCells);
       const cols = Math.max(head.length, body.reduce((m, r) => Math.max(m, r.length), 0), 1);
       const wrap = document.createElement("div"); wrap.className = "mtable-wrap"; wrap.setAttribute("contenteditable", "false");
       wrap.dataset.s = s; wrap.dataset.e = e;
       if (widths) wrap.dataset.cols = widths.join(",");
+      if (tw != null) wrap.dataset.tw = tw;
       const table = document.createElement("table"); table.className = "mtable";
+      if (tw != null) table.style.width = tw + "%";   // narrower-than-full table (default CSS is width:100%)
       if (widths && widths.length) {
         const cg = document.createElement("colgroup");
         for (let c = 0; c < cols; c++) { const col = document.createElement("col"); if (widths[c] != null) col.style.width = widths[c] + "%"; cg.appendChild(col); }
@@ -375,12 +553,19 @@
         attachGrip(grip, wrap, table, c);
         layer.appendChild(grip);
       }
+      // right-edge handle: drag to set the whole table's width (< full width)
+      const wg = document.createElement("div"); wg.className = "mwidth-grip";
+      wg.style.left = (tr.right - wr.left) + "px"; wg.style.top = (tr.top - wr.top) + "px"; wg.style.height = tr.height + "px";
+      attachWidthGrip(wg, wrap, table);
+      layer.appendChild(wg);
     }
     function repositionGrips(wrap) {
       const layer = wrap.querySelector(".mcol-grips"), table = wrap.querySelector("table.mtable");
       if (!layer || !table) return;
       const ths = [...table.querySelectorAll("thead th")], wr = wrap.getBoundingClientRect();
-      [...layer.children].forEach((grip, c) => { if (ths[c]) grip.style.left = (ths[c].getBoundingClientRect().right - wr.left) + "px"; });
+      layer.querySelectorAll(".mcol-grip").forEach((grip, c) => { if (ths[c]) grip.style.left = (ths[c].getBoundingClientRect().right - wr.left) + "px"; });
+      const wg = layer.querySelector(".mwidth-grip");
+      if (wg) wg.style.left = (table.getBoundingClientRect().right - wr.left) + "px";
     }
     function attachGrip(grip, wrap, table, c) {
       grip.addEventListener("pointerdown", e => {
@@ -404,6 +589,23 @@
         window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
       });
     }
+    /* ----- table-width resize: drag the right-edge handle; committed to "w:NN" on the
+       %%cols%% line on pointerup. Width is a percent of the surface; ≥~100 clears it. ----- */
+    function attachWidthGrip(grip, wrap, table) {
+      grip.addEventListener("pointerdown", e => {
+        e.preventDefault(); e.stopPropagation();
+        const wrapW = wrap.getBoundingClientRect().width || 1, left = table.getBoundingClientRect().left;
+        grip.classList.add("dragging");
+        let pct = 100;
+        const onMove = ev => { pct = Math.max(20, Math.min(100, (ev.clientX - left) / wrapW * 100)); table.style.width = pct + "%"; repositionGrips(wrap); };
+        const onUp = () => {
+          grip.classList.remove("dragging");
+          window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp);
+          commitWidth(wrap, pct >= 99.5 ? null : Math.round(pct));
+        };
+        window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
+      });
+    }
     function applyColWidths(table, pcts) {
       let cg = table.querySelector("colgroup");
       if (!cg) { cg = document.createElement("colgroup"); for (let i = 0; i < pcts.length; i++) cg.appendChild(document.createElement("col")); table.insertBefore(cg, table.firstChild); }
@@ -414,42 +616,59 @@
     function commitCols(wrap, widths) {
       const s = +wrap.dataset.s, e = +wrap.dataset.e, m = tableMatrix(wrap);
       snapshot("cols");
-      text = text.slice(0, s) + emitTable(m.head, m.body, widths) + text.slice(e);
+      text = text.slice(0, s) + emitTable(m.head, m.body, widths, tableMeta(wrap).tw) + text.slice(e);
+      render(); onInput();
+    }
+    function commitWidth(wrap, tw) {   // persist the whole-table width drag into the %%cols%% meta
+      const s = +wrap.dataset.s, e = +wrap.dataset.e, m = tableMatrix(wrap);
+      snapshot("twidth");
+      text = text.slice(0, s) + emitTable(m.head, m.body, tableMeta(wrap).widths, tw) + text.slice(e);
       render(); onInput();
     }
     function tableMatrix(wrap) {
-      return { head: [...wrap.querySelectorAll("thead th")].map(cellText), body: [...wrap.querySelectorAll("tbody tr")].map(tr => [...tr.children].map(cellText)) };
+      return { head: [...wrap.querySelectorAll("thead th")].map(cellToMd), body: [...wrap.querySelectorAll("tbody tr")].map(tr => [...tr.children].map(cellToMd)) };
     }
+    function tableMeta(wrap) { return { widths: colsFromCSV(wrap.dataset.cols), tw: (wrap.dataset.tw != null && wrap.dataset.tw !== "") ? +wrap.dataset.tw : null }; }
+    // offset = text chars + each <br> counted as 1 (the rendered-cell space; markers aren't shown)
     function caretInCell(cell) {
       const sel = document.getSelection(); if (!sel || !sel.rangeCount) return 0;
-      const node = sel.focusNode; if (!cell.contains(node)) return (cell.textContent || "").length;
-      let total = 0; const w = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT); let n;
-      while ((n = w.nextNode())) { if (n === node) return total + sel.focusOffset; total += n.nodeValue.length; }
+      const node = sel.focusNode; if (!cell.contains(node)) return cellLen(cell);
+      let total = 0; const w = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, { acceptNode: x => (x.nodeType === 3 || x.nodeName === "BR") ? 1 : 3 }); let n;
+      while ((n = w.nextNode())) {
+        if (n === node) return total + (node.nodeType === 3 ? sel.focusOffset : 0);
+        total += n.nodeName === "BR" ? 1 : n.nodeValue.length;
+      }
       return total;
     }
     function syncTable(cell) {
       const wrap = cell.closest(".mtable-wrap"); if (!wrap) return;
       const cap = { tblS: +wrap.dataset.s, r: +cell.dataset.r, c: +cell.dataset.c, off: caretInCell(cell) };
       const s = +wrap.dataset.s, e = +wrap.dataset.e, m = tableMatrix(wrap);
-      const widths = colsFromCSV(wrap.dataset.cols);   // keep persisted widths through a cell edit
+      const meta = tableMeta(wrap);   // keep persisted column + table widths through a cell edit
       snapshot("cell");
-      text = text.slice(0, s) + emitTable(m.head, m.body, widths) + text.slice(e);
+      text = text.slice(0, s) + emitTable(m.head, m.body, meta.widths, meta.tw) + text.slice(e);
       render(); restoreCell(cap); onInput();
     }
     function restoreCell(cap) {
       const wrap = surface.querySelector('.mtable-wrap[data-s="' + cap.tblS + '"]'); if (!wrap) return;
       const cell = wrap.querySelector('.mcell[data-r="' + cap.r + '"][data-c="' + cap.c + '"]'); if (!cell) return;
       cell.focus({ preventScroll: true });
-      const tn = cell.firstChild && cell.firstChild.nodeType === 3 ? cell.firstChild : null;
       const r = document.createRange();
-      if (tn) r.setStart(tn, Math.min(cap.off, tn.nodeValue.length)); else r.setStart(cell, 0);
+      let rem = cap.off, placed = false, last = null;
+      const w = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, { acceptNode: x => (x.nodeType === 3 || x.nodeName === "BR") ? 1 : 3 });
+      let n;
+      while ((n = w.nextNode())) {
+        if (n.nodeType === 3) { const len = n.nodeValue.length; if (rem <= len) { r.setStart(n, rem); placed = true; break; } rem -= len; last = n; }
+        else { if (rem === 0) { r.setStartBefore(n); placed = true; break; } rem -= 1; last = n; }   // <br>
+      }
+      if (!placed) { if (last && last.nodeType === 3) r.setStart(last, last.nodeValue.length); else r.setStart(cell, cell.childNodes.length); }
       r.collapse(true);
       const sel = document.getSelection(); suppress = true; sel.removeAllRanges(); sel.addRange(r); suppress = false;
     }
     function allCells(wrap) { return [...wrap.querySelectorAll(".mcell")]; }
     function focusCell(cell) { if (!cell) return; cell.focus({ preventScroll: true }); const r = document.createRange(); r.selectNodeContents(cell); r.collapse(false); const s = document.getSelection(); suppress = true; s.removeAllRanges(); s.addRange(r); suppress = false; }
     function atCellStart(cell) { const s = document.getSelection(); return s && s.isCollapsed && caretInCell(cell) === 0; }
-    function atCellEnd(cell) { const s = document.getSelection(); return s && s.isCollapsed && caretInCell(cell) === (cell.textContent || "").length; }
+    function atCellEnd(cell) { const s = document.getSelection(); return s && s.isCollapsed && caretInCell(cell) === cellLen(cell); }
     function tableIsEmpty(wrap) { return allCells(wrap).every(c => (c.textContent || "").trim() === ""); }
     function moveCell(cell, dir, addRowIfEnd) {
       const wrap = cell.closest(".mtable-wrap"), cells = allCells(wrap), idx = cells.indexOf(cell) + dir;
@@ -466,14 +685,23 @@
       focusCell(below);
     }
     function onCellKey(e) {
-      const cell = e.currentTarget;
+      const cell = e.currentTarget, mod = e.metaKey || e.ctrlKey;
       if (e.key === "Tab") { e.preventDefault(); e.stopPropagation(); moveCell(cell, e.shiftKey ? -1 : 1, !e.shiftKey); return; }
-      if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); enterCell(cell); return; }
+      if (e.key === "Enter") {   // Word/Docs: Enter = line break INSIDE the cell; continue a bullet line
+        e.preventDefault(); e.stopPropagation();
+        const bullet = cellLineIsBullet(cell);
+        document.execCommand("insertLineBreak");
+        if (bullet) document.execCommand("insertText", false, "• ");
+        return;
+      }
       if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); exitTable(cell.closest(".mtable-wrap"), 1); return; }
-      if ((e.metaKey || e.ctrlKey) && /^[biuBIU]$/.test(e.key)) { e.preventDefault(); e.stopPropagation(); return; }
+      if (mod && e.shiftKey && (e.key === "8" || e.key === "*" || e.code === "Digit8")) { e.preventDefault(); e.stopPropagation(); cellToggleBullet(cell); return; }
+      if (mod && /^[bB]$/.test(e.key)) { e.preventDefault(); e.stopPropagation(); document.execCommand("bold"); return; }
+      if (mod && /^[iI]$/.test(e.key)) { e.preventDefault(); e.stopPropagation(); document.execCommand("italic"); return; }
+      if (mod && /^[uU]$/.test(e.key)) { e.preventDefault(); e.stopPropagation(); return; }   // underline isn't representable in md — swallow
       if (e.key === "ArrowRight" && atCellEnd(cell)) { e.preventDefault(); e.stopPropagation(); moveCell(cell, 1, false); return; }
       if (e.key === "ArrowLeft" && atCellStart(cell)) { e.preventDefault(); e.stopPropagation(); moveCell(cell, -1, false); return; }
-      if (e.key === "Backspace" && (cell.textContent || "").length === 0) {
+      if (e.key === "Backspace" && cellLen(cell) === 0) {
         e.preventDefault(); e.stopPropagation();
         const wrap = cell.closest(".mtable-wrap");
         tableIsEmpty(wrap) ? deleteTable(wrap) : moveCell(cell, -1, false);
@@ -482,7 +710,7 @@
     function replaceTable(wrap, head, body, widths) {
       const s = +wrap.dataset.s, e = +wrap.dataset.e; snapshot("table");
       if (widths === undefined) widths = colsFromCSV(wrap.dataset.cols);
-      text = text.slice(0, s) + emitTable(head, body, widths) + text.slice(e); render(); onInput();
+      text = text.slice(0, s) + emitTable(head, body, widths, tableMeta(wrap).tw) + text.slice(e); render(); onInput();
     }
     function addRow(wrap, focusFirst) {
       const m = tableMatrix(wrap), s = +wrap.dataset.s; m.body.push(new Array(m.head.length).fill(""));
@@ -652,15 +880,25 @@
       let le = text.indexOf("\n", pos); if (le < 0) le = text.length;
       const line = text.slice(ls, le);
       let m, prefix;
-      if ((m = line.match(/^(\s*)([-*+]\s+)(.*)$/))) {
-        if (m[3].trim() === "") { edit(ls, le, m[1], ls + m[1].length, "nl"); return true; }  // empty bullet → exit
+      if ((m = line.match(/^( *)([-*+]\s+)(.*)$/))) {
+        if (m[3].trim() === "") return emptyListItem(ls, le, m[1], "ul");
         prefix = m[1] + m[2];
-      } else if ((m = line.match(/^(\s*)(\d+)\.(\s+)(.*)$/))) {
-        if (m[4].trim() === "") { edit(ls, le, m[1], ls + m[1].length, "nl"); return true; }   // empty number → exit
+      } else if ((m = line.match(/^( *)(\d+)\.(\s+)(.*)$/))) {
+        if (m[4].trim() === "") return emptyListItem(ls, le, m[1], "ol");
         prefix = m[1] + (parseInt(m[2], 10) + 1) + "." + m[3];
       } else return false;
       const ins = "\n" + prefix;
       edit(pos, pos, ins, pos + ins.length, "nl");
+      return true;
+    }
+    // Enter on an EMPTY list item: outdent one level if nested, else exit the list (Docs/Word).
+    function emptyListItem(ls, le, lead, type) {
+      if (lead.length >= LIST_INDENT) {
+        const repl = lead.slice(LIST_INDENT) + (type === "ol" ? "1. " : "- ");
+        edit(ls, le, repl, ls + repl.length, "nl");
+      } else {
+        edit(ls, le, "", ls, "nl");
+      }
       return true;
     }
 
@@ -729,7 +967,9 @@
     }
     function rangeToPlain(md) {
       const lines = md.split("\n"), out = []; let i = 0;
+      const hidden = commentLines(lines);
       while (i < lines.length) {
+        if (hidden[i]) { i++; continue; }   // <!--…--> comment block: never exported
         const tr = tableRunEnd(lines, i);
         if (tr) {
           const [hdr, j] = tr;
@@ -751,8 +991,10 @@
     }
     function rangeToHtml(md) {
       const lines = md.split("\n"); let html = "", i = 0, listType = null, buf = [];
+      const hidden = commentLines(lines);
       const flush = () => { if (listType) { html += "<" + listType + ">" + buf.join("") + "</" + listType + ">"; listType = null; buf = []; } };
       while (i < lines.length) {
+        if (hidden[i]) { i++; continue; }   // <!--…--> comment block: never exported
         const tr = tableRunEnd(lines, i);
         if (tr) {
           flush(); const [hdr, j] = tr;
@@ -818,6 +1060,12 @@
     surface.addEventListener("keydown", e => {
       if (gridOpen) {
         if (e.key === "Escape") { e.preventDefault(); closeGrid(); return; }
+        // arrow keys grow/shrink the selection: rows run vertically, columns horizontally
+        if (e.key === "ArrowDown")  { e.preventDefault(); gR = Math.min(GMAX, gR + 1); paintGrid(); return; }
+        if (e.key === "ArrowUp")    { e.preventDefault(); gR = Math.max(1, gR - 1); paintGrid(); return; }
+        if (e.key === "ArrowRight") { e.preventDefault(); gC = Math.min(GMAX, gC + 1); paintGrid(); return; }
+        if (e.key === "ArrowLeft")  { e.preventDefault(); gC = Math.max(1, gC - 1); paintGrid(); return; }
+        if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); insertTable(gR, gC); return; }
       }
       if (menuOpen) {
         if (e.key === "ArrowDown") { e.preventDefault(); if (items.length) { msel = (msel + 1) % items.length; highlightMenu(); } return; }
@@ -833,7 +1081,18 @@
       if (mod && (e.key === "s" || e.key === "S")) { e.preventDefault(); onSave(); return; }
       // DOCS-4 — Option+/ opens the command palette. e.code dodges the Mac dead-key (⌥/ = "÷").
       if (e.altKey && !e.metaKey && !e.ctrlKey && (e.code === "Slash" || e.key === "/")) { e.preventDefault(); openPalette(); return; }
-      if (e.key === "Tab") { e.preventDefault(); const c = readSel() || [selA, selB]; edit(c[0], c[1], "  ", c[0] + 2, "type"); return; }
+      // DOCS-WC — Cmd/Ctrl+Shift+C opens the Google-Docs-style word-count modal.
+      if (mod && e.shiftKey && (e.code === "KeyC" || e.key === "c" || e.key === "C")) { e.preventDefault(); openWordCount(); return; }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        const c = readSel() || [selA, selB], lr = curLineRange(c[0]), ln = text.slice(lr[0], lr[1]);
+        if (/^ *([-*+]\s+|\d+\.\s+)/.test(ln)) {                      // in a list item → indent / outdent the line
+          const lead = (ln.match(/^ */) || [""])[0].length;
+          if (e.shiftKey) { const strip = Math.min(LIST_INDENT, lead); if (strip) edit(lr[0], lr[0] + strip, "", Math.max(lr[0], c[0] - strip), "block"); }
+          else if (lead < LIST_INDENT * 6) edit(lr[0], lr[0], " ".repeat(LIST_INDENT), c[0] + LIST_INDENT, "block");
+        } else if (!e.shiftKey) { edit(c[0], c[1], "  ", c[0] + 2, "type"); }
+        return;
+      }
     });
     function wrap(mk) {
       const c = readSel() || [selA, selB], a = c[0], b = c[1];
@@ -1422,6 +1681,131 @@
     function isTOCOpen() { return tocOpen; }
     if (tocEnabled) { buildTocDom(); tocRefresh = function () { if (tocOpen) refreshTOC(); }; }
 
+    /* ======================================================================
+       DOCS-WC — word count. A passive "N words" pill at the editor stage's
+       bottom-left (toggleable + persisted) plus a Google-Docs-style modal on
+       Cmd/Ctrl+Shift+C with Words / Characters / Characters-excluding-spaces.
+       EVERY count runs on the CLEANED text — markdown marks, list bullets &
+       numbers, %%comments%%, <!--comments-->, @{…} chips→labels, and @{s:…}
+       style spans are all stripped — so HIDDEN FORMATTING never inflates the
+       numbers. Opt out with opts.wordCount === false. Styled by --mde-* tokens
+       (the body-mounted pill/modal inherit the active theme via <html>). ====== */
+    const wcEnabled = opts.wordCount !== false;
+    let wcRoot = null, wcPill = null, wcModal = null, wcScrim = null, wcCheck = null;
+    let wcPlaceRaf = 0, wcCountRaf = 0;
+    function wcLoadVisible() { try { const v = localStorage.getItem("mde-wc-pill"); return v === null ? true : v === "1"; } catch (_) { return true; } }
+    let wcVisible = wcLoadVisible();
+    function wcSaveVisible(v) { try { localStorage.setItem("mde-wc-pill", v ? "1" : "0"); } catch (_) {} }
+
+    // Clean text for counting. Mirrors rangeToPlain but ALSO drops list bullets/
+    // numbers and structural lines (rules, blanks) — Google Docs excludes those
+    // from its counts too. Reuses the same renderer primitives, so chips, styles,
+    // and comments are handled identically to the clean copy-out path.
+    function wcPlain() {
+      const lines = text.split("\n"), out = []; let i = 0;
+      const hidden = commentLines(lines);
+      while (i < lines.length) {
+        if (hidden[i]) { i++; continue; }                    // <!--…--> comment block — never counted
+        const tr = tableRunEnd(lines, i);
+        if (tr) {
+          const [hdr, j] = tr;
+          out.push(splitCells(lines[hdr]).map(inlineToPlain).join(" "));
+          for (let k = hdr + 2; k < j; k++) out.push(splitCells(lines[k]).map(inlineToPlain).join(" "));
+          i = j; continue;
+        }
+        const ln = lines[i], b = classify(ln, 0, ln.length);
+        if (b.type === "meta" || b.type === "hr" || b.type === "blank") { i++; continue; }   // %%…%% / --- / empty
+        // headings/quotes/bullets/numbers: keep the CONTENT, drop the marker prefix
+        out.push(inlineToPlain((b.type === "h" || b.type === "bq" || b.type === "li" || b.type === "ol") ? ln.slice(b.mlen) : ln));
+        i++;
+      }
+      return out.join("\n");
+    }
+    function wcCounts() {
+      const p = wcPlain();
+      const words = (p.match(/\S+/g) || []).length;        // runs of non-whitespace
+      const chars = p.replace(/\n/g, "").length;           // chars incl. spaces; newlines (paragraph breaks) not counted
+      const charsNoSpaces = p.replace(/\s/g, "").length;   // strip every whitespace
+      return { words: words, chars: chars, charsNoSpaces: charsNoSpaces };
+    }
+    function wcFmt(n) { try { return n.toLocaleString(); } catch (_) { return String(n); } }
+
+    function buildWcDom() {
+      wcRoot = document.createElement("div"); wcRoot.className = "mde-wc-root";
+      wcPill = document.createElement("button");
+      wcPill.type = "button"; wcPill.className = "mde-wc-pill";
+      wcPill.title = "Word count (" + (navigator.platform && /Mac/.test(navigator.platform) ? "⇧⌘C" : "Ctrl+Shift+C") + ")";
+      wcPill.setAttribute("aria-label", "Word count");
+      wcPill.addEventListener("click", function (e) { e.preventDefault(); openWordCount(); });
+      wcRoot.appendChild(wcPill);
+      document.body.appendChild(wcRoot);
+      window.addEventListener("scroll", onWcReflow, true);
+      window.addEventListener("resize", onWcReflow);
+      placeWc(); updateWordCount();
+    }
+    function onWcReflow() { if (wcPlaceRaf) return; wcPlaceRaf = requestAnimationFrame(function () { wcPlaceRaf = 0; placeWc(); }); }
+    // Overlay the stage's VISIBLE band (same approach as the TOC root) so the pill
+    // pins to the bottom-left of the editing area whether the stage scrolls
+    // internally or the whole window scrolls.
+    function placeWc() {
+      if (!wcRoot || !stage) return;
+      const r = stage.getBoundingClientRect();
+      const top = Math.max(0, r.top), bottom = Math.min(window.innerHeight, r.bottom);
+      wcRoot.style.left = r.left + "px"; wcRoot.style.width = r.width + "px";
+      wcRoot.style.top = top + "px"; wcRoot.style.height = Math.max(0, bottom - top) + "px";
+    }
+    function updateWordCount() {
+      if (!wcPill) return;
+      const n = wcCounts().words;
+      wcPill.textContent = wcFmt(n) + (n === 1 ? " word" : " words");
+      wcPill.classList.toggle("hidden", !wcVisible);
+    }
+    // Coalesce per-keystroke renders into one recompute per frame.
+    function scheduleWcCount() { if (wcCountRaf) return; wcCountRaf = requestAnimationFrame(function () { wcCountRaf = 0; updateWordCount(); }); }
+
+    function buildWcModal() {
+      wcScrim = document.createElement("div"); wcScrim.className = "mde-wcmodal-scrim";
+      wcModal = document.createElement("div"); wcModal.className = "mde-wcmodal";
+      wcModal.setAttribute("role", "dialog"); wcModal.setAttribute("aria-modal", "true"); wcModal.setAttribute("aria-label", "Word count");
+      wcModal.innerHTML =
+        '<div class="mde-wc-h">Word Count</div>' +
+        '<div class="mde-wc-rows">' +
+          '<div class="mde-wc-row"><span class="mde-wc-k">Words</span><span class="mde-wc-v" data-wc="words">0</span></div>' +
+          '<div class="mde-wc-row"><span class="mde-wc-k">Characters</span><span class="mde-wc-v" data-wc="chars">0</span></div>' +
+          '<div class="mde-wc-row"><span class="mde-wc-k">Characters excluding spaces</span><span class="mde-wc-v" data-wc="charsNoSpaces">0</span></div>' +
+        '</div>' +
+        '<label class="mde-wc-toggle"><input type="checkbox" class="mde-wc-cb"><span>Display word count while typing</span></label>' +
+        '<div class="mde-wc-actions"><button type="button" class="mde-wc-cancel">Cancel</button><button type="button" class="mde-wc-ok">OK</button></div>';
+      wcCheck = wcModal.querySelector(".mde-wc-cb");
+      wcModal.querySelector(".mde-wc-cancel").addEventListener("click", function (e) { e.preventDefault(); closeWordCount(false); });
+      wcModal.querySelector(".mde-wc-ok").addEventListener("click", function (e) { e.preventDefault(); closeWordCount(true); });
+      wcScrim.addEventListener("mousedown", function (e) { if (e.target === wcScrim) { e.preventDefault(); closeWordCount(false); } });
+      wcScrim.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") { e.preventDefault(); closeWordCount(false); }
+        else if (e.key === "Enter") { e.preventDefault(); closeWordCount(true); }
+      });
+      wcScrim.appendChild(wcModal);
+      document.body.appendChild(wcScrim);
+    }
+    function openWordCount() {
+      if (!wcEnabled) return;
+      if (!wcModal) buildWcModal();
+      const c = wcCounts();
+      wcModal.querySelector('[data-wc="words"]').textContent = wcFmt(c.words);
+      wcModal.querySelector('[data-wc="chars"]').textContent = wcFmt(c.chars);
+      wcModal.querySelector('[data-wc="charsNoSpaces"]').textContent = wcFmt(c.charsNoSpaces);
+      wcCheck.checked = wcVisible;
+      wcScrim.classList.add("open");
+      const ok = wcModal.querySelector(".mde-wc-ok"); if (ok && ok.focus) ok.focus();
+    }
+    function closeWordCount(commit) {
+      if (!wcScrim) return;
+      if (commit) { wcVisible = !!wcCheck.checked; wcSaveVisible(wcVisible); updateWordCount(); }
+      wcScrim.classList.remove("open");
+      surface.focus();
+    }
+    if (wcEnabled) { buildWcDom(); wcRefresh = scheduleWcCount; }
+
     /* A small whitelisted command API so a HOST TOOLBAR can run the essential
        editing actions (the same internals the palette drives). Keeps formatting
        logic in one place; the host just paints buttons and calls ed.cmd("bold"). */
@@ -1464,9 +1848,14 @@
       // DOCS-TOC — table of contents (H1/H2). Hide the built-in button with opts.tocButton:false
       // and drive it from a host toolbar via these.
       toggleTOC, openTOC, closeTOC, isTOCOpen, refreshTOC,
-      // Fade the floating TOC button out of the way (e.g. while a host overlay/drawer
-      // covers the editor) — the button lives on a body-mounted root the host can't reach.
-      setTocButtonHidden(b) { if (tocRoot) tocRoot.classList.toggle("rail-open", !!b); },
+      // Fade the floating TOC button + word-count pill out of the way (e.g. while a host
+      // overlay/drawer covers the editor) — they live on body-mounted roots the host can't reach.
+      setTocButtonHidden(b) { if (tocRoot) tocRoot.classList.toggle("rail-open", !!b); if (wcRoot) wcRoot.classList.toggle("rail-open", !!b); },
+      // DOCS-WC — word count over the CLEANED text (no markdown/chips/comments/styles).
+      // openWordCount() shows the modal; wordCount() returns {words, chars, charsNoSpaces};
+      // setWordCountVisible() toggles the passive bottom-left pill (persists the choice).
+      openWordCount, wordCount: wcCounts,
+      setWordCountVisible(v) { wcVisible = !!v; wcSaveVisible(wcVisible); updateWordCount(); },
       // Whitelisted editing commands for a host toolbar (bold/italic/headings/lists/link/table/
       // undo/redo/…). The same internals the command palette uses.
       cmd,

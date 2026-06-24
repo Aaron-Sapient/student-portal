@@ -75,3 +75,5 @@ supabase/.temp/
 
 # canonical local notes folder — handoffs, build plans, scratch (never commit)
 /_notes/
+# dated working-notes folders (screenshots, fix lists) — local only
+/June 19 2026/

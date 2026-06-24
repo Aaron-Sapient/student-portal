@@ -15,8 +15,7 @@ const DEV_TABS = [
   { href: '/developer/compliance', label: 'Compliance', sym: 'fact_check' },
   { href: '/developer/blocks', label: 'Blocks', sym: 'event_busy' },
   { href: '/developer/scoring', label: 'Scoring', sym: 'tune' },
-  { href: '/developer/documents', label: 'Docs', sym: 'edit_document' },
-  { href: '/developer/writing', label: 'Writing', sym: 'stylus_note' },
+  { href: '/developer/students', label: 'Students', sym: 'group' },
 ];
 
 function DesktopRail({ tabs }) {

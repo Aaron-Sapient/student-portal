@@ -1,7 +1,8 @@
-import StudentScorePage from '@/app/developer/(panel)/scoring/[sheetId]/page';
+import StudentHub from '@/app/developer/(panel)/students/StudentHub';
 
-// Same per-student scoring page as /developer/scoring/[sheetId]; the component
-// derives its back-link from the current pathname, so it returns to /dev/students.
+// The per-student hub on the Ryan-facing /dev surface. StudentHub derives its
+// back-link (/dev/students) and full-scoring link (/dev/scoring/<id>) from the
+// pathname, so the one component serves both surfaces.
 export default function DevStudentPage() {
-  return <StudentScorePage />;
+  return <StudentHub />;
 }

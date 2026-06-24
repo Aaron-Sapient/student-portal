@@ -10,9 +10,11 @@ export const SCORES_TAB = '📊 Scores';
 
 const ZONE = 'America/Los_Angeles';
 
-// Master-roster rows: name (A), grade (B), portal-sheet URL (G). Every write
+// Master-roster rows: name (A), class (B), portal-sheet URL (G). Every write
 // path validates the incoming sheetId against this list — the id itself
-// carries no authority.
+// carries no authority. `grade` keeps the raw Class cell ("'27") for back-compat;
+// `classYear` is the 4-digit graduation year derived from it (e.g. 2027) for the
+// Students-tab cards. Both come free from the single A:G read — no per-student fan-out.
 export async function listRoster(sheets) {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: process.env.MASTER_SHEET_ID,
@@ -23,7 +25,10 @@ export async function listRoster(sheets) {
     const name = String(r?.[0] ?? '').trim();
     const m = String(r?.[6] ?? '').match(/\/d\/([a-zA-Z0-9-_]+)/);
     if (!name || !m) continue;
-    roster.push({ name, grade: String(r?.[1] ?? '').trim(), sheetId: m[1] });
+    const klass = String(r?.[1] ?? '').trim();
+    const ym = klass.match(/(\d{2})\s*$/);
+    const classYear = ym ? 2000 + Number(ym[1]) : null;
+    roster.push({ name, grade: klass, classYear, sheetId: m[1] });
   }
   return roster;
 }
@@ -64,6 +69,42 @@ export function getWriteSheets() {
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
   return google.sheets({ version: 'v4', auth });
+}
+
+// The two check-in form-log tabs in the Master spreadsheet (A=Timestamp, B=Name).
+// CheckinForm = Ryan's form, A_CheckinForm = Aaron's. Same source the per-student
+// scores route reads; kept here so the roster can reuse it without duplicating
+// the tab names.
+export const CHECKIN_FORM_TABS = [
+  { tab: 'CheckinForm', who: 'Ryan' },
+  { tab: 'A_CheckinForm', who: 'Aaron' },
+];
+
+export const normName = (s) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+// Map normName(student) → latest check-in ISO date (yyyy-MM-dd) across BOTH form
+// tabs. One batchGet on the Master sheet; the roster joins this by normalized
+// name (the same join the scores route uses). Never throws — a missing tab just
+// contributes nothing.
+export async function readLatestCheckins(sheets) {
+  const res = await sheets.spreadsheets.values.batchGet({
+    spreadsheetId: process.env.MASTER_SHEET_ID,
+    ranges: CHECKIN_FORM_TABS.map((t) => `${t.tab}!A:B`),
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+  const byName = new Map();
+  for (const vr of res.data.valueRanges || []) {
+    for (const r of (vr.values || []).slice(1)) {
+      const key = normName(r?.[1]);
+      if (!key) continue;
+      const iso = cellToISODate(r?.[0]);
+      if (!iso) continue;
+      const prev = byName.get(key);
+      // ISO yyyy-MM-dd strings compare lexically, so this keeps the latest.
+      if (!prev || iso > prev) byName.set(key, iso);
+    }
+  }
+  return byName;
 }
 
 // UNFORMATTED_VALUE cell → ISO date or null. Handles Sheets serial numbers and

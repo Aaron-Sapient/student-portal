@@ -123,10 +123,12 @@ export default function WriteApp() {
   }, [docId]);
 
   // The doc name is no longer shown in the chromeless UI, so surface it in the
-  // browser tab title — the open tab still says which document this is.
+  // browser tab title as "Student · Doc" — so an admin with several students'
+  // essays open can tell the tabs apart. Falls back to just the doc name.
   useEffect(() => {
     const label = state.data?.doc?.label;
-    if (label) document.title = `${label} · Writing`;
+    const who = state.data?.student?.name;
+    if (label) document.title = who ? `${who} · ${label}` : `${label} · Writing`;
   }, [state.data]);
 
   // ── saving ───────────────────────────────────────────────────────────────────

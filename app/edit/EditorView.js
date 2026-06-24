@@ -72,6 +72,11 @@ export default function EditorView() {
   const dirty = html !== savedHtml;
   const title = useMemo(() => pretty(filename), [filename]);
 
+  // Name the browser tab after the document so open editor tabs are tellable apart.
+  useEffect(() => {
+    if (title) document.title = `${title} · Writing`;
+  }, [title]);
+
   useEffect(() => {
     if (!filename) {
       setState({ loading: false, error: 'No file specified.' });

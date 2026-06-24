@@ -41,6 +41,11 @@ const ALL_STEPS = [
   { name: 'roster (students + guardians + soft-deactivate)', script: 'backfillStudents.cjs', args: ['--reconcile'] },
   { name: 'score_params', script: 'backfillScoreParams.cjs', args: [] },
   { name: 'scores (live-safe upsert + prune)', script: 'reconcileScores.cjs', args: [], heavy: true },
+  // Students-tab hub mirror (intended major + 📆 Meetings agenda). Heavy
+  // per-student fan-out; read-only one-way (never writes the sheet). Requires
+  // supabase/students_hub_schema.sql applied first, or its upserts fail this step
+  // (other steps still run). See scripts/mirrorStudentHub.cjs.
+  { name: 'student hub (profiles + meetings)', script: 'mirrorStudentHub.cjs', args: [], heavy: true },
 ];
 // --fast skips the heavy per-student passes (just the cheap Master-tab reconciles).
 const STEPS = FAST ? ALL_STEPS.filter((s) => !s.heavy) : ALL_STEPS;
