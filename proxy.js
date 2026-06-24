@@ -6,7 +6,7 @@ import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 // now, shrink it later"). Auth, when a session DOES exist, still resolves for
 // proper attribution (lib/writingAuth.resolveActorOrLink). The student-MAP route
 // (/api/writing, keyed by the semi-enumerable Sheet id) is deliberately NOT here.
-const isPublicRoute = createRouteMatcher(['/sign-in(.*)', '/sso-callback(.*)', '/parents(.*)', '/api/parentCheckin', '/checkin-approval(.*)', '/api/checkinDecision', '/write(.*)', '/api/writing/doc', '/api/writing/save', '/api/writing/tab', '/api/writing/history'])
+const isPublicRoute = createRouteMatcher(['/sign-in(.*)', '/sso-callback(.*)', '/parents(.*)', '/api/parentCheckin', '/checkin-approval(.*)', '/api/checkinDecision', '/write(.*)', '/api/writing/doc', '/api/writing/save', '/api/writing/tab', '/api/writing/history', '/sat(.*)', '/api/sat/init', '/api/sat/quiz', '/api/sat/submit'])
 
 export default clerkMiddleware(async (auth, request) => {
   if (!isPublicRoute(request)) {
