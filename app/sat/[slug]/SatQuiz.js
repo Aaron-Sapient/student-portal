@@ -122,11 +122,62 @@ function Results({ title, result, alreadyTaken }) {
   );
 }
 
+function GrammarResults({ title, result, alreadyTaken }) {
+  return (
+    <div>
+      <header className="portal-rise mb-6">
+        <p className="text-xs font-bold uppercase tracking-[0.18em] text-terracotta">{title}</p>
+        <h1 className="mt-1 font-display text-3xl font-semibold text-ink">Your results</h1>
+        {alreadyTaken && (
+          <p className="mt-2 text-sm text-ink-soft">
+            You&apos;ve already completed this quiz — here&apos;s how you did.
+          </p>
+        )}
+      </header>
+
+      <div className="portal-rise mb-7" style={{ animationDelay: '60ms' }}>
+        <ScoreCard label="Verb confusion" score={result.vocab_score} total={result.total} />
+      </div>
+
+      <h2 className="portal-rise mb-3 text-[11px] font-bold uppercase tracking-[0.14em] text-ink-faint" style={{ animationDelay: '110ms' }}>
+        Review
+      </h2>
+      <div className="space-y-3">
+        {(result.answers || []).map((r, i) => (
+          <div
+            key={r.id || i}
+            className="portal-rise neu-chip rounded-3xl p-4"
+            style={{ animationDelay: `${150 + i * 50}ms` }}
+          >
+            <p className="font-display text-base font-semibold leading-snug text-ink">{r.title}</p>
+            {r.detail && <p className="mt-1 text-xs text-ink-faint">{r.detail}</p>}
+            <div className="mt-2 text-sm">
+              <p className={r.correct ? 'text-moss' : 'text-terracotta-deep'}>
+                {r.correct ? '✓' : '✗'} Your answer: {r.selectedLabel || '—'}
+              </p>
+              {!r.correct && <p className="text-ink-soft">Correct: {r.correctLabel}</p>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-8 text-center">
+        <Link href="/sat" className="text-sm font-semibold text-terracotta-deep">
+          ← Back to all quizzes
+        </Link>
+      </div>
+    </div>
+  );
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
+const needsConn = (q) => Array.isArray(q.connotationOptions) && q.connotationOptions.length > 0;
+
 export default function SatQuiz({ slug }) {
   const [status, setStatus] = useState('loading'); // loading | pick | taking | done | error
   const [students, setStudents] = useState([]);
   const [title, setTitle] = useState('Quiz');
+  const [kind, setKind] = useState('vocab');
   const [studentId, setStudentId] = useState('');
   const [questions, setQuestions] = useState([]);
   const [answers, setAnswers] = useState({}); // { [qid]: { selectedKey, selectedConnotation } }
@@ -146,7 +197,10 @@ export default function SatQuiz({ slug }) {
         if (!res.ok) throw new Error(data.error || 'Failed to load');
         setStudents(data.students || []);
         const q = (data.quizzes || []).find((x) => x.slug === slug);
-        if (q) setTitle(q.title);
+        if (q) {
+          setTitle(q.title);
+          if (q.kind) setKind(q.kind);
+        }
         setStatus('pick');
       } catch (err) {
         if (!cancelled) {
@@ -176,6 +230,7 @@ export default function SatQuiz({ slug }) {
         setStatus('done');
         return;
       }
+      if (data.kind) setKind(data.kind);
       setQuestions(data.questions || []);
       setAnswers({});
       setStatus('taking');
@@ -193,7 +248,9 @@ export default function SatQuiz({ slug }) {
 
   const complete =
     questions.length > 0 &&
-    questions.every((q) => answers[q.id]?.selectedKey && answers[q.id]?.selectedConnotation);
+    questions.every(
+      (q) => answers[q.id]?.selectedKey && (!needsConn(q) || answers[q.id]?.selectedConnotation)
+    );
 
   const submit = useCallback(async () => {
     if (!complete) return;
@@ -243,7 +300,11 @@ export default function SatQuiz({ slug }) {
   }
 
   if (status === 'done' && result) {
-    return <Results title={title} result={result} alreadyTaken={alreadyTaken} />;
+    return (result.kind || kind) === 'grammar' ? (
+      <GrammarResults title={title} result={result} alreadyTaken={alreadyTaken} />
+    ) : (
+      <Results title={title} result={result} alreadyTaken={alreadyTaken} />
+    );
   }
 
   if (status === 'pick') {
@@ -303,7 +364,13 @@ export default function SatQuiz({ slug }) {
           Answer all {questions.length}
         </h1>
         <p className="mt-2 text-sm text-ink-soft">
-          For each, choose the answer <em>and</em> its connotation.
+          {kind === 'grammar' ? (
+            'Pick the best answer for each question.'
+          ) : (
+            <>
+              For each, choose the answer <em>and</em> its connotation.
+            </>
+          )}
         </p>
       </header>
 
@@ -340,29 +407,31 @@ export default function SatQuiz({ slug }) {
                 ))}
               </div>
 
-              <div className="mt-4">
-                <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-ink-faint">
-                  Connotation
-                </p>
-                <div className="grid grid-cols-3 gap-2">
-                  {(q.connotationOptions || ['positive', 'neutral', 'negative']).map((c) => {
-                    const sel = a.selectedConnotation === c;
-                    return (
-                      <button
-                        key={c}
-                        type="button"
-                        aria-pressed={sel}
-                        onClick={() => setConn(q.id, c)}
-                        className={`rounded-full px-3 py-2 text-xs font-semibold transition-all active:scale-95 ${
-                          sel ? 'neu-raised text-terracotta-deep' : 'neu-chip text-ink-faint'
-                        }`}
-                      >
-                        {cap(c)}
-                      </button>
-                    );
-                  })}
+              {needsConn(q) && (
+                <div className="mt-4">
+                  <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-ink-faint">
+                    Connotation
+                  </p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {q.connotationOptions.map((c) => {
+                      const sel = a.selectedConnotation === c;
+                      return (
+                        <button
+                          key={c}
+                          type="button"
+                          aria-pressed={sel}
+                          onClick={() => setConn(q.id, c)}
+                          className={`rounded-full px-3 py-2 text-xs font-semibold transition-all active:scale-95 ${
+                            sel ? 'neu-raised text-terracotta-deep' : 'neu-chip text-ink-faint'
+                          }`}
+                        >
+                          {cap(c)}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           );
         })}

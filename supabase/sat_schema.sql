@@ -33,15 +33,16 @@ create table if not exists sat_quizzes (
 alter table sat_quizzes enable row level security;
 
 -- ── Saved scores (one attempt per student per quiz) ─────────────────────────
--- vocab_score + connotation_score are the two separate sub-scores; total is the
--- question count. answers holds the full per-question review record so a locked
--- (already-taken) attempt can be re-rendered without recomputation.
+-- vocab_score is the primary score for any kind; connotation_score is vocab's
+-- SECOND sub-score and is null for kinds with a single axis (grammar). total is
+-- the question count. answers holds the full per-question review record so a
+-- locked (already-taken) attempt can be re-rendered without recomputation.
 create table if not exists sat_attempts (
   id                uuid        primary key default gen_random_uuid(),
   student_id        uuid        not null references sat_students(id) on delete cascade,
   quiz_id           uuid        not null references sat_quizzes(id) on delete cascade,
   vocab_score       int         not null,
-  connotation_score int         not null,
+  connotation_score int,                      -- null for single-axis kinds (grammar)
   total             int         not null,
   answers           jsonb       not null,
   created_at        timestamptz not null default now(),
@@ -49,9 +50,12 @@ create table if not exists sat_attempts (
 );
 create index if not exists sat_attempts_student_idx on sat_attempts (student_id);
 alter table sat_attempts enable row level security;
+-- Migrate an already-deployed table (created when connotation_score was NOT NULL).
+alter table sat_attempts alter column connotation_score drop not null;
 
 -- ── Seed: roster ────────────────────────────────────────────────────────────
 insert into sat_students (name) values
+  ('Aaron Blumenthal'),      -- instructor (Aaron) — manual QA of each quiz, 2026-06-24
   ('Aarav Jain'),
   ('Doudou Shen'),
   ('Riti Nalabolu'),
@@ -74,4 +78,23 @@ insert into sat_quizzes (slug, title, kind, content, sort_order) values
     {"word":"Frenetic","definition":"Frenzied and uncontrolled","connotation":"negative"},
     {"word":"Garrulous","definition":"Prone to talking at length about unimportant things","connotation":"negative"}
   ]'::jsonb, 1)
+on conflict (slug) do nothing;
+
+-- ── Seed: Grammar Quiz 1 (Verb Confusion) ───────────────────────────────────
+-- kind='grammar'. content = ordered array of question items (order preserved by
+-- buildGrammarQuiz; see lib/satQuiz.js for the shape + scoring).
+--   classify : { id, type:'classify', word, answer }          answer ∈ verb | not_verb
+--   fill     : { id, type:'fill', sentence, options[], answer } answer = the literal option text
+--   odd      : { id, type:'odd', options[], answer }            answer = the one real verb (odd one out)
+-- 3 classify (verb vs not-verb), 3 fill-in-the-blank (correct form), 1 odd-one-out 3v1.
+insert into sat_quizzes (slug, title, kind, content, sort_order) values
+  ('grammar-1', 'Grammar Quiz 1', 'grammar', '[
+    {"id":"c1","type":"classify","word":"thinks","answer":"verb"},
+    {"id":"c2","type":"classify","word":"thinking","answer":"not_verb"},
+    {"id":"c3","type":"classify","word":"eaten","answer":"not_verb"},
+    {"id":"f1","type":"fill","sentence":"James, ______ toward the ice cream truck, tripped on his shoelaces.","options":["running","ran","runs","run"],"answer":"running"},
+    {"id":"f2","type":"fill","sentence":"The old bridge ______ under the weight of the heavy truck.","options":["collapsed","collapsing","to collapse","having collapsed"],"answer":"collapsed"},
+    {"id":"f3","type":"fill","sentence":"The students ______ in the front row answered every question correctly.","options":["sitting","sat","sit","will sit"],"answer":"sitting"},
+    {"id":"o1","type":"odd","options":["to swim","running","to bake","writes"],"answer":"writes"}
+  ]'::jsonb, 2)
 on conflict (slug) do nothing;

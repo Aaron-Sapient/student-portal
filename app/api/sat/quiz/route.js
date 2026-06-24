@@ -3,7 +3,7 @@
 //     client renders the locked review (one attempt per student per quiz).
 //   - Otherwise → return a freshly shuffled, answer-key-free quiz.
 import { getSupabaseClient, SAT_QUIZZES, SAT_ATTEMPTS } from '@/lib/supabase'
-import { buildVocabQuiz } from '@/lib/satQuiz'
+import { buildVocabQuiz, buildGrammarQuiz } from '@/lib/satQuiz'
 
 export async function GET(request) {
   try {
@@ -32,16 +32,21 @@ export async function GET(request) {
         return Response.json({
           slug: quiz.slug,
           title: quiz.title,
+          kind: quiz.kind,
           alreadyTaken: true,
-          result: attempt,
+          result: { ...attempt, kind: quiz.kind },
         })
       }
     }
 
-    if (quiz.kind !== 'vocab') {
+    let questions
+    if (quiz.kind === 'vocab') {
+      ;({ questions } = buildVocabQuiz(quiz.content))
+    } else if (quiz.kind === 'grammar') {
+      ;({ questions } = buildGrammarQuiz(quiz.content))
+    } else {
       return Response.json({ error: `Unsupported quiz kind: ${quiz.kind}` }, { status: 400 })
     }
-    const { questions } = buildVocabQuiz(quiz.content)
     return Response.json({ slug: quiz.slug, title: quiz.title, kind: quiz.kind, questions })
   } catch (err) {
     console.error('sat/quiz error:', err)
