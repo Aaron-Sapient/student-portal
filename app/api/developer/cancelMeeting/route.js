@@ -2,7 +2,7 @@ import { google } from 'googleapis';
 import { requireDeveloper } from '@/lib/developerAuth';
 import { getInstructor } from '@/lib/instructors';
 import { sendStudentCancellationEmail } from '@/lib/studentEmails';
-import { cancelBookingByEventId } from '@/lib/seniors';
+import { cancelBookingByEventId, cancelOneoffByEventId } from '@/lib/seniors';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -37,8 +37,10 @@ export async function POST(request) {
 
     await calendar.events.delete({ calendarId: instructor.calendarId, eventId });
 
-    // Return any senior token tied to this event (no-op for non-senior events).
+    // Return any senior token tied to this event — weekly grant OR one-off track
+    // (both no-op for non-matching events).
     await cancelBookingByEventId(eventId);
+    await cancelOneoffByEventId(eventId);
 
     // Restore the student's booking token. Lookup by studentEmail (admin is logged in,
     // not the student — so we cannot use sessionClaims.email like the student-facing route does).

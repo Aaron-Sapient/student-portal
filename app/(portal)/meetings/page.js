@@ -260,10 +260,38 @@ function SeniorBanner({ s }) {
   );
 }
 
+// Admin-granted "extra meeting" cards — a separate, additive track from the weekly
+// cadence, so they live in their own labeled section (bookable even with no check-in).
+function OneoffSection({ oneoffs, loading, baseDelay = 110 }) {
+  if (!oneoffs || oneoffs.length === 0) return null;
+  return (
+    <section className="space-y-3.5">
+      <p className="portal-rise px-1 text-xs font-semibold uppercase tracking-[0.13em] text-ink-faint" style={{ animationDelay: '70ms' }}>
+        {oneoffs.length > 1 ? 'Extra meetings' : 'Extra meeting'}
+      </p>
+      {oneoffs.map((o, i) => (
+        <OptionCard
+          key={o.id || o.slug}
+          href={`/meetings/${o.slug}`}
+          icon={teacherIcon(o.slug)}
+          name={o.name}
+          role={`Granted just for you${o.window ? ` · ${fmtRange(o.window.start, o.window.end)}` : ''}`}
+          state={{ bookable: true, label: lenLabel(o.durations) }}
+          loading={loading}
+          delay={baseDelay + i * 60}
+          tag={{ label: 'One-off', tone: 'gold' }}
+        />
+      ))}
+    </section>
+  );
+}
+
 function SeniorBookSection({ data, loading }) {
   const s = data.senior;
+  const oneoffs = s.oneoffs || [];
 
-  // Gate 1 — the weekly check-in must be in before anything is bookable.
+  // Gate 1 — the weekly check-in must be in before the weekly meetings are bookable.
+  // A one-off grant is a SEPARATE track, so it still shows here even with no check-in.
   if (!s.checkedIn) {
     return (
       <div className="space-y-7">
@@ -280,6 +308,7 @@ function SeniorBookSection({ data, loading }) {
           </div>
           <ChevronRight className="h-5 w-5 shrink-0 text-ink-faint transition-transform group-hover:translate-x-0.5" strokeWidth={2.2} />
         </Link>
+        <OneoffSection oneoffs={oneoffs} loading={loading} baseDelay={170} />
       </div>
     );
   }
@@ -334,6 +363,7 @@ function SeniorBookSection({ data, loading }) {
           ))
         )}
       </section>
+      <OneoffSection oneoffs={oneoffs} loading={loading} />
     </div>
   );
 }

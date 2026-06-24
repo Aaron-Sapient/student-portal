@@ -82,7 +82,10 @@ export async function GET(request) {
       }
       const plan = seniorBookingPlan(senior, DateTime.now().setZone('America/Los_Angeles'), state);
       const mine = plan.meetings.find((m) => m.slug === instructor.slug);
-      if (!mine) {
+      // A separate, additive one-off grant can make this teacher bookable even when
+      // the weekly cadence doesn't (or there's no check-in this week at all).
+      const oneoff = (plan.oneoffs || []).find((o) => o.slug === instructor.slug);
+      if (!mine && !oneoff) {
         const isTeacher = instructor.slug === plan.primarySlug || instructor.slug === plan.secondarySlug;
         return Response.json({
           allowed: false,
@@ -92,17 +95,21 @@ export async function GET(request) {
             : 'That isn’t one of your assigned teachers.',
         });
       }
+      const durations = [
+        ...new Set([...(mine?.durations || []), ...(oneoff?.durations || [])]),
+      ].sort((a, b) => a - b);
       return Response.json({
         allowed: true,
         senior: true,
         studentName,
         instructor: instructor.slug,
-        durations: mine.durations,
-        // Calendar context (phase-week coloring lands in the next pass).
+        durations,
+        // Calendar context (phase-week coloring lands in the next pass). A pure
+        // one-off (no weekly meeting for this teacher) reads as kind 'oneoff'.
         phase: plan.phase,
         grantWindow: plan.grantWindow,
-        eligibleWindow: mine.window,
-        kind: mine.kind,
+        eligibleWindow: mine?.window || oneoff?.window,
+        kind: mine?.kind || 'oneoff',
       });
     }
 

@@ -154,6 +154,30 @@ create table if not exists senior_bookings (
 create index if not exists sb_grant_status_idx on senior_bookings (grant_id, status);
 create index if not exists sb_student_date_idx on senior_bookings (student_sheet_id, meeting_date);
 
+-- One-off "extra meeting" grants for seniors — a SEPARATE, ADDITIVE track from the
+-- deterministic weekly cadence above. An admin grants ONE extra meeting (teacher +
+-- length + window); canBookOnDate authorizes it as a FALLBACK after the weekly grant,
+-- so it never spends the package's weekly tokens / cross-meeting math. Consumed on its
+-- own ledger, returned (status→active, event cleared) on cancel. Full definition +
+-- rationale live in supabase/senior_oneoff_grants.sql (the file applied to the DB).
+create table if not exists senior_oneoff_grants (
+  id                uuid primary key default gen_random_uuid(),
+  student_sheet_id  text not null,
+  student_email     text,
+  teacher           text not null check (teacher in ('aaron','ryan')),
+  minutes           int  not null,
+  valid_from        date not null,
+  valid_through     date not null,
+  note              text,
+  granted_by        text,
+  granted_at        timestamptz not null default now(),
+  status            text not null default 'active' check (status in ('active','consumed','cancelled')),
+  calendar_event_id text,
+  created_at        timestamptz not null default now()
+);
+create index if not exists sog_student_status_idx on senior_oneoff_grants (student_sheet_id, status);
+create index if not exists sog_event_idx on senior_oneoff_grants (calendar_event_id);
+
 alter table md_documents          enable row level security;
 alter table md_tabs               enable row level security;
 alter table md_tab_revisions      enable row level security;
@@ -161,4 +185,5 @@ alter table student_college_lists enable row level security;
 alter table seniors               enable row level security;
 alter table senior_checkin_grants enable row level security;
 alter table senior_bookings       enable row level security;
+alter table senior_oneoff_grants  enable row level security;
 -- No policies on purpose: only the service role reaches these tables.

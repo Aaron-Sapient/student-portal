@@ -3,7 +3,7 @@ import { google } from 'googleapis';
 import nodemailer from 'nodemailer';
 import { DateTime } from 'luxon';
 import { getInstructor, validateInstructorHours } from '@/lib/instructors';
-import { getSeniorByEmail, loadSeniorBookingState, canBookOnDate, recordBooking } from '@/lib/seniors';
+import { getSeniorByEmail, loadSeniorBookingState, canBookOnDate, recordBooking, consumeOneoff } from '@/lib/seniors';
 
 // Human messages for canBookOnDate() rejection reasons (grant gates + package rules).
 const SENIOR_DENY = {
@@ -115,6 +115,7 @@ export async function POST(request) {
     // against the grant AFTER the calendar event is created (below).
     const senior = await getSeniorByEmail(email);
     let seniorGrant = null;
+    let seniorOneoffId = null;
     const seniorMins = parseInt(String(duration).replace(/\D/g, ''), 10);
     if (senior) {
       const state = await loadSeniorBookingState(senior);
@@ -125,7 +126,10 @@ export async function POST(request) {
           { status: 409 }
         );
       }
-      seniorGrant = state.grant;
+      // `via` tells us which ledger to charge: the weekly grant, or the separate
+      // additive one-off track (weekly is always tried first inside canBookOnDate).
+      if (verdict.via === 'oneoff') seniorOneoffId = verdict.oneoffId;
+      else seniorGrant = state.grant;
     }
 
     const agendaTrimmed = agenda?.trim() || '';
@@ -157,17 +161,22 @@ export async function POST(request) {
       },
     });
 
-    // Seniors: record the consumption against the grant. If the ledger write fails,
-    // delete the just-created event so we never leave an un-accounted booking.
-    if (senior && seniorGrant) {
+    // Seniors: record the consumption against whichever ledger authorized it (the
+    // weekly grant, or the separate one-off track). If the ledger write fails, delete
+    // the just-created event so we never leave an un-accounted booking.
+    if (senior && (seniorGrant || seniorOneoffId)) {
       try {
-        await recordBooking(seniorGrant, {
-          eventId: eventRes.data.id,
-          teacher: instructor.slug,
-          dt: startTime,
-          minutes: seniorMins,
-          studentSheetId: senior.student_sheet_id,
-        });
+        if (seniorOneoffId) {
+          await consumeOneoff(seniorOneoffId, eventRes.data.id);
+        } else {
+          await recordBooking(seniorGrant, {
+            eventId: eventRes.data.id,
+            teacher: instructor.slug,
+            dt: startTime,
+            minutes: seniorMins,
+            studentSheetId: senior.student_sheet_id,
+          });
+        }
       } catch (ledgerErr) {
         console.error('Senior booking ledger write failed — rolling back event:', ledgerErr);
         try {

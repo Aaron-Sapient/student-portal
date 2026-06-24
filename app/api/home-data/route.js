@@ -306,6 +306,9 @@ if (isART) {
       maxPerWeek: plan.maxPerWeek,
       bookable,
       meetings: plan.meetings, // [{ slug, name, kind, durations, window:{start,end} }]
+      // Separate, additive one-off "extra meeting" grants (admin-issued). Shown as
+      // their own cards; bookable even when there's no weekly check-in this week.
+      oneoffs: plan.oneoffs, // [{ id, slug, name, kind:'oneoff', minutes, durations, window }]
       thisWeek: plan.thisWeek, // actual current Saturday-week {start,end}
       grantWindow: plan.grantWindow,
       carriesCross: plan.carriesCross,

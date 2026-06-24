@@ -79,19 +79,26 @@ export async function GET(request) {
     let phaseWeek = null;
     if (senior) {
       seniorState = await loadSeniorBookingState(senior);
-      if (!seniorState.grant) return Response.json({ availableDates: [], phaseWeek: null });
-      const isCrossCalendar = instructor.slug === OTHER[senior.primary_teacher];
-      const monthKey = phaseWeekMonthKey(senior, seniorState.grant);
-      if (isCrossCalendar && monthKey && monthKey === monthStart.toFormat('yyyy-LL')) {
-        let pwStart = null;
-        let pwEnd = null;
-        for (let d = monthStart; d <= monthEnd; d = d.plus({ days: 1 })) {
-          if (weekOfMonth(d) === senior.phase) {
-            if (!pwStart) pwStart = d;
-            pwEnd = d;
+      // A separate one-off grant makes this teacher bookable even with no weekly
+      // grant this week — so only bail when there's neither.
+      const hasOneoff = (seniorState.oneoffs || []).some(
+        (o) => o.status === 'active' && o.teacher === instructor.slug
+      );
+      if (!seniorState.grant && !hasOneoff) return Response.json({ availableDates: [], phaseWeek: null });
+      if (seniorState.grant) {
+        const isCrossCalendar = instructor.slug === OTHER[senior.primary_teacher];
+        const monthKey = phaseWeekMonthKey(senior, seniorState.grant);
+        if (isCrossCalendar && monthKey && monthKey === monthStart.toFormat('yyyy-LL')) {
+          let pwStart = null;
+          let pwEnd = null;
+          for (let d = monthStart; d <= monthEnd; d = d.plus({ days: 1 })) {
+            if (weekOfMonth(d) === senior.phase) {
+              if (!pwStart) pwStart = d;
+              pwEnd = d;
+            }
           }
+          if (pwStart) phaseWeek = { start: pwStart.toISODate(), end: pwEnd.toISODate() };
         }
-        if (pwStart) phaseWeek = { start: pwStart.toISODate(), end: pwEnd.toISODate() };
       }
     }
 

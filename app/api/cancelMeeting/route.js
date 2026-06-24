@@ -3,7 +3,7 @@ import { google } from 'googleapis';
 import nodemailer from 'nodemailer';
 import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
-import { getSeniorByEmail, cancelBookingByEventId } from '@/lib/seniors';
+import { getSeniorByEmail, cancelBookingByEventId, cancelOneoffByEventId } from '@/lib/seniors';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -79,9 +79,11 @@ export async function POST(request) {
       eventId,
     });
 
-    // Seniors: return the consumed token to their check-in grant (no-op for
-    // non-senior events). On a reschedule the follow-up bookMeeting re-consumes it.
+    // Seniors: return the consumed token to their check-in grant OR their one-off
+    // track (both no-op for non-matching events). On a reschedule the follow-up
+    // bookMeeting re-consumes whichever applied.
     await cancelBookingByEventId(eventId);
+    await cancelOneoffByEventId(eventId);
 
     // Reset the instructor's booking column to 'no'
     const masterRes = await sheets.spreadsheets.values.get({

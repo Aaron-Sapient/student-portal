@@ -6,12 +6,15 @@ import { useParams, usePathname } from 'next/navigation';
 import { DateTime } from 'luxon';
 import {
   CalendarDays,
+  CalendarPlus,
+  Check,
   ChevronLeft,
   ChevronRight,
   ExternalLink,
   FilePen,
   FileText,
   GraduationCap,
+  Loader2,
 } from 'lucide-react';
 import { Halo } from '@/app/(portal)/neu';
 import { Badge, Card, EmptyNote, ErrorNote, PageHeader, TabSkeleton } from '../devUi';
@@ -49,6 +52,110 @@ const SUBS = [
   { key: 'ec', label: 'Extracurr.', cls: 'text-ochre' },
   { key: 'leadership', label: 'Leadership', cls: 'text-terracotta-soft' },
 ];
+
+// Grant a one-off meeting that bypasses the check-in gate and unlocks booking in the
+// student's Meetings tab. Regular students get a Master-sheet booking token; seniors
+// get a separate additive one-off grant (never touches their weekly cadence). The
+// server auto-detects which. Then the student is emailed a booking link.
+function Pill({ active, onClick, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex-1 rounded-2xl px-4 py-2.5 text-sm font-semibold transition active:scale-[0.98] ${
+        active ? 'bg-terracotta text-paper shadow-sm' : 'neu-chip text-ink'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function GrantMeetingCard({ sheetId, studentName }) {
+  const [instructor, setInstructor] = useState('ryan');
+  const [minutes, setMinutes] = useState(30);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null); // { ok, message } | { error }
+
+  async function grant() {
+    setBusy(true);
+    setResult(null);
+    try {
+      const res = await fetch('/api/admin/grantBooking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentSheetId: sheetId, instructor, minutes, note: note.trim() }),
+      });
+      const d = await res.json();
+      if (!res.ok || d.error) setResult({ error: d.error || 'Grant failed' });
+      else {
+        setResult({ ok: true, message: d.message });
+        setNote('');
+      }
+    } catch {
+      setResult({ error: 'Grant failed — try again.' });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card className="mt-5" delay={60}>
+      <h2 className="mb-1 flex items-center gap-2 font-display text-lg font-semibold text-ink">
+        <CalendarPlus className="h-5 w-5 text-terracotta" strokeWidth={2} /> Grant a one-off meeting
+      </h2>
+      <p className="mb-3 text-[12px] leading-relaxed text-ink-soft">
+        Unlocks booking now — no check-in needed. {studentName ? studentName.split(' ')[0] : 'The student'} gets
+        an email with a link to pick a time. Seniors get an extra meeting on a separate track from their weekly cadence.
+      </p>
+
+      <div className="space-y-2.5">
+        <div className="flex gap-2">
+          <Pill active={instructor === 'ryan'} onClick={() => setInstructor('ryan')}>Ryan</Pill>
+          <Pill active={instructor === 'aaron'} onClick={() => setInstructor('aaron')}>Aaron</Pill>
+        </div>
+        <div className="flex gap-2">
+          <Pill active={minutes === 15} onClick={() => setMinutes(15)}>15-min</Pill>
+          <Pill active={minutes === 30} onClick={() => setMinutes(30)}>30-min</Pill>
+        </div>
+        <input
+          type="text"
+          value={note}
+          onChange={(e) => setNote(e.target.value.slice(0, 80))}
+          placeholder="Reason (optional) — e.g. essay deadline this week"
+          className="neu-inset w-full rounded-2xl px-4 py-2.5 text-[14px] text-ink outline-none transition placeholder:text-ink-faint focus:ring-2 focus:ring-terracotta/25"
+        />
+      </div>
+
+      <button
+        type="button"
+        onClick={grant}
+        disabled={busy}
+        className="mt-3 flex w-full items-center justify-center gap-2 rounded-full bg-terracotta px-5 py-3 text-sm font-bold text-paper shadow-lift transition active:scale-[0.98] disabled:opacity-60"
+      >
+        {busy ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.4} /> Granting…
+          </>
+        ) : (
+          <>
+            <CalendarPlus className="h-4 w-4" strokeWidth={2.4} /> Grant {minutes}-min with{' '}
+            {instructor === 'ryan' ? 'Ryan' : 'Aaron'}
+          </>
+        )}
+      </button>
+
+      {result?.error && <p className="mt-2.5 text-[13px] font-medium text-terracotta-deep">{result.error}</p>}
+      {result?.ok && (
+        <p className="mt-2.5 flex items-start gap-1.5 text-[13px] font-medium text-moss">
+          <Check className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={2.4} />
+          <span>{result.message}</span>
+        </p>
+      )}
+    </Card>
+  );
+}
 
 export default function StudentHub() {
   const { sheetId } = useParams();
@@ -124,6 +231,9 @@ export default function StudentHub() {
           {hub.major || 'Major not set'}
         </p>
       </PageHeader>
+
+      {/* Grant a one-off meeting (bypasses the check-in gate) */}
+      <GrantMeetingCard sheetId={sheetId} studentName={hub.name} />
 
       {/* Scores summary */}
       <Card>

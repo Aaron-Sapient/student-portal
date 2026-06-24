@@ -166,6 +166,23 @@ function pureLogicTests() {
 
   console.log('\n── 5th week never a phase week (phase only 1-4) ──');
   ok(!assignedPlanForWeek({ primary_teacher: 'ryan', package: 'vip', phase: 4 }, D(29)).isPhaseWeek, 'phase-4 senior in wk5 is NOT a phase week');
+
+  console.log('\n── One-off "extra meeting" track (separate from weekly cadence) ──');
+  // A one-off bookable Jun 18–Jul 2 for a 15-min with Ryan. Window/teacher/length must all match.
+  const oo = { id: 'oo1', teacher: 'ryan', minutes: 15, valid_from: '2026-06-18', valid_through: '2026-07-02', status: 'active' };
+  // vipR: primary=ryan, NO active grant → weekly would deny everything.
+  const stOO = (oneoffs) => ({ grant: null, bookings: [], oneoffs });
+  ok(canBookOnDate(vipR, D(23), 'ryan', 15, stOO([oo])).via === 'oneoff', 'one-off authorizes a meeting with NO weekly grant (additive)');
+  ok(canBookOnDate(vipR, D(23), 'ryan', 30, stOO([oo])).ok === false, 'one-off does NOT match a different length (15 ≠ 30)');
+  ok(canBookOnDate(vipR, D(23), 'aaron', 15, stOO([oo])).ok === false, 'one-off does NOT match a different teacher');
+  ok(canBookOnDate(vipR, D(17), 'ryan', 15, stOO([oo])).ok === false, 'one-off respects its window (Jun 17 < valid_from)');
+  ok(canBookOnDate(vipR, D(23), 'ryan', 15, stOO([{ ...oo, status: 'consumed' }])).ok === false, 'a consumed one-off is not bookable');
+  // Weekly is tried FIRST: when the weekly grant already covers it, the weekly track is charged (additive, not a substitute).
+  ok(canBookOnDate(vipR, D(23), 'ryan', 30, { grant: vipGrant, bookings: [], oneoffs: [{ ...oo, minutes: 30 }] }).via === 'weekly', 'weekly cadence is spent before the one-off');
+  // It surfaces in the booking plan as a separate list, even with no weekly grant.
+  const ooPlan = buildSeniorBookingPlan(vipR, D(19), stOO([oo]));
+  ok(ooPlan.oneoffs.length === 1 && ooPlan.oneoffs[0].slug === 'ryan' && ooPlan.oneoffs[0].minutes === 15, 'plan surfaces the one-off as its own entry');
+  ok(ooPlan.meetings.length === 0, 'plan.meetings (weekly cadence) stays empty — one-off is NOT mixed in');
 }
 
 async function rosterTests(sb, live, get) {

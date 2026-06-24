@@ -409,6 +409,8 @@ export default function BookingFlow({ slug }) {
             )}
             {seniorMeta.kind === 'cross'
               ? `Monthly cross-meeting with ${bodyName}`
+              : seniorMeta.kind === 'oneoff'
+              ? `One-off meeting with ${bodyName}`
               : `Your weekly meeting with ${bodyName}`}
           </p>
           {seniorMeta.eligibleWindow && (
