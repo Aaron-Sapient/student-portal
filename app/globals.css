@@ -186,6 +186,42 @@ body {
   box-shadow: inset 3px 3px 7px var(--neu-lo), inset -3px -3px 7px var(--neu-hi);
 }
 
+/* Booking time slots: raised clay tiles that rise + warm to terracotta on hover,
+   then press into the clay on tap (the neumorphic depress). One light source,
+   same top-left convention as the panels above. */
+.neu-slot {
+  background: var(--neu-bg);
+  box-shadow: 3px 3px 7px var(--neu-lo), -3px -3px 7px var(--neu-hi);
+  transition: box-shadow 0.18s ease, transform 0.18s ease, color 0.18s ease;
+}
+@media (hover: hover) {
+  .neu-slot:hover {
+    color: var(--color-terracotta-deep);
+    transform: translateY(-2px);
+    box-shadow: 5px 7px 14px var(--neu-lo), -4px -4px 10px var(--neu-hi),
+      inset 0 0 0 1.5px var(--color-terracotta-soft);
+  }
+}
+.neu-slot:active {
+  transform: translateY(0);
+  color: var(--color-terracotta);
+  box-shadow: inset 3px 3px 6px var(--neu-lo), inset -3px -3px 6px var(--neu-hi);
+}
+/* A suggested (recommended) slot: the resting clay tile carries a soft terracotta
+   outline so it reads as "picking this helps" without competing with the filled,
+   selected state. Defined after .neu-slot so it wins the resting box-shadow; the
+   :hover / :active rules above still take over on interaction. */
+.neu-slot-rec {
+  background: var(--neu-bg);
+  box-shadow: 3px 3px 7px var(--neu-lo), -3px -3px 7px var(--neu-hi),
+    inset 0 0 0 1.5px var(--color-terracotta-soft);
+}
+@media (prefers-reduced-motion: reduce) {
+  .neu-slot { transition: none; }
+  .neu-slot:hover,
+  .neu-slot:active { transform: none; }
+}
+
 /* ── Word processor (md-editor) — claymorphic skin ────────────────────────
    The vendored editor (public/md-editor, synced from Claude/Utils/md-editor)
    themes entirely through --mde-* custom properties. Scoping them on

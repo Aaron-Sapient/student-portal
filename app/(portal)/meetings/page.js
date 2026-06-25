@@ -272,7 +272,7 @@ function OneoffSection({ oneoffs, loading, baseDelay = 110 }) {
       {oneoffs.map((o, i) => (
         <OptionCard
           key={o.id || o.slug}
-          href={`/meetings/${o.slug}`}
+          href={`/meetings/${o.slug}?m=${encodeURIComponent(`oneoff:${o.id}`)}`}
           icon={teacherIcon(o.slug)}
           name={o.name}
           role={`Granted just for you${o.window ? ` · ${fmtRange(o.window.start, o.window.end)}` : ''}`}
@@ -347,7 +347,7 @@ function SeniorBookSection({ data, loading }) {
           cards.map((c, i) => (
             <OptionCard
               key={c.slug}
-              href={`/meetings/${c.slug}`}
+              href={`/meetings/${c.slug}?m=${c.kind}`}
               icon={teacherIcon(c.slug)}
               name={c.name}
               role={c.role}

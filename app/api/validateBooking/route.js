@@ -73,19 +73,36 @@ export async function GET(request) {
     const senior = await getSeniorByEmail(email);
     if (senior) {
       const state = await loadSeniorBookingState(senior);
-      if (!state.grant) {
-        return Response.json({
-          allowed: false,
-          senior: true,
-          reason: "Complete this week's check-in to unlock booking.",
-        });
-      }
       const plan = seniorBookingPlan(senior, DateTime.now().setZone('America/Los_Angeles'), state);
-      const mine = plan.meetings.find((m) => m.slug === instructor.slug);
-      // A separate, additive one-off grant can make this teacher bookable even when
-      // the weekly cadence doesn't (or there's no check-in this week at all).
-      const oneoff = (plan.oneoffs || []).find((o) => o.slug === instructor.slug);
-      if (!mine && !oneoff) {
+
+      // The /meetings page is the meeting-type router: each card deep-links its
+      // specific meeting via ?m=<key>, and we commit to exactly that one — never a
+      // merge of every reachable type. Keys: 'oneoff:<id>' for an admin one-off,
+      // else the single weekly meeting for this teacher ('cross'/'primary'/absent,
+      // since primary ≠ secondary there's at most one). A one-off is an additive
+      // track bookable even with no weekly grant, so resolve it BEFORE the grant gate.
+      const mKey = searchParams.get('m') || '';
+      const mine = plan.meetings.find((mm) => mm.slug === instructor.slug);
+      const oneoffs = (plan.oneoffs || []).filter((o) => o.slug === instructor.slug);
+      let option = null;
+      if (mKey.startsWith('oneoff:')) {
+        const id = mKey.slice('oneoff:'.length);
+        option = oneoffs.find((o) => String(o.id) === id) || null;
+      } else if (mKey === 'cross' || mKey === 'primary') {
+        option = mine || null;
+      }
+      // Fallback for a bare URL or a stale key: prefer the weekly meeting, else the
+      // first active one-off for this teacher.
+      if (!option) option = mine || oneoffs[0] || null;
+
+      if (!option) {
+        if (!state.grant && oneoffs.length === 0) {
+          return Response.json({
+            allowed: false,
+            senior: true,
+            reason: "Complete this week's check-in to unlock booking.",
+          });
+        }
         const isTeacher = instructor.slug === plan.primarySlug || instructor.slug === plan.secondarySlug;
         return Response.json({
           allowed: false,
@@ -95,21 +112,20 @@ export async function GET(request) {
             : 'That isn’t one of your assigned teachers.',
         });
       }
-      const durations = [
-        ...new Set([...(mine?.durations || []), ...(oneoff?.durations || [])]),
-      ].sort((a, b) => a - b);
+
       return Response.json({
         allowed: true,
         senior: true,
         studentName,
         instructor: instructor.slug,
-        durations,
-        // Calendar context (phase-week coloring lands in the next pass). A pure
-        // one-off (no weekly meeting for this teacher) reads as kind 'oneoff'.
-        phase: plan.phase,
+        // The committed meeting's OWN context — no cross-type bleed.
+        durations: option.durations,
+        kind: option.kind, // 'cross' | 'primary' | 'oneoff'
+        eligibleWindow: option.window,
         grantWindow: plan.grantWindow,
-        eligibleWindow: mine?.window || oneoff?.window,
-        kind: mine?.kind || 'oneoff',
+        phase: plan.phase,
+        goldWeek: option.kind === 'cross', // only the cross owns the gold phase week
+        oneoffId: option.id || null,
       });
     }
 

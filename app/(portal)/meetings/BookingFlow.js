@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { DateTime } from 'luxon';
 import {
   ChevronLeft,
   ChevronRight,
   Video,
+  CalendarDays,
   CalendarPlus,
   CheckCircle2,
   CircleAlert,
@@ -98,6 +99,9 @@ function downloadICal(start, end, title, agenda, zoomLink) {
 
 export default function BookingFlow({ slug }) {
   const router = useRouter();
+  // Which meeting the student picked on /meetings (the type router). Keys:
+  // 'oneoff:<id>' for an admin one-off, else the weekly meeting ('cross'/'primary').
+  const m = useSearchParams().get('m') || '';
   const instructor = getInstructorPublic(slug);
   const isART = instructor.slug === 'art';
   const bodyName = instructor.bodyName;
@@ -141,9 +145,15 @@ export default function BookingFlow({ slug }) {
   // 1) validate access + resolve duration
   useEffect(() => {
     let alive = true;
+    // Re-navigating from one /meetings card to another swaps `m` without a remount,
+    // so clear any prior selection/error before committing to the new meeting.
+    setSelectedDate(null);
+    setSelectedSlot(null);
+    setAuthError(null);
+    setRoutedKind(null);
     (async () => {
       try {
-        const res = await fetch(`/api/validateBooking?instructor=${instructor.slug}`);
+        const res = await fetch(`/api/validateBooking?instructor=${instructor.slug}&m=${encodeURIComponent(m)}`);
         const data = await res.json();
         if (!alive) return;
         if (!data.allowed) {
@@ -161,8 +171,11 @@ export default function BookingFlow({ slug }) {
             eligibleWindow: data.eligibleWindow || null,
             grantWindow: data.grantWindow || null,
             phase: data.phase,
+            goldWeek: !!data.goldWeek, // only the cross meeting colors its phase week gold
           });
         } else {
+          setSeniorDurations(null);
+          setSeniorMeta(null);
           setDuration(data.decision === '15min' ? '15min' : '30min');
         }
         setStudentName(data.studentName || '');
@@ -181,7 +194,7 @@ export default function BookingFlow({ slug }) {
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [instructor.slug]);
+  }, [instructor.slug, m]);
 
   // 2) month availability
   useEffect(() => {
@@ -264,7 +277,7 @@ export default function BookingFlow({ slug }) {
 
   if (validating) {
     return (
-      <div className="portal-rise space-y-5">
+      <div className="portal-rise mx-auto max-w-xl space-y-5">
         <div className="portal-skeleton h-10 w-48 rounded-2xl" />
         <div className="portal-skeleton h-72 rounded-3xl" />
       </div>
@@ -293,7 +306,7 @@ export default function BookingFlow({ slug }) {
 
   if (authError) {
     return (
-      <div className="portal-rise mt-8 rounded-3xl border border-terracotta/25 bg-clay-50 p-6 text-center">
+      <div className="portal-rise mx-auto mt-8 max-w-md rounded-3xl border border-terracotta/25 bg-clay-50 p-6 text-center">
         <CircleAlert className="mx-auto h-7 w-7 text-terracotta" strokeWidth={2} />
         <p className="mt-3 font-display text-lg font-semibold text-ink">Can’t book right now</p>
         <p className="mt-1 text-sm text-ink-soft">{authError}</p>
@@ -310,7 +323,7 @@ export default function BookingFlow({ slug }) {
     const gcalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(eventTitle)}&dates=${fmtICalDate(bookedSlot.start)}/${fmtICalDate(bookedSlot.end)}&details=${encodeURIComponent(gcalDescription)}&location=${encodeURIComponent(instructor.zoomLink)}`;
 
     return (
-      <div className="portal-rise">
+      <div className="portal-rise mx-auto max-w-md">
         <div className="flex flex-col items-center text-center">
           <span className="flex h-16 w-16 items-center justify-center rounded-3xl border border-moss/25 bg-moss/[0.08] text-moss shadow-card">
             <CheckCircle2 className="h-8 w-8" strokeWidth={1.9} />
@@ -366,6 +379,11 @@ export default function BookingFlow({ slug }) {
 
   const grid = buildCalendarGrid(calYear, calMonth);
   const nowLA = DateTime.now().setZone(ZONE);
+  // The committed meeting's bookable window (seniors): a day outside it isn't this
+  // meeting's, even if the duration-keyed availability happens to include it.
+  const elig = seniorMeta?.eligibleWindow || null;
+  // Gold phase-week coloring belongs only to the cross meeting.
+  const showGold = !!phaseWeek && !!seniorMeta?.goldWeek;
 
   return (
     <div className="pb-2">
@@ -381,270 +399,296 @@ export default function BookingFlow({ slug }) {
             <h1 className="font-display text-[1.9rem] font-semibold leading-tight tracking-tight text-ink">
               Book with {bodyName}
             </h1>
+            {!seniorMeta && (
+              <p className="mt-1 text-sm text-ink-soft">Pick a day, then choose a time.</p>
+            )}
           </div>
         </div>
-        {!seniorMeta && (
-          <p className="mt-2 pl-[3.75rem] text-sm text-ink-soft">
-            {seniorDurations && seniorDurations.length > 1
-              ? 'Choose a length, then pick a day and time.'
-              : 'Pick a day, then choose a time.'}
-          </p>
-        )}
       </header>
 
-      {/* Senior context: which meeting this is + the window it's bookable in. The
-          monthly cross-meeting carries the gold language that also marks its week
-          in the calendar below, so the two never read as separate ideas. */}
-      {seniorMeta && (
-        <div
-          className={`mb-5 rounded-2xl px-4 py-3.5 ${
-            seniorMeta.kind === 'cross'
-              ? 'bg-ochre/[0.09] ring-1 ring-inset ring-ochre/25'
-              : 'neu-inset'
-          }`}
-        >
-          <p className="flex items-center gap-2 text-sm font-semibold text-ink">
-            {seniorMeta.kind === 'cross' && (
-              <span className="h-2 w-2 shrink-0 rounded-full bg-ochre" />
-            )}
-            {seniorMeta.kind === 'cross'
-              ? `Monthly cross-meeting with ${bodyName}`
-              : seniorMeta.kind === 'oneoff'
-              ? `One-off meeting with ${bodyName}`
-              : `Your weekly meeting with ${bodyName}`}
-          </p>
-          {seniorMeta.eligibleWindow && (
-            <p className="mt-1 text-[13px] leading-relaxed text-ink-soft">
-              {seniorMeta.kind === 'cross' ? 'Book any open day · ' : 'Book '}
-              <span className="font-semibold text-ink">
-                {fmtRange(seniorMeta.eligibleWindow.start, seniorMeta.eligibleWindow.end)}
-              </span>
-              {seniorMeta.kind === 'cross' && phaseWeek
-                ? ' — your cross-meeting week is marked in gold.'
-                : ''}
-            </p>
+      {/* Desktop: calendar on the left, the chosen day's times + agenda + confirm
+          on the right. Below lg the two columns simply stack (the mobile flow). */}
+      <div className="lg:grid lg:grid-cols-[minmax(0,21rem)_minmax(0,1fr)] lg:items-start lg:gap-7">
+        {/* ── LEFT: meeting length (a true sub-choice) + calendar ───────────── */}
+        <div>
+          {/* Only Essential offers a real length choice (1×40 or 2×20). It filters
+              the calendar's open days, so it sits right above the calendar under a
+              label — a sub-control, not a page heading. Single-length meetings
+              (one-offs, VIP/Comprehensive weekly, the cross) show no pill at all. */}
+          {seniorDurations && seniorDurations.length > 1 && (
+            <div className="mb-4">
+              <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.13em] text-ink-faint">
+                Meeting length
+              </p>
+              <div className="neu-inset inline-flex rounded-full p-1">
+                {seniorDurations.map((d) => {
+                  const mins = parseInt(d, 10);
+                  const active = d === duration;
+                  return (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => {
+                        setDuration(d);
+                        setSelectedDate(null);
+                        setSelectedSlot(null);
+                      }}
+                      className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${
+                        active ? 'bg-terracotta text-paper shadow-sm' : 'text-ink-soft hover:text-ink'
+                      }`}
+                    >
+                      {mins}-min
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           )}
-        </div>
-      )}
 
-      {/* Essential seniors choose 1×40 or 2×20 each week */}
-      {seniorDurations && seniorDurations.length > 1 && (
-        <div className="mb-4 flex gap-2">
-          {seniorDurations.map((d) => {
-            const mins = parseInt(d, 10);
-            const active = d === duration;
-            return (
-              <button
-                key={d}
-                type="button"
-                onClick={() => {
-                  setDuration(d);
-                  setSelectedDate(null);
-                  setSelectedSlot(null);
-                }}
-                className={`flex-1 rounded-2xl px-4 py-3 text-sm font-semibold transition active:scale-[0.98] ${
-                  active ? 'bg-terracotta text-paper shadow-sm' : 'neu-chip text-ink'
+          <div className="neu-raised rounded-3xl p-5">
+            {/* Senior context lives inside the calendar as a slim note, so the
+                cross-meeting language sits right above the week it colors gold. */}
+            {seniorMeta && (
+              <div
+                className={`mb-4 border-b pb-3.5 ${
+                  seniorMeta.kind === 'cross' ? 'border-ochre/30' : 'border-sand/60'
                 }`}
               >
-                {mins}-min
-              </button>
-            );
-          })}
-        </div>
-      )}
+                <p className="flex items-center gap-2 text-sm font-semibold text-ink">
+                  {seniorMeta.kind === 'cross' && (
+                    <span className="h-2 w-2 shrink-0 rounded-full bg-ochre" />
+                  )}
+                  {seniorMeta.kind === 'cross'
+                    ? `Monthly cross-meeting with ${bodyName}`
+                    : seniorMeta.kind === 'oneoff'
+                    ? `One-off meeting with ${bodyName}`
+                    : `Your weekly meeting with ${bodyName}`}
+                </p>
+                {seniorMeta.eligibleWindow && (
+                  <p className="mt-1 text-[13px] leading-relaxed text-ink-soft">
+                    {seniorMeta.kind === 'cross' ? 'Book any open day · ' : 'Book '}
+                    <span className="font-semibold text-ink">
+                      {fmtRange(seniorMeta.eligibleWindow.start, seniorMeta.eligibleWindow.end)}
+                    </span>
+                  </p>
+                )}
+              </div>
+            )}
 
-      {/* calendar */}
-      <div className="neu-raised rounded-3xl p-5">
-        <div className="mb-3 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={prevMonth}
-            disabled={!canGoPrev}
-            className="flex h-9 w-9 items-center justify-center rounded-full text-ink transition active:scale-90 disabled:opacity-25"
-          >
-            <ChevronLeft className="h-5 w-5" strokeWidth={2.2} />
-          </button>
-          <span className="font-display text-base font-semibold text-ink">
-            {MONTH_NAMES[calMonth]} {calYear}
-          </span>
-          <button
-            type="button"
-            onClick={nextMonth}
-            className="flex h-9 w-9 items-center justify-center rounded-full text-ink transition active:scale-90"
-          >
-            <ChevronRight className="h-5 w-5" strokeWidth={2.2} />
-          </button>
-        </div>
-
-        <div className="grid grid-cols-7 gap-1">
-          {DAY_NAMES.map((d, i) => (
-            <div key={i} className="py-1 text-center text-[11px] font-semibold text-ink-faint">
-              {d}
-            </div>
-          ))}
-          {grid.flat().map(({ date, overflow }, i) => {
-            const lux = DateTime.fromJSDate(date).setZone(ZONE);
-            const isPast = lux.startOf('day') < nowLA.startOf('day');
-            const notBookable = !instructor.hoursByWeekday[lux.weekday];
-            const tooSoon = lux < nowLA.plus({ days: 1 });
-            const dateStr = formatDateStr(date);
-            const baseDisabled = isPast || notBookable || tooSoon || overflow;
-            const isAvailable = !baseDisabled && !loadingMonth && availableDates.has(dateStr);
-            const isSelected = selectedDate && dateStr === formatDateStr(selectedDate);
-            // Two orthogonal channels: the FILL says whether the day is bookable
-            // (terracotta), the gold RING says it's part of the monthly cross-meeting
-            // week. A day can be both — bookable AND special.
-            const inPhaseWeek = !!phaseWeek && dateStr >= phaseWeek.start && dateStr <= phaseWeek.end;
-            return (
+            <div className="mb-3 flex items-center justify-between">
               <button
-                key={i}
                 type="button"
-                disabled={!isAvailable}
-                onClick={() => isAvailable && setSelectedDate(date)}
-                className={`flex aspect-square items-center justify-center rounded-xl text-sm transition ${
-                  isSelected
-                    ? 'bg-terracotta font-bold text-paper shadow-sm'
-                    : isAvailable
-                    ? 'bg-terracotta/[0.1] font-semibold text-terracotta-deep hover:bg-terracotta/20 active:scale-95'
-                    : inPhaseWeek && !overflow
-                    ? 'bg-ochre/[0.08] font-medium text-ochre'
-                    : overflow
-                    ? 'text-ink-faint/40'
-                    : 'text-ink-faint/60'
-                }${inPhaseWeek ? ' ring-2 ring-inset ring-ochre/55' : ''}`}
+                onClick={prevMonth}
+                disabled={!canGoPrev}
+                className="flex h-9 w-9 items-center justify-center rounded-full text-ink transition active:scale-90 disabled:opacity-25"
               >
-                {date.getDate()}
+                <ChevronLeft className="h-5 w-5" strokeWidth={2.2} />
               </button>
-            );
-          })}
-        </div>
-        {loadingMonth && (
-          <p className="mt-3 text-center text-xs text-ink-faint">Checking {bodyName}’s availability…</p>
-        )}
-        {/* Legend appears only in the cross-meeting month, where the gold ring is
-            actually on screen and needs a key. */}
-        {phaseWeek && !loadingMonth && (
-          <div className="mt-4 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 border-t border-sand/60 pt-3.5 text-[11px] font-medium text-ink-soft">
-            <span className="flex items-center gap-1.5">
-              <span className="h-3.5 w-3.5 rounded-md bg-terracotta/20" />
-              Open day
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="h-3.5 w-3.5 rounded-md ring-2 ring-inset ring-ochre/60" />
-              Cross-meeting week
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* Seniors: never leave an empty grid as a silent "no". Say where the open
-          days actually are and how to get there. */}
-      {seniorMeta && !loadingMonth && availableDates.size === 0 && seniorMeta.grantWindow && (
-        <p className="mt-3 rounded-2xl bg-clay-50 px-4 py-3 text-center text-[13px] leading-relaxed text-ink-soft">
-          No open times with {bodyName} in {MONTH_NAMES[calMonth]}. You can book{' '}
-          <span className="font-semibold text-ink">
-            {fmtRange(seniorMeta.grantWindow.start, seniorMeta.grantWindow.end)}
-          </span>{' '}
-          — use the arrows to reach those days.
-        </p>
-      )}
-
-      {/* recommended */}
-      {recommended.length > 0 && (
-        <div className="neu-raised mt-4 rounded-3xl p-5">
-          <p className="flex items-center gap-1.5 text-sm font-semibold text-ink">
-            <Sparkles className="h-4 w-4 text-terracotta" strokeWidth={2} />
-            Recommended times
-          </p>
-          <p className="mt-1 text-xs text-ink-soft">
-            Picking one helps {bodyName} group meetings together.
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {recommended.map((slot) => (
-              <SlotChip key={`rec-${slot.start}`} slot={slot} chosen={selectedSlot?.start === slot.start} onChoose={setSelectedSlot} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* slots */}
-      {selectedDate && (
-        <div className="mt-4">
-          <p className="mb-3 text-sm font-semibold text-ink">
-            {selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-          </p>
-          {loadingSlots ? (
-            <p className="flex items-center gap-2 text-sm text-ink-faint">
-              <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.2} />
-              Checking {bodyName}’s calendar…
-            </p>
-          ) : slots.length === 0 ? (
-            <p className="text-sm text-ink-soft">No times open this day — try another.</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {slots.map((slot, i) => (
-                <SlotChip key={i} slot={slot} chosen={selectedSlot?.start === slot.start} onChoose={setSelectedSlot} />
-              ))}
+              <span className="font-display text-base font-semibold text-ink">
+                {MONTH_NAMES[calMonth]} {calYear}
+              </span>
+              <button
+                type="button"
+                onClick={nextMonth}
+                className="flex h-9 w-9 items-center justify-center rounded-full text-ink transition active:scale-90"
+              >
+                <ChevronRight className="h-5 w-5" strokeWidth={2.2} />
+              </button>
             </div>
+
+            <div className="grid grid-cols-7 gap-1">
+              {DAY_NAMES.map((d, i) => (
+                <div key={i} className="py-1 text-center text-[11px] font-semibold text-ink-faint">
+                  {d}
+                </div>
+              ))}
+              {grid.flat().map(({ date, overflow }, i) => {
+                const lux = DateTime.fromJSDate(date).setZone(ZONE);
+                const isPast = lux.startOf('day') < nowLA.startOf('day');
+                const notBookable = !instructor.hoursByWeekday[lux.weekday];
+                const tooSoon = lux < nowLA.plus({ days: 1 });
+                const dateStr = formatDateStr(date);
+                const baseDisabled = isPast || notBookable || tooSoon || overflow;
+                const inEligible = !elig || (dateStr >= elig.start && dateStr <= elig.end);
+                const isAvailable =
+                  !baseDisabled && !loadingMonth && availableDates.has(dateStr) && inEligible;
+                const isSelected = selectedDate && dateStr === formatDateStr(selectedDate);
+                // Two orthogonal channels: the FILL says whether the day is bookable
+                // (terracotta), the gold RING says it's part of the monthly cross-meeting
+                // week. A day can be both — bookable AND special. Gold shows only for
+                // the cross meeting (showGold), never for a one-off on the same calendar.
+                const inPhaseWeek = showGold && dateStr >= phaseWeek.start && dateStr <= phaseWeek.end;
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    disabled={!isAvailable}
+                    onClick={() => isAvailable && setSelectedDate(date)}
+                    className={`flex aspect-square items-center justify-center rounded-xl text-sm transition ${
+                      isSelected
+                        ? 'bg-terracotta font-bold text-paper shadow-sm'
+                        : isAvailable
+                        ? 'bg-terracotta/[0.1] font-semibold text-terracotta-deep hover:bg-terracotta/20 active:scale-95'
+                        : inPhaseWeek && !overflow
+                        ? 'bg-ochre/[0.08] font-medium text-ochre'
+                        : overflow
+                        ? 'text-ink-faint/40'
+                        : 'text-ink-faint/60'
+                    }${inPhaseWeek ? ' ring-2 ring-inset ring-ochre/55' : ''}`}
+                  >
+                    {date.getDate()}
+                  </button>
+                );
+              })}
+            </div>
+            {loadingMonth && (
+              <p className="mt-3 text-center text-xs text-ink-faint">Checking {bodyName}’s availability…</p>
+            )}
+            {/* Legend appears only when the gold ring is actually on screen — i.e.
+                the cross meeting in its phase-week month — and needs a key. */}
+            {showGold && !loadingMonth && (
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 border-t border-sand/60 pt-3.5 text-[11px] font-medium text-ink-soft">
+                <span className="flex items-center gap-1.5">
+                  <span className="h-3.5 w-3.5 rounded-md bg-terracotta/20" />
+                  Open day
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="h-3.5 w-3.5 rounded-md ring-2 ring-inset ring-ochre/60" />
+                  Cross-meeting week
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Seniors: never leave an empty grid as a silent "no". Say where the open
+              days actually are and how to get there. */}
+          {seniorMeta && !loadingMonth && availableDates.size === 0 && seniorMeta.grantWindow && (
+            <p className="mt-3 rounded-2xl bg-clay-50 px-4 py-3 text-center text-[13px] leading-relaxed text-ink-soft">
+              No open times with {bodyName} in {MONTH_NAMES[calMonth]}. You can book{' '}
+              <span className="font-semibold text-ink">
+                {fmtRange(seniorMeta.grantWindow.start, seniorMeta.grantWindow.end)}
+              </span>{' '}
+              — use the arrows to reach those days.
+            </p>
           )}
         </div>
-      )}
 
-      {/* agenda + confirm */}
-      {selectedSlot && (
-        <div className="mt-6 space-y-4">
-          <div>
-            <p className="mb-2 text-sm font-semibold text-ink">
-              Agenda <span className="font-normal text-ink-faint">· optional</span>
-            </p>
-            <div className="relative">
-              <input
-                type="text"
-                value={agenda}
-                onChange={(e) => setAgenda(e.target.value.slice(0, AGENDA_MAX))}
-                placeholder="e.g. Course selection for next year"
-                className="neu-inset w-full rounded-2xl px-4 py-3 pr-14 text-[15px] text-ink outline-none transition placeholder:text-ink-faint focus:ring-2 focus:ring-terracotta/25"
-              />
-              <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs text-ink-faint">
-                {agenda.length}/{AGENDA_MAX}
+        {/* ── RIGHT: the chosen day's times, then agenda + confirm ──────────── */}
+        <div className="mt-6 lg:mt-0">
+          {!selectedDate ? (
+            // Desktop-only prompt so the right column isn't blank before a pick.
+            // On mobile the flow just scrolls calendar → times, so this is hidden.
+            <div className="hidden flex-col items-center justify-center rounded-3xl py-16 text-center lg:flex lg:min-h-[20rem]">
+              <span className="neu-chip flex h-12 w-12 items-center justify-center rounded-2xl text-terracotta">
+                <CalendarDays className="h-5 w-5" strokeWidth={1.9} />
               </span>
+              <p className="mt-4 text-sm font-semibold text-ink">Pick a day to see open times</p>
+              <p className="mt-1 max-w-[15rem] text-[13px] leading-relaxed text-ink-soft">
+                Open days with {bodyName} are highlighted on the calendar.
+              </p>
             </div>
-          </div>
+          ) : (
+            <>
+              <p className="text-sm font-semibold text-ink">
+                {selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+              </p>
+              {!loadingSlots && slots.length > 0 && recommended.length > 0 && (
+                <p className="mt-1 flex items-center gap-1.5 text-xs text-ink-soft">
+                  <Sparkles className="h-3.5 w-3.5 shrink-0 text-terracotta" strokeWidth={2} />
+                  Highlighted times help {bodyName} group meetings together.
+                </p>
+              )}
+              <div className="mt-3">
+                {loadingSlots ? (
+                  <p className="flex items-center gap-2 text-sm text-ink-faint">
+                    <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.2} />
+                    Checking {bodyName}’s calendar…
+                  </p>
+                ) : slots.length === 0 ? (
+                  <p className="text-sm text-ink-soft">No times open this day — try another.</p>
+                ) : (
+                  <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4 lg:grid-cols-5">
+                    {slots.map((slot, i) => (
+                      <SlotChip
+                        key={i}
+                        slot={slot}
+                        chosen={selectedSlot?.start === slot.start}
+                        recommended={recommended.some((r) => r.start === slot.start)}
+                        onChoose={setSelectedSlot}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
 
-          {bookingError && <p className="text-sm font-medium text-terracotta-deep">{bookingError}</p>}
+              {/* agenda + confirm */}
+              {selectedSlot && (
+                <div className="mt-6 space-y-4">
+                  <div>
+                    <p className="mb-2 text-sm font-semibold text-ink">
+                      Agenda <span className="font-normal text-ink-faint">· optional</span>
+                    </p>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={agenda}
+                        onChange={(e) => setAgenda(e.target.value.slice(0, AGENDA_MAX))}
+                        placeholder="e.g. Course selection for next year"
+                        className="neu-inset w-full rounded-2xl px-4 py-3 pr-14 text-[15px] text-ink outline-none transition placeholder:text-ink-faint focus:ring-2 focus:ring-terracotta/25"
+                      />
+                      <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs text-ink-faint">
+                        {agenda.length}/{AGENDA_MAX}
+                      </span>
+                    </div>
+                  </div>
 
-          <button
-            type="button"
-            onClick={handleBook}
-            disabled={booking}
-            className="flex w-full items-center justify-center gap-2 rounded-full bg-terracotta px-6 py-3.5 text-sm font-bold text-paper shadow-lift transition active:scale-[0.98] disabled:opacity-60"
-          >
-            {booking ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.4} />
-                Booking…
-              </>
-            ) : (
-              `Confirm ${meetingLabel}`
-            )}
-          </button>
+                  {bookingError && <p className="text-sm font-medium text-terracotta-deep">{bookingError}</p>}
+
+                  <button
+                    type="button"
+                    onClick={handleBook}
+                    disabled={booking}
+                    className="flex w-full items-center justify-center gap-2 rounded-full bg-terracotta px-6 py-3.5 text-sm font-bold text-paper shadow-lift transition active:scale-[0.98] disabled:opacity-60"
+                  >
+                    {booking ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.4} />
+                        Booking…
+                      </>
+                    ) : (
+                      `Confirm ${meetingLabel}`
+                    )}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
 
-function SlotChip({ slot, chosen, onChoose }) {
+function SlotChip({ slot, chosen, recommended, onChoose }) {
   return (
     <button
       type="button"
       onClick={() => onChoose(slot)}
-      className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition active:scale-95 ${
+      aria-pressed={chosen}
+      className={`relative w-full rounded-2xl px-2 py-2.5 text-center text-sm font-semibold tabular-nums tracking-tight transition ${
         chosen
-          ? 'bg-terracotta text-paper shadow-sm'
-          : 'neu-chip text-ink'
+          ? 'bg-terracotta text-paper shadow-lift'
+          : recommended
+          ? 'neu-slot neu-slot-rec text-ink'
+          : 'neu-slot text-ink'
       }`}
     >
+      {recommended && !chosen && (
+        <Sparkles
+          className="pointer-events-none absolute right-1.5 top-1.5 h-3 w-3 text-terracotta"
+          strokeWidth={2.2}
+        />
+      )}
       {slot.label}
     </button>
   );
