@@ -1,5 +1,6 @@
 import { google } from 'googleapis';
 import { DateTime } from 'luxon';
+import { listStudents } from '@/lib/identity';
 
 // Helpers shared by the studentScores routes (the roster list and the
 // per-student [sheetId] detail). Not a route file — only HTTP-method exports
@@ -10,27 +11,15 @@ export const SCORES_TAB = '📊 Scores';
 
 const ZONE = 'America/Los_Angeles';
 
-// Master-roster rows: name (A), class (B), portal-sheet URL (G). Every write
-// path validates the incoming sheetId against this list — the id itself
-// carries no authority. `grade` keeps the raw Class cell ("'27") for back-compat;
-// `classYear` is the 4-digit graduation year derived from it (e.g. 2027) for the
-// Students-tab cards. Both come free from the single A:G read — no per-student fan-out.
+// The whole roster as { name, grade, classYear, sheetId } — every write path also
+// validates an incoming sheetId against this list (the id itself carries no
+// authority). `grade` keeps the raw Class cell ("'27") for back-compat; `classYear`
+// is the 4-digit grad year derived from it (e.g. 2027) for the Students-tab cards.
+// Delegates to the flagged roster reader (lib/identity.listStudents): Sheets today,
+// the Supabase `students` mirror once READ_SUPABASE_ROSTER flips — so this dev
+// surface stops hitting the Master sheet too. Shape is unchanged either way.
 export async function listRoster(sheets) {
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: process.env.MASTER_SHEET_ID,
-    range: `${MASTER_TAB}!A:G`,
-  });
-  const roster = [];
-  for (const r of (res.data.values || []).slice(1)) {
-    const name = String(r?.[0] ?? '').trim();
-    const m = String(r?.[6] ?? '').match(/\/d\/([a-zA-Z0-9-_]+)/);
-    if (!name || !m) continue;
-    const klass = String(r?.[1] ?? '').trim();
-    const ym = klass.match(/(\d{2})\s*$/);
-    const classYear = ym ? 2000 + Number(ym[1]) : null;
-    roster.push({ name, grade: klass, classYear, sheetId: m[1] });
-  }
-  return roster;
+  return listStudents(sheets);
 }
 
 // The roster fan-out costs 1 + N Sheets reads (each student is a separate
