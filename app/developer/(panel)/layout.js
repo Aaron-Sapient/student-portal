@@ -19,7 +19,7 @@ export default async function DevPanelLayout({ children }) {
   return (
     <PortalShell
       className="dev-root"
-      iconNames="calendar_month,description,event_busy,fact_check,group,tune"
+      iconNames="calendar_month,description,event_busy,fact_check,group,quiz,tune"
     >
       <DevDataProvider>
         <DevNav />

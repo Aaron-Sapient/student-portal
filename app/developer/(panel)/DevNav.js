@@ -15,6 +15,7 @@ const DEV_TABS = [
   { href: '/developer/compliance', label: 'Compliance', sym: 'fact_check' },
   { href: '/developer/blocks', label: 'Blocks', sym: 'event_busy' },
   { href: '/developer/scoring', label: 'Scoring', sym: 'tune' },
+  { href: '/developer/sat', label: 'SAT', sym: 'quiz' },
   { href: '/developer/students', label: 'Students', sym: 'group' },
 ];
 
