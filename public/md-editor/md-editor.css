@@ -435,6 +435,8 @@
   }
   .mde-wc-pill:hover { color: var(--mde-green-deep); }
   .mde-wc-pill:active { box-shadow: var(--mde-clay-sink-sm); }
+  /* showing the highlighted-portion count — subtle accent so it reads as a live, focused state */
+  .mde-wc-pill.sel { color: var(--mde-green-deep); }
   .mde-wc-pill.hidden { display: none; }
   /* fade with the TOC button while a host drawer/overlay covers the editor */
   .mde-wc-root.rail-open .mde-wc-pill { opacity: 0; pointer-events: none; }
@@ -453,6 +455,8 @@
     padding: 26px 28px 18px; font-family: var(--mde-sans);
   }
   .mde-wc-h { font-size: 22px; font-weight: 600; letter-spacing: -.01em; margin: 0 0 14px; }
+  .mde-wc-sub { font-size: 13px; font-weight: 500; color: var(--mde-ink-soft); margin-left: 9px; letter-spacing: 0; }
+  .mde-wc-sub:empty { display: none; }
   .mde-wc-rows { margin: 0 0 4px; }
   .mde-wc-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 2px; }
   .mde-wc-row + .mde-wc-row { border-top: 1px solid var(--mde-hairline); }
@@ -536,6 +540,33 @@
   .mde-toc-link.active { background: var(--mde-leaf); color: var(--mde-green-deep); box-shadow: inset 2px 0 0 var(--mde-green); }
   .mde-toc-children { margin: 1px 0 2px 10px; padding-left: 10px; border-left: 1px solid var(--mde-hairline); }
   .mde-toc-empty { padding: 18px 10px; font-size: 13px; color: var(--mde-ink-faint); text-align: center; }
+
+  /* ======================================================================
+     STAGE-2 — remote-cursor overlay (opt-in collaboration). The layer is an
+     absolutely-positioned, non-interactive sibling of .md-surface, built only
+     when a peer cursor exists (ed.setRemoteCarets). Per-client color is set
+     inline by the JS; everything else is theme-token-aware so it reads in
+     light/dark alike. No footprint when collab is unused.
+     ====================================================================== */
+  .mde-remote-layer { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; z-index: 6; }
+  .mde-remote-caret {
+    position: absolute; width: 2px; border-radius: 1px; pointer-events: none;
+    background: var(--mde-green); box-shadow: 0 0 0 .5px rgba(0,0,0,.06);
+    animation: mde-remote-blink 1.1s steps(2, start) infinite;
+  }
+  @keyframes mde-remote-blink { 0%, 60% { opacity: 1; } 61%, 100% { opacity: .25; } }
+  .mde-remote-sel {
+    position: absolute; pointer-events: none; border-radius: 2px;
+    background: var(--mde-green); opacity: .20; mix-blend-mode: multiply;
+  }
+  :root.mde-dark .mde-remote-sel { mix-blend-mode: screen; opacity: .30; }
+  @media (prefers-color-scheme: dark) { :root:not(.mde-light) .mde-remote-sel { mix-blend-mode: screen; opacity: .30; } }
+  .mde-remote-label {
+    position: absolute; pointer-events: none; transform: translateY(-1.25em);
+    font: 600 11px/1.45 var(--mde-sans); color: #fff; padding: 0 5px;
+    border-radius: 4px 4px 4px 1px; white-space: nowrap; background: var(--mde-green);
+    box-shadow: var(--mde-clay-raise-sm); letter-spacing: .01em; z-index: 1;
+  }
 
   /* ======================================================================
      DOCS-6 — REAL dark mode. A full --mde-* token swap (not an inverted hack).

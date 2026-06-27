@@ -25,6 +25,9 @@ import {
 } from 'lucide-react';
 import { DateTime } from 'luxon';
 import { ZONE } from '@/app/(portal)/portalUtils';
+import * as Y from 'yjs';
+import { getBrowserSupabase } from '@/lib/supabaseBrowser';
+import { SupabaseYjsProvider } from '@/lib/collab/supabaseYjsProvider';
 
 /* Full-screen, Google-Docs-style word processor for ONE document. The doc id is
    the URL path (/write/<docId>); the active tab is a ?tab=<tabId> slug. Mounts
@@ -32,9 +35,29 @@ import { ZONE } from '@/app/(portal)/portalUtils';
    /api/writing/{doc,save,tab,history}. Read-only when the viewer is a parent. */
 
 let mdePromise = null;
+function loadScript(src, attr) {
+  return new Promise((resolve) => {
+    const existing = document.querySelector(`script[${attr}]`);
+    if (existing) {
+      if (existing.dataset.loaded) resolve();
+      else existing.addEventListener('load', () => resolve());
+      return;
+    }
+    const s = document.createElement('script');
+    s.src = src;
+    s.setAttribute(attr, '1');
+    s.onload = () => {
+      s.dataset.loaded = '1';
+      resolve();
+    };
+    document.head.appendChild(s);
+  });
+}
+// Loads the vendored editor AND its opt-in collaboration binding
+// (window.MarkdownCollab). Resolves once both globals are live.
 function loadMde() {
   if (typeof window === 'undefined') return Promise.resolve(null);
-  if (window.MarkdownTabs) return Promise.resolve(window.MarkdownTabs);
+  if (window.MarkdownTabs && window.MarkdownCollab) return Promise.resolve(window.MarkdownTabs);
   if (mdePromise) return mdePromise;
   mdePromise = new Promise((resolve) => {
     if (!document.querySelector('link[data-mde]')) {
@@ -44,20 +67,19 @@ function loadMde() {
       link.dataset.mde = '1';
       document.head.appendChild(link);
     }
-    const done = () => resolve(window.MarkdownTabs);
-    const existing = document.querySelector('script[data-mde]');
-    if (existing) {
-      if (window.MarkdownTabs) done();
-      else existing.addEventListener('load', done);
-      return;
-    }
-    const s = document.createElement('script');
-    s.src = '/md-editor/md-editor.js';
-    s.dataset.mde = '1';
-    s.onload = done;
-    document.head.appendChild(s);
+    Promise.all([
+      loadScript('/md-editor/md-editor.js', 'data-mde'),
+      loadScript('/md-editor/md-editor-collab.js', 'data-mde-collab'),
+    ]).then(() => resolve(window.MarkdownTabs));
   });
   return mdePromise;
+}
+
+// Stable per-string color for a cursor/presence chip (deterministic, theme-friendly).
+function colorFor(s) {
+  let h = 0;
+  for (let i = 0; i < String(s).length; i++) h = (h * 31 + String(s).charCodeAt(i)) >>> 0;
+  return `hsl(${h % 360} 58% 45%)`;
 }
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
@@ -97,6 +119,9 @@ export default function WriteApp() {
   const dataRef = useRef(null);
   const saveTimer = useRef(null);
   const pendingTab = useRef(null);
+  const collabRef = useRef(null); // { provider, binding, tabId, onYt } for the active tab
+  const userRef = useRef(null); // { id, name, color } — this viewer's cursor/presence identity
+  const [peers, setPeers] = useState([]); // other live editors in the active tab
 
   const readOnly = state.data ? !state.data.canEdit : false;
 
@@ -197,6 +222,58 @@ export default function WriteApp() {
     else ed.cmd?.(c);
   }, []);
 
+  // ── live collaboration (Yjs over Supabase Realtime) ─────────────────────────
+  const teardownCollab = useCallback(() => {
+    const c = collabRef.current;
+    if (!c) return;
+    collabRef.current = null;
+    try { c.provider?.ytext?.unobserve(c.onYt); } catch {}
+    try { c.binding?.destroy?.(); } catch {}
+    try { c.provider?.destroy?.(); } catch {}
+    setPeers([]);
+  }, []);
+
+  // Bind the ACTIVE tab to a shared Y.Doc over Supabase Realtime. Safe no-op when
+  // the collab script hasn't loaded, identity isn't resolved, or the browser
+  // Supabase key is absent — in every such case the editor just works solo and
+  // saves through the normal /api/writing/save path. (Read-only viewers never
+  // reach here; setup is only invoked when !readOnly.)
+  const setupCollab = useCallback(() => {
+    if (typeof window === 'undefined' || !window.MarkdownCollab) return;
+    const tabs = tabsRef.current;
+    if (!tabs || !userRef.current) return;
+    const supabase = getBrowserSupabase();
+    if (!supabase) return; // no NEXT_PUBLIC key → solo editing
+    const ed = tabs.getEditor?.();
+    const tabId = tabs.getActiveId?.();
+    if (!ed || !tabId) return;
+    teardownCollab();
+    if (!window.Y) window.Y = Y; // md-editor-collab.js reads window.Y at bind time
+    try {
+      const user = userRef.current;
+      const provider = new SupabaseYjsProvider(supabase, {
+        docId,
+        tabId,
+        user,
+        seedText: () => bodiesRef.current[tabId] ?? '',
+      });
+      const binding = window.MarkdownCollab(ed, {
+        ytext: provider.ytext,
+        awareness: provider.awareness,
+        user,
+      });
+      // Keep bodiesRef converged on REMOTE edits too, so a tab-switch flush can
+      // never persist text that predates a peer's change (no silent clobber).
+      const onYt = () => { bodiesRef.current[tabId] = provider.ytext.toString(); };
+      provider.ytext.observe(onYt);
+      binding.on?.('peers', (list) => setPeers((list || []).filter((p) => !p.self)));
+      provider.start();
+      collabRef.current = { provider, binding, tabId, onYt };
+    } catch {
+      // any failure → stay solo (editor + save still work without collab)
+    }
+  }, [docId, teardownCollab]);
+
   // ── mount editor once the doc is loaded ─────────────────────────────────────
   useEffect(() => {
     if (!state.data || !mountRef.current || tabsRef.current) return;
@@ -225,7 +302,11 @@ export default function WriteApp() {
         },
         onSelect: async (prev, next) => {
           if (prev && !ro) await flushNow(prev);
+          teardownCollab(); // drop the prev tab's shared doc before makeTabs swaps the text
           syncUrl(next);
+          // selectTab swaps the editor text synchronously AFTER this await resolves;
+          // rebind on the next macrotask so we bind to the new tab's converged Y.Text.
+          if (!ro) setTimeout(() => setupCollab(), 0);
         },
       };
       if (!ro) {
@@ -244,9 +325,40 @@ export default function WriteApp() {
           const j = await r.json().catch(() => null);
           if (j?.tab?.id) {
             bodiesRef.current[j.tab.id] = '';
-            return { id: j.tab.id, title: j.tab.title };
+            return { id: j.tab.id, title: j.tab.title, deletable: j.tab.deletable };
           }
           return null;
+        };
+        // Delete a tab. The widget confirms first, then calls this; returning
+        // false vetoes removal (e.g. the server refused). The server re-checks
+        // deletability, so manual/orphaned tabs delete and active-synced don't.
+        opts.onDelete = async (id) => {
+          // drop any in-flight debounced save for this tab so it can't POST
+          // a revision to a row we're deleting.
+          if (pendingTab.current === id) {
+            pendingTab.current = null;
+            if (saveTimer.current) {
+              clearTimeout(saveTimer.current);
+              saveTimer.current = null;
+            }
+          }
+          let ok = false;
+          try {
+            const r = await fetch('/api/writing/tab', {
+              method: 'POST',
+              headers: JSON_HEADERS,
+              body: JSON.stringify({ action: 'delete', tab_id: id }),
+            });
+            ok = r.ok;
+          } catch {
+            ok = false;
+          }
+          if (!ok) return false;
+          delete bodiesRef.current[id];
+          if (dataRef.current?.tabs) {
+            dataRef.current.tabs = dataRef.current.tabs.filter((t) => t.id !== id);
+          }
+          return true;
         };
       }
 
@@ -257,23 +369,32 @@ export default function WriteApp() {
         if (surf) surf.contentEditable = 'false';
       } else if (edRef.current) {
         setToolbarReady(true);
+        // Identity for this viewer's cursor/presence. The random suffix makes each
+        // session a distinct peer + color even for two anonymous link editors (who
+        // share the name "Student (via link)") and the shared 'link@portal' email.
+        const actor = dataRef.current?.actor || {};
+        const base = actor.email && actor.email !== 'link@portal' ? actor.email : 'anon';
+        const uid = `${base}:${Math.random().toString(36).slice(2, 8)}`;
+        userRef.current = { id: uid, name: actor.name || 'You', color: colorFor(uid) };
+        setupCollab();
       }
       if (initial) syncUrl(initial);
     });
     return () => {
       alive = false;
     };
-  }, [state.data, readOnly, wantTab, docId, scheduleSave, flushNow, syncUrl]);
+  }, [state.data, readOnly, wantTab, docId, scheduleSave, flushNow, syncUrl, setupCollab, teardownCollab]);
 
   // cleanup
   useEffect(
     () => () => {
+      teardownCollab();
       if (saveTimer.current) clearTimeout(saveTimer.current);
       if (mountRef.current) mountRef.current.innerHTML = '';
       tabsRef.current = null;
       edRef.current = null;
     },
-    []
+    [teardownCollab]
   );
 
   const openHistory = async () => {
@@ -382,6 +503,37 @@ export default function WriteApp() {
           they move to one discreet floating control — bottom-right, clear of the
           editor's own top-corner tab/TOC buttons and the iOS home indicator. */}
       <div className="write-tools">
+        {peers.length > 0 && (
+          <div
+            className="flex items-center"
+            style={{ marginRight: '2px' }}
+            aria-label={`${peers.length} other ${peers.length === 1 ? 'person' : 'people'} editing`}
+            title={peers.map((p) => p.name).join(', ')}
+          >
+            {peers.slice(0, 4).map((p, i) => (
+              <span
+                key={p.id}
+                style={{
+                  width: '24px',
+                  height: '24px',
+                  borderRadius: '999px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: p.color,
+                  color: '#fff',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  border: '2px solid var(--card, #fff)',
+                  marginLeft: i === 0 ? 0 : '-7px',
+                  boxShadow: '0 1px 2px rgba(0,0,0,.18)',
+                }}
+              >
+                {String(p.name || '?').trim().charAt(0).toUpperCase()}
+              </span>
+            ))}
+          </div>
+        )}
         {!readOnly && <SaveDot status={save} />}
         <button
           onClick={openHistory}

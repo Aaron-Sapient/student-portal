@@ -6,13 +6,45 @@
      opts.onSave()       called on Cmd/Ctrl-S
      opts.people         [{ name, email, accent?, accentBg?, accentBorder? }]
      opts.scrollParent   element whose scroll dismisses popovers (optional)
+     opts.acceptMarkdown bool — typed markdown marks (**, *, `, ~~) are interpreted but
+                         demoted to an "easter egg": they flash once on the stamp that
+                         creates them, then hide and never reveal on click (headers excepted).
+                         off ⇒ raw marks stay visible (classic markdown). Default on; persisted.
      ed.setText(v) / ed.getText() / ed.focus() / ed.caretToEnd() / ed.dismiss()
    See README.md for the %%comment%% syntax, tables, and Supabase wiring.
    ============================================================================ */
   function makeEditor(surface, opts) {
     opts = opts || {};
-    const onInput = opts.onInput || function () {};
+    const _hostOnInput = opts.onInput || function () {};
     const onSave = opts.onSave || function () {};
+    /* ---- Stage-2 collaboration hooks (additive; every one is a no-op until a host wires it) ----
+       The core editor stays byte-for-byte unchanged when no listener/caret is registered: the
+       change-listener list is empty, remoteApplying is false, extUndo/extRedo are null, and the
+       remote-caret overlay is never created. Verified by keeping the Stage-1 suite 100% green. */
+    const changeListeners = [];   // ed.onChange(cb): fired AFTER every local mutation (not on remote apply)
+    const caretListeners = [];    // ed.onCaret(cb): fired when the LOCAL caret/selection changes
+    const reseedListeners = [];   // ed.onReseed(cb): fired AFTER setText() re-baselines the doc (host-driven, no echo)
+    let remoteApplying = false;   // true only while applyRemote() mutates — suppresses change/caret echo
+    let remoteCarets = [];        // [{id,name,color,a,b}] currently drawn in the overlay
+    let caretLayer = null;        // lazily-created remote-cursor overlay (null until first non-empty list)
+    let extUndo = null, extRedo = null;   // when set (collab bound), undo/redo route here (e.g. Y.UndoManager)
+    // Wrapping onInput (rather than editing every call site) means the change listeners fire exactly
+    // where the host's onInput already does — every local mutation, and nowhere else.
+    function onInput() {
+      _hostOnInput();
+      if (remoteApplying) return;
+      for (let i = 0; i < changeListeners.length; i++) { try { changeListeners[i](); } catch (_) {} }
+    }
+    function notifyCaret() {
+      if (remoteApplying) return;
+      for (let i = 0; i < caretListeners.length; i++) { try { caretListeners[i](selA, selB); } catch (_) {} }
+    }
+    // setText() is a host-driven full reset that deliberately does NOT call onInput (no echo), so a
+    // collab binding would otherwise keep a stale `last` and clobber the shared doc on the next keystroke.
+    // notifyReseed lets a binding re-baseline (reset its `last`, re-pin awareness) without emitting an op.
+    function notifyReseed() {
+      for (let i = 0; i < reseedListeners.length; i++) { try { reseedListeners[i](); } catch (_) {} }
+    }
     const PEOPLE = opts.people || [];
     const scrollParent = opts.scrollParent || null;
     // self-contained HTML escape (no host dependency)
@@ -75,6 +107,13 @@
     let undo = [], redo = [], lastType = null, lastAt = 0;
     let tocRefresh = null;   // DOCS-TOC: set by the table-of-contents feature; called after every render
     let wcRefresh = null;    // DOCS-WC:  set by the word-count feature; called after every render
+    let wcCaretRefresh = null; // DOCS-WC: called on local selection change so the pill switches between the full-doc count and the highlighted-portion count
+    // Markdown demotion: when acceptMd is on, emphasis marks (**, *, `, ~~) render but DON'T
+    // reveal on caret entry — they flash once on the "stamp" (the keystroke that completes a new
+    // token) then hide forever (asymmetric: add via chars, remove via the toolbar). Headers stay
+    // on the separate block path, untouched. acceptMd off ⇒ raw marks stay shown (classic md).
+    let acceptMd = (typeof opts.acceptMarkdown === "boolean") ? opts.acceptMarkdown : loadAcceptMd();
+    let stampEnd = null, stampTimer = null;
 
     /* ----- inline tokenizer (operates in absolute source offsets) ----- */
     function findSingle(s, ch, from) {
@@ -330,6 +369,7 @@
     }
     function render() {
       suppress = true;
+      clearStamp();   // a pending one-time mark "stamp" never survives a rebuild (undo/redo, setText, table sync)
       surface.textContent = "";
       leaves = []; blocks = []; toks = [];
       const lines = text.split("\n");
@@ -374,7 +414,17 @@
           const info = listInfo[i] || { depth: 0, marker: b.type === "ol" ? "1." : "•" };
           div.dataset.marker = info.marker; div.style.setProperty("--li-depth", info.depth);
           div.appendChild(listMarkerLeaf(b.raw.slice(0, b.mlen), b.s));   // hidden atomic source marker
-          appendInline(div, b.raw.slice(b.mlen), b.s + b.mlen);
+          const liBody = b.raw.slice(b.mlen);
+          if (liBody === "") {
+            // EMPTY item: give it a real editable caret box AFTER the marker (mirror the blank
+            // branch). Without this its only child is the display:none .lmk, so on refocus/reload
+            // the native caret collapses to the line start — landing BEFORE the bullet ("text-").
+            const sp = leafSpan("", b.s + b.mlen, "seg");
+            sp.appendChild(document.createElement("br"));
+            div.appendChild(sp);
+          } else {
+            appendInline(div, liBody, b.s + b.mlen);
+          }
         } else if (b.type === "hr") {
           div.appendChild(leafSpan(b.raw, b.s, "seg"));
         } else if (b.type === "blank") {
@@ -391,6 +441,7 @@
       suppress = false;
       if (tocRefresh) tocRefresh();
       if (wcRefresh) wcRefresh();
+      if (remoteCarets.length) positionRemoteCarets();   // additive: re-pin overlays after each rebuild
     }
 
     /* ----- tables: GFM detected in source, rendered house-style; cells are
@@ -726,7 +777,7 @@
     }
     function exitTable(wrap, dir) {
       const s = +wrap.dataset.s, e = +wrap.dataset.e;
-      if (dir > 0) { if (e >= text.length) { snapshot("table"); text = text.slice(0, e) + "\n"; render(); } setCaret(Math.min(e + 1, text.length)); }
+      if (dir > 0) { if (e >= text.length) { snapshot("table"); text = text.slice(0, e) + "\n"; render(); onInput(); } setCaret(Math.min(e + 1, text.length)); }
       else setCaret(Math.max(0, s - 1));
       surface.focus();
     }
@@ -753,7 +804,43 @@
         if (!on && el.classList && el.classList.contains("meta")) on = !!(act[i - 1] || act[i + 1]);
         el.classList.toggle("active", on);
       }
-      for (const t of toks) t.el.classList.toggle("on", selA <= t.e && selB >= t.s);
+      for (const t of toks) {
+        let on;
+        if (isEmphTok(t.el)) {
+          // demoted to easter egg: emphasis marks never reveal on caret entry. When acceptMd is on,
+          // only the one-time "stamp" flash shows them; when off, raw marks stay shown (classic md).
+          on = acceptMd ? (stampEnd != null && t.e === stampEnd) : true;
+        } else {
+          on = selA <= t.e && selB >= t.s;   // links / comments keep caret-reveal
+        }
+        t.el.classList.toggle("on", on);
+      }
+    }
+    /* ----- markdown demotion: per-user accept-markdown + the one-time "stamp" flash ----- */
+    function isEmphTok(el) {
+      const c = el.classList;
+      return c.contains("b") || c.contains("em") || c.contains("del") || c.contains("code");
+    }
+    function loadAcceptMd() { try { const v = localStorage.getItem("mde-accept-md"); return v == null ? true : v === "1"; } catch (_) { return true; } }
+    function getAcceptMarkdown() { return acceptMd; }
+    function setAcceptMarkdown(v) {
+      acceptMd = !!v;
+      try { localStorage.setItem("mde-accept-md", acceptMd ? "1" : "0"); } catch (_) {}
+      clearStamp();
+      // re-resolve the caret when focused, so toggling to "hidden" can't strand it inside a now-invisible mark
+      if (document.activeElement === surface) setCaret(selA, selB); else applyReveal();
+    }
+    function clearStamp() { if (stampTimer) { clearTimeout(stampTimer); stampTimer = null; } stampEnd = null; }
+    // After a render, if the just-typed char completed a NEW emphasis token ending at the caret,
+    // reveal that token's marks briefly (the "first stamp"), then auto-hide. Only genuine
+    // single-char typing reaches here — the toolbar/palette wrap path does not.
+    function maybeStamp(car) {
+      let hit = null;
+      for (const t of toks) if (t.e === car && isEmphTok(t.el)) { hit = t; break; }
+      if (!hit) return;
+      stampEnd = car;
+      if (stampTimer) clearTimeout(stampTimer);
+      stampTimer = setTimeout(() => { stampTimer = null; stampEnd = null; applyReveal(); }, 1100);
     }
 
     /* ----- caret <-> source offset ----- */
@@ -775,11 +862,15 @@
       else if (node.nodeType === 3) el = leafOf(node);
       return el ? +el.dataset.s + (+el.dataset.len) : null;
     }
+    // a caret may never rest BEFORE a list marker (the "- "/"1. " source is a hidden atomic
+    // leaf): snap a line-start position to just AFTER the marker. Stops a click in the empty
+    // space of an empty bullet — which resolves to the line start — landing before the bullet.
+    function afterMarker(pos) { const lf = atomicAfter(pos); return (lf && lf.el.classList && lf.el.classList.contains("lmk")) ? lf.s + lf.len : pos; }
     function domToOffset(node, offset) {
       if (node === surface) {
         const ch = surface.childNodes[Math.min(offset, surface.childNodes.length - 1)];
         const blk = blocks.find(b => b.el === ch);
-        return blk ? blk.s : text.length;
+        return blk ? afterMarker(blk.s) : text.length;
       }
       if (node.nodeType === 3) {
         const leaf = leafOf(node);
@@ -793,7 +884,7 @@
       const leaf = leafOf(node);
       if (leaf) { const base = +leaf.dataset.s, len = +leaf.dataset.len; return node.nodeType === 3 ? base + Math.min(offset, len) : base + (offset > 0 ? len : 0); }
       const blk = blocks.find(b => b.el === node || b.el.contains(node));
-      if (blk) return offset > 0 ? blk.e : blk.s;
+      if (blk) return offset > 0 ? blk.e : afterMarker(blk.s);
       return selA;
     }
     function readSel() {
@@ -820,6 +911,13 @@
         let idx = 0; while (idx < kids.length && kids[idx] !== best.el) idx++;
         return { node: parent, offset: off <= best.s ? idx : idx + 1 };
       }
+      // demoted emphasis marks are permanently hidden (acceptMd) — never strand the caret inside a
+      // display:none mark span; place it just beside the mark (round-trips via first/lastLeafEnd).
+      if (acceptMd && best.el.classList && best.el.classList.contains("mk") && best.el.parentNode && isEmphTok(best.el.parentNode)) {
+        const parent = best.el.parentNode; const kids = parent.childNodes;
+        let idx = 0; while (idx < kids.length && kids[idx] !== best.el) idx++;
+        return { node: parent, offset: off <= best.s ? idx : idx + 1 };
+      }
       if (best.len === 0) return { node: best.el, offset: 0 };
       return { node: best.el.firstChild, offset: Math.max(0, Math.min(off - best.s, best.len)) };
     }
@@ -831,6 +929,7 @@
       const s = document.getSelection();
       suppress = true; s.removeAllRanges(); s.addRange(r); suppress = false;
       applyReveal();
+      notifyCaret();   // additive: publish the local caret to any awareness listener (no-op when none)
     }
 
     /* ----- model mutation + history ----- */
@@ -844,8 +943,11 @@
     function edit(a, b, ins, caret, type) {
       snapshot(type);
       text = text.slice(0, a) + ins + text.slice(b);
-      render();
-      setCaret(caret == null ? a + ins.length : caret);
+      render();   // clears any prior stamp; maybeStamp (below) arms a fresh one AFTER the rebuild
+      const car = caret == null ? a + ins.length : caret;
+      // one-time mark flash when a genuine keystroke completes a new emphasis token
+      if (acceptMd && type === "type" && ins.length === 1 && (ins === "*" || ins === "_" || ins === "~" || ins === "`")) maybeStamp(car);
+      setCaret(car);
       onInput();
       syncMenu();
     }
@@ -855,6 +957,120 @@
       const st = stack.pop();
       text = st.text; render(); setCaret(st.selA, st.selB); lastType = null; onInput();
       closeMenu();
+    }
+    // Undo/redo route through these so a collab binding can swap in a CRDT-aware history
+    // (Y.UndoManager, local-edits-only) without the editor knowing. extUndo/extRedo null ⇒
+    // the built-in stacks run, identical to before. Used by keydown, beforeinput, and cmd().
+    function doUndo() { if (extUndo) extUndo(); else restore(undo, redo); }
+    function doRedo() { if (extRedo) extRedo(); else restore(redo, undo); }
+
+    /* ====================================================================
+       Stage-2 collaboration core (additive). A binding (md-editor-collab.js)
+       drives these; with no binding they're inert. The editor stays the single
+       source of truth — `text` — and these only translate to/from a host CRDT.
+       ==================================================================== */
+    // Rebase an absolute offset across a remote splice (the standard CRDT caret rule).
+    function rebasePos(pos, index, deleteLen, insLen) {
+      if (pos <= index) return pos;                       // before the edit — unmoved
+      if (pos >= index + deleteLen) return pos + insLen - deleteLen;   // after — shifted
+      return index + insLen;                              // inside the deleted span — clamp to insert end
+    }
+    // Apply ONE remote edit {index, deleteLen, insert}. Mutates text, rebases the caret,
+    // re-renders, restores the caret (only if WE hold focus, so it never steals selection
+    // from a peer editing in the same page), and fires NEITHER onInput NOR onChange (no echo).
+    function applyRemote(index, deleteLen, insert) {
+      index = Math.max(0, Math.min(index | 0, text.length));
+      deleteLen = Math.max(0, Math.min(deleteLen | 0, text.length - index));
+      insert = insert == null ? "" : String(insert);
+      if (!deleteLen && !insert) return;
+      remoteApplying = true;
+      try {
+        text = text.slice(0, index) + insert + text.slice(index + deleteLen);
+        selA = rebasePos(selA, index, deleteLen, insert.length);
+        selB = rebasePos(selB, index, deleteLen, insert.length);
+        const focused = (document.activeElement === surface);
+        render();
+        if (focused) setCaret(selA, selB);   // keep our live caret put; render already reveals at selA/selB
+      } finally {
+        remoteApplying = false;
+      }
+    }
+    // Remote-cursor overlay. setRemoteCarets([]) tears the layer's contents down (zero cost);
+    // a non-empty list lazily builds an absolutely-positioned layer over the surface.
+    function ensureCaretLayer() {
+      if (caretLayer) return caretLayer;
+      caretLayer = document.createElement("div");
+      caretLayer.className = "mde-remote-layer";
+      caretLayer.setAttribute("contenteditable", "false");
+      caretLayer.setAttribute("aria-hidden", "true");
+      (surface.parentNode || surface).appendChild(caretLayer);
+      surface.addEventListener("scroll", positionRemoteCarets, { passive: true });
+      if (scrollParent && scrollParent !== surface) scrollParent.addEventListener("scroll", positionRemoteCarets, { passive: true });
+      window.addEventListener("resize", positionRemoteCarets);
+      return caretLayer;
+    }
+    function rectForOffset(off) {
+      const dom = offsetToDom(off);
+      const r = document.createRange();
+      try { r.setStart(dom.node, dom.offset); } catch (_) { return null; }
+      r.collapse(true);
+      const rects = r.getClientRects();
+      const rect = (rects && rects.length) ? rects[rects.length - 1] : r.getBoundingClientRect();
+      return (rect && (rect.height || rect.width || rect.top)) ? rect : null;
+    }
+    function positionRemoteCarets() {
+      if (!caretLayer || !surface.isConnected) return;
+      // overlay the surface's border box (sibling ⇒ shared offsetParent ⇒ matching offset coords)
+      caretLayer.style.left = surface.offsetLeft + "px";
+      caretLayer.style.top = surface.offsetTop + "px";
+      caretLayer.style.width = surface.offsetWidth + "px";
+      caretLayer.style.height = surface.offsetHeight + "px";
+      caretLayer.textContent = "";
+      if (!remoteCarets.length) return;
+      const sb = surface.getBoundingClientRect();
+      for (const c of remoteCarets) {
+        if (!c) continue;
+        const color = c.color || "var(--mde-green)";
+        const a = Math.max(0, Math.min(+c.a || 0, text.length));
+        const b = (c.b == null) ? a : Math.max(0, Math.min(+c.b || 0, text.length));
+        const lo = Math.min(a, b), hi = Math.max(a, b);
+        if (hi > lo) {   // colored selection highlight, one box per client rect (per visual line)
+          const r = document.createRange();
+          const pa = offsetToDom(lo), pb = offsetToDom(hi);
+          try { r.setStart(pa.node, pa.offset); r.setEnd(pb.node, pb.offset); } catch (_) {}
+          const rects = r.getClientRects();
+          for (let i = 0; i < rects.length; i++) {
+            const rc = rects[i]; if (!rc.width && !rc.height) continue;
+            const sel = document.createElement("div");
+            sel.className = "mde-remote-sel";
+            sel.style.left = (rc.left - sb.left) + "px"; sel.style.top = (rc.top - sb.top) + "px";
+            sel.style.width = rc.width + "px"; sel.style.height = rc.height + "px";
+            sel.style.background = color;
+            caretLayer.appendChild(sel);
+          }
+        }
+        const cr = rectForOffset(b);   // 2px caret bar at the focus end
+        if (cr) {
+          const bar = document.createElement("div");
+          bar.className = "mde-remote-caret";
+          bar.style.left = (cr.left - sb.left) + "px"; bar.style.top = (cr.top - sb.top) + "px";
+          bar.style.height = (cr.height || 18) + "px"; bar.style.background = color;
+          caretLayer.appendChild(bar);
+          if (c.name) {   // small name label riding just above the caret
+            const lab = document.createElement("div");
+            lab.className = "mde-remote-label"; lab.textContent = c.name;
+            lab.style.left = (cr.left - sb.left) + "px"; lab.style.top = (cr.top - sb.top) + "px";
+            lab.style.background = color;
+            caretLayer.appendChild(lab);
+          }
+        }
+      }
+    }
+    function setRemoteCarets(list) {
+      remoteCarets = Array.isArray(list) ? list.filter(c => c && c.a != null) : [];
+      if (!remoteCarets.length) { if (caretLayer) caretLayer.textContent = ""; return; }
+      ensureCaretLayer();
+      positionRemoteCarets();
     }
 
     /* ----- word / grapheme boundaries ----- */
@@ -917,8 +1133,8 @@
       else if (t === "deleteWordBackward")    { e.preventDefault(); if (a !== b) edit(a, b, "", a, "del"); else { const p = wordLeft(a); edit(p, a, "", p, "del"); } }
       else if (t === "deleteWordForward")     { e.preventDefault(); if (a !== b) edit(a, b, "", a, "del"); else { const x = wordRight(b); edit(b, x, "", a, "del"); } }
       else if (t === "deleteSoftLineBackward" || t === "deleteHardLineBackward") { e.preventDefault(); if (a !== b) edit(a, b, "", a, "del"); else { const ls = lineStart(a); edit(ls, a, "", ls, "del"); } }
-      else if (t === "historyUndo") { e.preventDefault(); restore(undo, redo); }
-      else if (t === "historyRedo") { e.preventDefault(); restore(redo, undo); }
+      else if (t === "historyUndo") { e.preventDefault(); doUndo(); }
+      else if (t === "historyRedo") { e.preventDefault(); doRedo(); }
       else { e.preventDefault(); } // paste/cut/drop handled by their own events; ignore the rest
     });
     /* ----- DOCS-9 clean export: serialize a source range to human-clean output -----
@@ -1074,8 +1290,8 @@
         if (e.key === "Escape") { e.preventDefault(); closeMenu(); return; }
       }
       const mod = e.metaKey || e.ctrlKey;
-      if (mod && (e.key === "z" || e.key === "Z")) { e.preventDefault(); e.shiftKey ? restore(redo, undo) : restore(undo, redo); return; }
-      if (mod && e.key === "y") { e.preventDefault(); restore(redo, undo); return; }
+      if (mod && (e.key === "z" || e.key === "Z")) { e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); return; }
+      if (mod && e.key === "y") { e.preventDefault(); doRedo(); return; }
       if (mod && (e.key === "b" || e.key === "B")) { e.preventDefault(); wrap("**"); return; }
       if (mod && (e.key === "i" || e.key === "I")) { e.preventDefault(); wrap("*"); return; }
       if (mod && (e.key === "s" || e.key === "S")) { e.preventDefault(); onSave(); return; }
@@ -1191,7 +1407,7 @@
         rafPending = false;
         if (selInCell()) { closeMenu(); return; }
         const cur = readSel(); if (!cur) return;
-        selA = cur[0]; selB = cur[1]; applyReveal(); syncMenu();
+        selA = cur[0]; selB = cur[1]; applyReveal(); syncMenu(); notifyCaret(); if (wcCaretRefresh) wcCaretRefresh();
       });
     });
 
@@ -1416,6 +1632,7 @@
       add("rule", "Horizontal rule", "Insert", () => insertRule(), "divider hr line");
       add("date", "Insert today's date", "Insert", () => { const s = readSel() || [selA, selB]; const tok = "@{date:" + todayISO() + "}"; edit(s[0], s[1], tok, s[0] + tok.length, "chip"); }, "today calendar");
       add("dark", "Toggle dark mode", "View", () => toggleTheme(), "theme night light");
+      add("acceptmd", (acceptMd ? "Show raw markdown marks" : "Hide markdown marks (easter egg)"), "View", () => setAcceptMarkdown(!acceptMd), "markdown asterisk raw syntax accept reveal");
       add("copyplain", "Copy clean text", "Export", () => copyCleanAll(), "plain export paste docs");
       return c;
     }
@@ -1685,6 +1902,10 @@
        DOCS-WC — word count. A passive "N words" pill at the editor stage's
        bottom-left (toggleable + persisted) plus a Google-Docs-style modal on
        Cmd/Ctrl+Shift+C with Words / Characters / Characters-excluding-spaces.
+       SELECTION-AWARE (per-user): with no highlight the pill/modal report the
+       FULL doc; while THIS user has text highlighted they report the highlighted
+       portion only ("N words selected" / a "Selection" modal subtitle), reverting
+       the instant the selection collapses. Each collaborator sees their own count.
        EVERY count runs on the CLEANED text — markdown marks, list bullets &
        numbers, %%comments%%, <!--comments-->, @{…} chips→labels, and @{s:…}
        style spans are all stripped — so HIDDEN FORMATTING never inflates the
@@ -1701,8 +1922,8 @@
     // numbers and structural lines (rules, blanks) — Google Docs excludes those
     // from its counts too. Reuses the same renderer primitives, so chips, styles,
     // and comments are handled identically to the clean copy-out path.
-    function wcPlain() {
-      const lines = text.split("\n"), out = []; let i = 0;
+    function wcPlain(src) {
+      const lines = (src == null ? text : src).split("\n"), out = []; let i = 0;
       const hidden = commentLines(lines);
       while (i < lines.length) {
         if (hidden[i]) { i++; continue; }                    // <!--…--> comment block — never counted
@@ -1721,8 +1942,12 @@
       }
       return out.join("\n");
     }
-    function wcCounts() {
-      const p = wcPlain();
+    // No args → whole doc. With a non-empty [from,to) source range → count only that
+    // slice (the highlighted-portion count). Same cleaning either way, so a selection's
+    // markdown marks / chips / comments / style spans never inflate the number.
+    function wcCounts(from, to) {
+      const ranged = from != null && to != null && from !== to;
+      const p = ranged ? wcPlain(text.slice(Math.min(from, to), Math.max(from, to))) : wcPlain();
       const words = (p.match(/\S+/g) || []).length;        // runs of non-whitespace
       const chars = p.replace(/\n/g, "").length;           // chars incl. spaces; newlines (paragraph breaks) not counted
       const charsNoSpaces = p.replace(/\s/g, "").length;   // strip every whitespace
@@ -1756,8 +1981,13 @@
     }
     function updateWordCount() {
       if (!wcPill) return;
-      const n = wcCounts().words;
-      wcPill.textContent = wcFmt(n) + (n === 1 ? " word" : " words");
+      // Per-user, local selection: when this user has a highlight, the pill shows the
+      // word count of the highlighted portion only; with no highlight it shows the full
+      // doc. (Each collaborator reads their OWN selection, so the pill is inherently per-user.)
+      const sel = selA !== selB;
+      const n = (sel ? wcCounts(selA, selB) : wcCounts()).words;
+      wcPill.textContent = wcFmt(n) + (n === 1 ? " word" : " words") + (sel ? " selected" : "");
+      wcPill.classList.toggle("sel", sel);
       wcPill.classList.toggle("hidden", !wcVisible);
     }
     // Coalesce per-keystroke renders into one recompute per frame.
@@ -1768,7 +1998,7 @@
       wcModal = document.createElement("div"); wcModal.className = "mde-wcmodal";
       wcModal.setAttribute("role", "dialog"); wcModal.setAttribute("aria-modal", "true"); wcModal.setAttribute("aria-label", "Word count");
       wcModal.innerHTML =
-        '<div class="mde-wc-h">Word Count</div>' +
+        '<div class="mde-wc-h">Word Count<span class="mde-wc-sub" data-wc-sub></span></div>' +
         '<div class="mde-wc-rows">' +
           '<div class="mde-wc-row"><span class="mde-wc-k">Words</span><span class="mde-wc-v" data-wc="words">0</span></div>' +
           '<div class="mde-wc-row"><span class="mde-wc-k">Characters</span><span class="mde-wc-v" data-wc="chars">0</span></div>' +
@@ -1790,10 +2020,13 @@
     function openWordCount() {
       if (!wcEnabled) return;
       if (!wcModal) buildWcModal();
-      const c = wcCounts();
+      // Mirror the pill: with a highlight, the modal reports the selection's counts.
+      const sel = selA !== selB;
+      const c = sel ? wcCounts(selA, selB) : wcCounts();
       wcModal.querySelector('[data-wc="words"]').textContent = wcFmt(c.words);
       wcModal.querySelector('[data-wc="chars"]').textContent = wcFmt(c.chars);
       wcModal.querySelector('[data-wc="charsNoSpaces"]').textContent = wcFmt(c.charsNoSpaces);
+      const sub = wcModal.querySelector('[data-wc-sub]'); if (sub) sub.textContent = sel ? "Selection" : "";
       wcCheck.checked = wcVisible;
       wcScrim.classList.add("open");
       const ok = wcModal.querySelector(".mde-wc-ok"); if (ok && ok.focus) ok.focus();
@@ -1804,7 +2037,7 @@
       wcScrim.classList.remove("open");
       surface.focus();
     }
-    if (wcEnabled) { buildWcDom(); wcRefresh = scheduleWcCount; }
+    if (wcEnabled) { buildWcDom(); wcRefresh = scheduleWcCount; wcCaretRefresh = scheduleWcCount; }
 
     /* A small whitelisted command API so a HOST TOOLBAR can run the essential
        editing actions (the same internals the palette drives). Keeps formatting
@@ -1825,13 +2058,14 @@
         case "rule":    return insertRule();
         case "table":   { const s = readSel() || [selA, selB]; return openGrid(s[0], s[1]); }
         case "clearfmt":return clearStyle();
-        case "undo":    return restore(undo, redo);
-        case "redo":    return restore(redo, undo);
+        case "acceptmd":return setAcceptMarkdown(!acceptMd);
+        case "undo":    return doUndo();
+        case "redo":    return doRedo();
       }
     }
 
     return {
-      setText(v) { dismiss(); text = (v == null ? "" : String(v)).replace(/\r\n?/g, "\n"); undo = []; redo = []; lastType = null; selA = selB = 0; render(); },
+      setText(v) { dismiss(); text = (v == null ? "" : String(v)).replace(/\r\n?/g, "\n"); undo = []; redo = []; lastType = null; selA = selB = 0; render(); notifyReseed(); },
       getText() { return text; },
       focus() { surface.focus(); },
       caretToEnd() { setCaret(text.length); },
@@ -1852,13 +2086,40 @@
       // overlay/drawer covers the editor) — they live on body-mounted roots the host can't reach.
       setTocButtonHidden(b) { if (tocRoot) tocRoot.classList.toggle("rail-open", !!b); if (wcRoot) wcRoot.classList.toggle("rail-open", !!b); },
       // DOCS-WC — word count over the CLEANED text (no markdown/chips/comments/styles).
-      // openWordCount() shows the modal; wordCount() returns {words, chars, charsNoSpaces};
+      // openWordCount() shows the modal; wordCount() returns {words, chars, charsNoSpaces}
+      // for the whole doc, or wordCount(from,to) for a source sub-range (the pill uses this
+      // for the live highlighted-portion count);
       // setWordCountVisible() toggles the passive bottom-left pill (persists the choice).
       openWordCount, wordCount: wcCounts,
       setWordCountVisible(v) { wcVisible = !!v; wcSaveVisible(wcVisible); updateWordCount(); },
       // Whitelisted editing commands for a host toolbar (bold/italic/headings/lists/link/table/
       // undo/redo/…). The same internals the command palette uses.
       cmd,
+      // Markdown demotion — per-user "accept markdown" easter-egg toggle (persisted). On (default):
+      // typed emphasis marks flash once then hide and never reveal on click; off: raw marks stay
+      // visible. Headers are unaffected. A host settings UI can drive these.
+      getAcceptMarkdown, setAcceptMarkdown,
+      toggleAcceptMarkdown() { setAcceptMarkdown(!acceptMd); },
+      /* ---- Stage-2 collaboration hooks (additive; backend-agnostic) ----
+         A host wires these from md-editor-collab.js (window.MarkdownCollab). Each is inert
+         until used, so a non-collab host is byte-for-byte unaffected (Stage-1 suite stays green).
+           onChange(cb)            → cb() AFTER every local mutation (not during applyRemote); returns unsubscribe
+           onCaret(cb)             → cb(selA, selB) on local caret/selection change; returns unsubscribe
+           onReseed(cb)            → cb() AFTER a host setText() re-baselines the doc; returns unsubscribe.
+                                     A binding uses this to reset its `last` (so a stray setText — e.g. a tab
+                                     switch — can't clobber the shared doc). NOTE: setText replaces the
+                                     editor with DIFFERENT content; for true multi-tab collab the host must
+                                     destroy() + bindCollab() to the new tab's Y.Text — onReseed only keeps a
+                                     single binding from corrupting its current doc, it does not retarget it.
+           applyRemote(i,del,ins)  → apply a remote splice (no echo); rebases the caret
+           setRemoteCarets(list)   → draw remote cursors [{id,name,color,a,b}] ([] tears them down)
+           setUndoHandler(u,r)     → route Cmd-Z/Y to a CRDT history (null,null restores the built-in) */
+      onChange(cb) { if (typeof cb !== "function") return function () {}; changeListeners.push(cb); return function () { const i = changeListeners.indexOf(cb); if (i >= 0) changeListeners.splice(i, 1); }; },
+      onCaret(cb) { if (typeof cb !== "function") return function () {}; caretListeners.push(cb); return function () { const i = caretListeners.indexOf(cb); if (i >= 0) caretListeners.splice(i, 1); }; },
+      onReseed(cb) { if (typeof cb !== "function") return function () {}; reseedListeners.push(cb); return function () { const i = reseedListeners.indexOf(cb); if (i >= 0) reseedListeners.splice(i, 1); }; },
+      applyRemote, setRemoteCarets,
+      setUndoHandler(u, r) { extUndo = (typeof u === "function") ? u : null; extRedo = (typeof r === "function") ? r : null; },
+      getSelection() { return [selA, selB]; },
     };
   }
 
@@ -1873,7 +2134,7 @@
      in localStorage `mde-tabs-collapsed`), separated from the editor by a hairline.
 
        makeTabs(container, {
-         tabs:[{id,title,emoji?,dim?}], activeId?, people?, emptyLabel?,
+         tabs:[{id,title,emoji?,dim?,deletable?}], activeId?, people?, emptyLabel?,
          railTitle?,       // sidebar header label (default "Tabs")
          toc?, tocButton?, // forwarded to makeEditor (TOC panel + floating button)
          tabMenu?,         // set false to hide the per-tab ⋮ options menu
@@ -1885,6 +2146,8 @@
          onAddTab() -> {id,title,emoji?} | Promise | null,  // host creates the tab
          onReorder(orderedIds),    // drag-reorder committed — ids in their new order
          onDelete(id) -> bool|Promise,   // host deletes; return false to veto removal
+         // Delete shows per-tab only when onDelete is set AND tab.deletable !== false
+         // (default shown). onAddTab/onDuplicate results may carry deletable too.
          onDuplicate(id) -> {id,title?,emoji?} | Promise,  // host clones; a NEW id is required
          onSetEmoji(id, emoji),    // emoji chosen ("" clears it) — host persists
          linkForTab(id) -> url (string|Promise),   // override the "Copy link" target
@@ -1968,6 +2231,7 @@
       people: opts.people || [],
       toc: opts.toc,
       tocButton: opts.tocButton,
+      acceptMarkdown: opts.acceptMarkdown,   // forward the markdown-demotion toggle (else the editor reads its persisted per-user pref)
       scrollParent: stage,
       onInput: function () { if (!loading && opts.onTabInput) opts.onTabInput(activeId); },
       onSave:  function () { if (opts.onTabSave) opts.onTabSave(activeId); },
@@ -2096,7 +2360,7 @@
       let res;
       try { res = await opts.onAddTab(); } catch (e) { return; }
       if (!res || !res.id) return;
-      tabsState.push({ id: res.id, title: res.title || "Untitled", emoji: res.emoji || "", dim: false });
+      tabsState.push({ id: res.id, title: res.title || "Untitled", emoji: res.emoji || "", dim: false, deletable: res.deletable !== false });
       renderRail();
       selectTab(res.id);
     }
@@ -2141,7 +2405,9 @@
       if (opts.onSetEmoji)  tabMenu.appendChild(menuItem("Choose emoji", MENU_ICONS.emoji, () => openEmojiPop(t, anchor)));
       if (opts.onDuplicate) tabMenu.appendChild(menuItem("Duplicate", MENU_ICONS.duplicate, () => { closeTabMenu(); duplicateTab(t); }));
       tabMenu.appendChild(menuItem("Copy link", MENU_ICONS.link, () => { closeTabMenu(); copyLink(t); }));
-      if (opts.onDelete) {
+      // Delete shows only when the host supplies onDelete AND this tab opts in
+      // (t.deletable !== false) — so a host can hide it per-tab. Default: shown.
+      if (opts.onDelete && t.deletable !== false) {
         const sep = document.createElement("div"); sep.className = "mde-tab-menu-sep"; tabMenu.appendChild(sep);
         tabMenu.appendChild(menuItem("Delete", MENU_ICONS.trash, () => { closeTabMenu(); deleteTab(t); }, true));
       }
@@ -2177,7 +2443,8 @@
       if (!res || !res.id) return;
       const idx = tabsState.findIndex(x => x.id === t.id);
       const nt = { id: res.id, title: res.title || ((t.title || "Untitled") + " copy"),
-                   emoji: res.emoji != null ? res.emoji : (t.emoji || ""), dim: false };
+                   emoji: res.emoji != null ? res.emoji : (t.emoji || ""), dim: false,
+                   deletable: res.deletable !== false };
       tabsState.splice(idx < 0 ? tabsState.length : idx + 1, 0, nt);
       renderRail(); selectTab(nt.id);
     }
@@ -2263,26 +2530,44 @@
     const api = {
       setTabs(list, selectId) {
         tabsState.length = 0;
-        for (const t of (list || [])) tabsState.push({ id: t.id, title: t.title || "Untitled", emoji: t.emoji || "", dim: !!t.dim });
+        for (const t of (list || [])) tabsState.push({ id: t.id, title: t.title || "Untitled", emoji: t.emoji || "", dim: !!t.dim, deletable: t.deletable !== false });
         activeId = null;
         renderRail();
         const first = selectId || (tabsState[0] && tabsState[0].id);
         if (first) selectTab(first); else { loading = true; ed.setText(""); loading = false; }
       },
       addTab(t, select) {
-        tabsState.push({ id: t.id, title: t.title || "Untitled", emoji: t.emoji || "", dim: !!t.dim });
+        tabsState.push({ id: t.id, title: t.title || "Untitled", emoji: t.emoji || "", dim: !!t.dim, deletable: t.deletable !== false });
         renderRail();
         if (select !== false) selectTab(t.id);
       },
       renameTab(id, title) { const t = tabsState.find(x => x.id === id); if (t) { t.title = title; renderRail(); } },
       setEmoji(id, emoji) { const t = tabsState.find(x => x.id === id); if (t) { t.emoji = emoji || ""; renderRail(); } },
-      getTabs() { return tabsState.map(t => ({ id: t.id, title: t.title, emoji: t.emoji, dim: t.dim })); },
+      getTabs() { return tabsState.map(t => ({ id: t.id, title: t.title, emoji: t.emoji, dim: t.dim, deletable: t.deletable })); },
       selectTab,
       getActiveId() { return activeId; },
       getText() { return ed.getText(); },
       setText(v) { loading = true; ed.setText(v); loading = false; },
       getEditor() { return ed; },
       focus() { ed.focus(); },
+      // markdown-demotion toggle — delegated to the inner editor so a host settings UI can drive it
+      getAcceptMarkdown() { return ed.getAcceptMarkdown(); },
+      setAcceptMarkdown(v) { return ed.setAcceptMarkdown(v); },
+      toggleAcceptMarkdown() { return ed.toggleAcceptMarkdown(); },
+      // Stage-2 collaboration hooks — delegated to the active tab's editor. A collab binding is
+      // strictly PER ACTIVE TAB and does NOT survive a tab switch: selectTab/setText re-seed the
+      // SAME editor with a DIFFERENT tab's content, so a binding bound to getEditor() (or to tabs)
+      // now points at the wrong document. The host MUST destroy() the old binding and bindCollab()
+      // to the newly-active tab's Y.Text on every tab change. (As a safety net, the binding listens
+      // for onReseed and resets its baseline so a stray setText can't clobber its current shared
+      // doc — but that does NOT retarget it; only destroy()+rebind does.)
+      onChange(cb) { return ed.onChange(cb); },
+      onCaret(cb) { return ed.onCaret(cb); },
+      onReseed(cb) { return ed.onReseed(cb); },
+      applyRemote(i, del, ins) { return ed.applyRemote(i, del, ins); },
+      setRemoteCarets(list) { return ed.setRemoteCarets(list); },
+      setUndoHandler(u, r) { return ed.setUndoHandler(u, r); },
+      getSelection() { return ed.getSelection(); },
     };
     renderRail();
     if (opts.tabs) api.setTabs(opts.tabs, opts.activeId);

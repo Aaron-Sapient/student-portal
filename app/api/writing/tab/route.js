@@ -6,12 +6,15 @@ import {
   createManualTab,
   renameTab,
   reorderTabs,
+  deleteTab,
+  tabIsDeletable,
 } from '@/lib/writingDocs'
 
 // POST /api/writing/tab — manual tab management.
 //   { action:'create',  document_id, title }
 //   { action:'rename',  tab_id, title }
 //   { action:'reorder', document_id, orderedIds:[...] }
+//   { action:'delete',  tab_id }
 export async function POST(request) {
   const actor = await resolveActorOrLink()
   if (actor.error) return actor.error
@@ -36,7 +39,10 @@ export async function POST(request) {
         ? { email: actor.email, name: actor.name }
         : { email: '', name: 'Student' }
     const tab = await createManualTab(supabase, doc.id, body?.title, student)
-    return Response.json({ ok: true, tab })
+    // tell the client whether this fresh tab may be deleted, so the widget's
+    // per-tab Delete shows consistently with what the server will allow.
+    const deletable = tab ? tabIsDeletable({ origin: 'manual', syncState: 'manual_active' }) : false
+    return Response.json({ ok: true, tab: tab ? { ...tab, deletable } : tab })
   }
 
   if (action === 'rename') {
@@ -55,6 +61,18 @@ export async function POST(request) {
     if (!canEditStudent(actor, doc.student_sheet_id)) return forbidden
     const ids = Array.isArray(body?.orderedIds) ? body.orderedIds : []
     await reorderTabs(supabase, doc.id, ids)
+    return Response.json({ ok: true })
+  }
+
+  if (action === 'delete') {
+    const ctx = await tabContext(supabase, body?.tab_id)
+    if (!ctx) return notFound
+    if (!canEditStudent(actor, ctx.studentSheetId)) return forbidden
+    // re-check deletability server-side — never trust the client's gating.
+    if (!tabIsDeletable({ origin: ctx.origin, syncState: ctx.syncState })) {
+      return Response.json({ error: 'This tab can’t be deleted' }, { status: 409 })
+    }
+    await deleteTab(supabase, body.tab_id)
     return Response.json({ ok: true })
   }
 

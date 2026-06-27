@@ -2,7 +2,6 @@ import { getSupabaseClient, STUDENT_COLLEGE_LISTS, MD_DOCUMENTS } from '@/lib/su
 import { resolveViewTarget } from '@/lib/writingAuth'
 import {
   ensureDocuments,
-  ensureSingletonTab,
   syncTabs,
   listTabsOrdered,
   entriesFromCollegeList,
@@ -36,9 +35,8 @@ export async function GET(request) {
   // strictly read-only and see whatever the student has already created.
   let docs = {}
   if (ctx.canEdit) {
-    docs = await ensureDocuments(supabase, studentSheetId, studentEmail)
+    docs = await ensureDocuments(supabase, studentSheetId, student)
     const { piq, supplemental } = entriesFromCollegeList(mirror?.payload || {})
-    await ensureSingletonTab(supabase, docs.COMMON_APP.id, 'Personal Statement', student)
     await syncTabs(supabase, docs.UC_PIQ.id, piq, student)
     await syncTabs(supabase, docs.SUPPLEMENTAL.id, supplemental, student)
   } else {

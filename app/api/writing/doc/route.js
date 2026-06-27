@@ -3,11 +3,11 @@ import { resolveActorOrLink, canViewStudent, canEditStudent } from '@/lib/writin
 import { studentBySheetId } from '@/lib/identity'
 import {
   docContext,
-  ensureSingletonTab,
   syncTabs,
   listTabsOrdered,
   getTabBody,
   entriesFromCollegeList,
+  tabIsDeletable,
 } from '@/lib/writingDocs'
 
 // GET /api/writing/doc?doc=<docId>  → one document's tabs + current bodies.
@@ -45,9 +45,9 @@ export async function GET(request) {
       .eq('student_sheet_id', doc.student_sheet_id)
       .maybeSingle()
     const { piq, supplemental } = entriesFromCollegeList(mirror?.payload || {})
-    if (doc.doc_type === 'COMMON_APP') {
-      await ensureSingletonTab(supabase, docId, 'Personal Statement', student)
-    } else if (doc.doc_type === 'UC_PIQ') {
+    // COMMON_APP has no list to sync against — its default tab is seeded once at
+    // doc creation (ensureDocuments), so there's nothing to materialize on read.
+    if (doc.doc_type === 'UC_PIQ') {
       await syncTabs(supabase, docId, piq, student)
     } else if (doc.doc_type === 'SUPPLEMENTAL') {
       await syncTabs(supabase, docId, supplemental, student)
@@ -64,12 +64,19 @@ export async function GET(request) {
   return Response.json({
     doc: { id: docId, docType: doc.doc_type, label: DOC_LABEL[doc.doc_type] || 'Document' },
     student: { name: student.name },
+    // The acting viewer — used by the live-collaboration layer to label this
+    // user's cursor/presence to peers. role is 'admin' | 'student' | 'parent' |
+    // 'link' (anonymous via the share link).
+    actor: { name: actor.name || (canEdit ? 'You' : 'Viewer'), role: actor.role },
     canEdit,
     tabs: tabs.map((t) => ({
       id: t.id,
       title: t.title,
       dim: t.sync_state === 'orphaned',
       origin: t.origin,
+      // editors may delete manual + orphaned tabs; active synced tabs are gated
+      // (they mirror the college list and would re-sync). Default tab included.
+      deletable: canEdit && tabIsDeletable({ origin: t.origin, syncState: t.sync_state }),
     })),
     bodies,
   })
