@@ -42,7 +42,11 @@ async function main() {
   const sb = createClient(get('SUPABASE_URL'), get('SUPABASE_SERVICE_ROLE_KEY'), {
     auth: { persistSession: false },
   })
-  const { fetchCollegeData } = await import('../lib/collegeList.js')
+  // Read the SHEETS path directly (not the flag-aware fetchCollegeData dispatcher):
+  // this is the WRITER for the Supabase mirror, so it must always read Google
+  // Sheets regardless of READ_SUPABASE_COLLEGES — otherwise once that flag is `on`
+  // the mirror would read Supabase and write it back to itself (circular no-op).
+  const { fetchCollegeDataFromSheets } = await import('../lib/collegeList.js')
 
   const args = process.argv.slice(2)
   const ALL = args.includes('--all')
@@ -75,7 +79,7 @@ async function main() {
   for (const sheetId of targets) {
     let payload
     try {
-      payload = await fetchCollegeData(sheets, sheetId)
+      payload = await fetchCollegeDataFromSheets(sheets, sheetId)
     } catch (e) {
       console.log(`✗  ${sheetId}: read failed — ${e.message}`)
       continue

@@ -3,8 +3,9 @@
  * (Ryan, A:L) + `A_CheckinForm` (Aaron, A:J) → Supabase `checkins` (Bucket A).
  * One row per form submission; instructor distinguishes the two forms.
  *
- *   node scripts/backfillCheckins.cjs           # DRY RUN
- *   node scripts/backfillCheckins.cjs --write    # insert
+ *   node scripts/backfillCheckins.cjs              # DRY RUN
+ *   node scripts/backfillCheckins.cjs --write       # live-safe upsert
+ *   node scripts/backfillCheckins.cjs --reconcile   # alias of --write (cron entrypoint)
  *
  * Source VERIFIED against submitUpdateForm/route.js + submitAaronUpdateForm +
  * bookMeeting (form column layouts) and checkinDecision (gate vocab):
@@ -14,8 +15,16 @@
  *  Aaron A_CheckinForm: A ts · B name · C taskUpdates · D deadlines · E concernCat
  *    · F concernText · G respPref · H agenda · I routingReason · J decision(gate: 15min/30min/email)
  * Student link = form col B (name) → Master col A name → col G sheet_id.
- * Unmatched names (incl. header rows) are skipped+warned. No natural unique key
- * → --write clears `checkins` first (pure historical mirror).
+ * Unmatched names (incl. header rows) are skipped+warned.
+ *
+ * LIVE-SAFE & RECONCILE-ABLE: idempotent upsert on the natural key
+ * (student_sheet_id, instructor, submitted_at) — NO delete-then-insert window, so
+ * it's safe to run on the reconcile cron while the app reads `checkins`. Requires
+ * the unique constraint `checkins_natural_key (student_sheet_id, instructor,
+ * submitted_at)` (see _notes/3nf-schema-draft.sql). The source read MUST stay
+ * FORMATTED_VALUE (default) so the derived submitted_at stays byte-identical to the
+ * existing rows — switching col A to UNFORMATTED_VALUE would change every submitted_at
+ * and break the key match (duplicates instead of in-place updates).
  */
 const fs = require('fs');
 const path = require('path');
@@ -36,7 +45,9 @@ const tsOrNull = (v) => { const s = String(v ?? '').trim(); if (!s) return null;
 const t = (v) => { const s = String(v ?? '').trim(); return s || null; };
 
 async function main() {
-  const WRITE = process.argv.includes('--write');
+  // --reconcile is an alias of --write (live-safe upsert) for parity with
+  // backfillStudents.cjs; the reconcile cron invokes it (and also passes --write).
+  const WRITE = process.argv.includes('--write') || process.argv.includes('--reconcile');
   const get = loadEnv();
   const auth = new google.auth.GoogleAuth({
     credentials: { client_email: get('GOOGLE_SERVICE_ACCOUNT_EMAIL'), private_key: get('GOOGLE_PRIVATE_KEY').replace(/\\n/g, '\n') },
@@ -100,12 +111,28 @@ async function main() {
   records.slice(0, 8).forEach((r) => console.log(`  ${r.instructor.padEnd(6)} ${String(r.submitted_at).slice(0, 10)} gate=${String(r.gate_state).padEnd(8)} ${r.student_sheet_id.slice(0, 10)}…`));
   warns.slice(0, 15).forEach((w) => console.log(`  ⚠ ${w}`));
 
-  if (!WRITE) { console.log('\nDRY RUN — re-run with --write.'); return; }
-  await sb.from('checkins').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-  for (let i = 0; i < records.length; i += 500) {
-    const { error } = await sb.from('checkins').insert(records.slice(i, i + 500));
-    if (error) { console.error('insert failed:', error.message); process.exit(1); }
+  if (!WRITE) { console.log('\nDRY RUN — re-run with --write (or --reconcile).'); return; }
+
+  // Defensive: collapse any duplicate natural keys (student_sheet_id, instructor,
+  // submitted_at) to the LAST occurrence. A batch upsert with two rows that share the
+  // conflict target errors ("cannot affect row a second time"); none exist in the live
+  // data (weekly cadence, distinct timestamps), but the cron must never wedge on one.
+  const byKey = new Map();
+  for (const r of records) byKey.set(`${r.student_sheet_id}|${r.instructor}|${r.submitted_at}`, r);
+  const deduped = [...byKey.values()];
+  if (deduped.length !== records.length) {
+    console.log(`  ⚠ collapsed ${records.length - deduped.length} duplicate natural-key row(s).`);
   }
-  console.log(`\n✓ Inserted ${records.length} checkins (table cleared first).`);
+
+  // Live-safe: upsert on the natural key — never delete-then-insert (which briefly
+  // empties the table while the app may be reading it). Idempotent: re-runs match the
+  // same keys and update in place, so the row count holds steady.
+  for (let i = 0; i < deduped.length; i += 500) {
+    const { error } = await sb
+      .from('checkins')
+      .upsert(deduped.slice(i, i + 500), { onConflict: 'student_sheet_id,instructor,submitted_at' });
+    if (error) { console.error('upsert failed:', error.message); process.exit(1); }
+  }
+  console.log(`\n✓ Upserted ${deduped.length} checkins (live-safe; matched on student_sheet_id+instructor+submitted_at).`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });
