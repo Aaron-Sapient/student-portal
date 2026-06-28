@@ -3,7 +3,7 @@ import { DateTime } from 'luxon';
 import { getGoogleSheetsClient } from '@/lib/google';
 import { getCoachMessage, hadRecentMeeting } from '@/lib/coachMessages';
 import { getSheetCoachNote } from '@/lib/scores';
-import { hasRecentGrades, TRANSCRIPT_GRADE_RANGE } from '@/lib/gradeData';
+import { studentGradeGate } from '@/lib/transcript';
 
 // Resolve the student's sheet ID + Class from the master sheet. A:BD so col A
 // rides along: email col J (9), portal URL col G (6), Class col B (1).
@@ -27,13 +27,9 @@ async function resolveStudent(sheets, email) {
 async function hasEnoughGradeData(sheets, sheetId, cls) {
   if (!sheetId) return true;
   try {
-    const tr = await sheets.spreadsheets.values.get({
-      spreadsheetId: sheetId,
-      range: TRANSCRIPT_GRADE_RANGE,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
     const now = DateTime.now().setZone('America/Los_Angeles');
-    return hasRecentGrades(tr.data.values || [], cls, { year: now.year, month: now.month }).enough;
+    // Flag-gated gate (Sheets today); a read error throws → caught → fail OPEN (true).
+    return (await studentGradeGate(sheets, sheetId, cls, { year: now.year, month: now.month })).enough;
   } catch {
     return true;
   }

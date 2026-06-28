@@ -20,11 +20,12 @@
  * Requires .env.local present in the repo (the child scripts read it). A lockfile
  * prevents overlapping runs. Mac↔NAS deploy is Aaron's call.
  *
- * NOTE — scope: this covers ONLY the built-flag domains. Other tables (checkins,
- * parent_checkins, instructor_blocks, written_reports, transcript, meetings) are
- * still backfilled via their delete-then-insert scripts and are NOT reconciled
- * here — add them once their read flags exist AND their writers are converted to
- * upsert (live-safe), per _notes/cutover-field-map.md.
+ * NOTE — scope: covers the built-flag domains. Wave 1 added checkins,
+ * instructor_blocks, transcript, college lists, and comps (all live-safe:
+ * upsert / insert-missing+prune-by-key, never delete-then-insert). Still NOT
+ * reconciled here (Wave 3): parent_checkins + written_reports (their reads need
+ * the app dual-write first); meetings_log is being retired in favor of the
+ * `meetings` hub table (kept fresh by the student-hub step).
  */
 const fs = require('fs');
 const os = require('os');
@@ -38,14 +39,21 @@ const LOCK = path.join(os.tmpdir(), 'student-portal-reconcile.lock');
 const STALE_MS = 20 * 60 * 1000; // a run older than this is assumed dead → override
 
 const ALL_STEPS = [
+  // ---- fast tier (cheap Master-tab reads; run in --fast every ~10 min) ----
   { name: 'roster (students + guardians + soft-deactivate)', script: 'backfillStudents.cjs', args: ['--reconcile'] },
   { name: 'score_params', script: 'backfillScoreParams.cjs', args: [] },
+  { name: 'checkins (live-safe upsert)', script: 'backfillCheckins.cjs', args: ['--reconcile'] },
+  { name: 'instructor_blocks (live-safe insert-missing/update/prune)', script: 'reconcileInstructorBlocks.cjs', args: [] },
+  // ---- heavy tier (per-student fan-out; full hourly pass only) ----
   { name: 'scores (live-safe upsert + prune)', script: 'reconcileScores.cjs', args: [], heavy: true },
   // Students-tab hub mirror (intended major + 📆 Meetings agenda). Heavy
   // per-student fan-out; read-only one-way (never writes the sheet). Requires
   // supabase/students_hub_schema.sql applied first, or its upserts fail this step
   // (other steps still run). See scripts/mirrorStudentHub.cjs.
   { name: 'student hub (profiles + meetings)', script: 'mirrorStudentHub.cjs', args: [], heavy: true },
+  { name: 'transcript (live-safe upsert + prune)', script: 'reconcileTranscript.cjs', args: [], heavy: true },
+  { name: 'college lists (jsonb mirror)', script: 'mirrorCollegeLists.cjs', args: ['--all'], heavy: true },
+  { name: 'comps (per-student 🏆 Comps & Projects mirror)', script: 'mirrorComps.cjs', args: [], heavy: true },
 ];
 // --fast skips the heavy per-student passes (just the cheap Master-tab reconciles).
 const STEPS = FAST ? ALL_STEPS.filter((s) => !s.heavy) : ALL_STEPS;

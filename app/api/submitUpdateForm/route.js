@@ -3,7 +3,8 @@ import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import Anthropic from '@anthropic-ai/sdk';
 import { triggerReportGeneration } from '@/lib/generateReport';
-import { listBlocks, isDateBlocked } from '@/lib/blocks';
+import { listBlocksForBooking, isDateBlocked } from '@/lib/blocks';
+import { getProjectRows } from '@/lib/projects';
 import { makeApprovalToken } from '@/lib/checkinApproval';
 import { sendRyanMeetingRequestEmail } from '@/lib/checkinEmails';
 import { getSeniorBySheetId, createCheckinGrant } from '@/lib/seniors';
@@ -250,11 +251,9 @@ export async function POST(request) {
     let behindSchedule = [];
     try {
       if (studentSheetId) {
-        const projRes = await sheets.spreadsheets.values.get({
-          spreadsheetId: studentSheetId,
-          range: '🏆 Comps & Projects!E:L',
-          valueRenderOption: 'UNFORMATTED_VALUE',
-        });
+        // Flag-gated 🏆 Comps & Projects rows (Sheets today). E:N is a superset of
+        // the old E:L read; the indices used below (0,3,4,6) are unchanged.
+        const projectRows = await getProjectRows(sheets, studentSheetId);
         const fmtDate = (raw) => {
           if (raw === '' || raw == null) return '';
           const d = typeof raw === 'number' ? new Date((raw - 25569) * 86400 * 1000) : new Date(raw);
@@ -266,7 +265,7 @@ export async function POST(request) {
           if (!Number.isFinite(n)) return null;
           return n > 0 && n <= 1 ? Math.round(n * 100) : Math.round(n);
         };
-        const active = (projRes.data.values || [])
+        const active = (projectRows || [])
           .slice(1)
           .filter((r) => r[6] === '🟢' || r[6] === '✅')
           .map((r) => ({ activity: r[0] || '', deadline: fmtDate(r[3]), pct: pct(r[4]), status: r[6] || '' }))
@@ -293,7 +292,7 @@ export async function POST(request) {
 
     // Block override: Ryan unavailable today → straight to a written report.
     const today = DateTime.now().setZone('America/Los_Angeles').toFormat('yyyy-LL-dd');
-    const blocks = await listBlocks(sheets).catch(() => []);
+    const blocks = await listBlocksForBooking(sheets).catch(() => []);
     if (isDateBlocked(blocks, 'ryan', today)) {
       outcome = 'written';
       reason = 'Ryan is unavailable today — routed to a written report.';

@@ -1,9 +1,10 @@
 import { auth } from '@clerk/nextjs/server'
 import { getGoogleSheetsClient, getGoogleCalendarClient } from '@/lib/google'
 import { getStudentScores, gradeFromClass } from '@/lib/scores'
-import { hasRecentGrades, TRANSCRIPT_GRADE_RANGE } from '@/lib/gradeData'
+import { hasRecentGrades } from '@/lib/gradeData'
+import { studentGradeGate } from '@/lib/transcript'
 import { normEmail, sessionEmail } from '@/lib/identity'
-import { activeProjectsFromRows } from '@/lib/projects'
+import { activeProjectsFromRows, getProjectRows } from '@/lib/projects'
 import {
   getSeniorBySheetId,
   loadSeniorBookingState,
@@ -161,14 +162,11 @@ export async function GET() {
   // Fetch projects, student name + grade (🔎 Overview, gates the Colleges tab),
   // the weekly holistic scores (📊 Scores, written by the NAS cron), and the
   // session log (📆 Meetings dates → frequency strip) in parallel
-  const [projectsRes, nameRes, rawScores, transcriptRes, meetingDatesRes, aaronPast, ryanPast] = await Promise.all([
-    sheets.spreadsheets.values.get({
-      spreadsheetId: studentSheetId,
-      // E:N — Owner lives in col N (relative index 9). Appended right of the
-      // E:M block so existing indices (0–8) are unchanged. See plan + sheet audit.
-      range: "'🏆 Comps & Projects'!E:N",
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    }),
+  const nowLA = DateTime.now().setZone(ZONE)
+  const [projectRows, nameRes, rawScores, gradeGate, meetingDatesRes, aaronPast, ryanPast] = await Promise.all([
+    // 🏆 Comps & Projects E:N rows per the `comps` flag (Sheets today). Owner in
+    // col N (relative index 9), appended right of E:M so indices 0–8 are unchanged.
+    getProjectRows(sheets, studentSheetId),
     sheets.spreadsheets.values.get({
       spreadsheetId: studentSheetId,
       // B2 = student name; C4 = "Current Year:" grade (gates the Colleges tab).
@@ -177,13 +175,11 @@ export async function GET() {
       valueRenderOption: 'UNFORMATTED_VALUE',
     }),
     getStudentScores(sheets, studentSheetId, gradeFromClass(studentRow[1])),
-    sheets.spreadsheets.values
-      .get({
-        spreadsheetId: studentSheetId,
-        range: TRANSCRIPT_GRADE_RANGE,
-        valueRenderOption: 'UNFORMATTED_VALUE',
-      })
-      .catch(() => null),
+    // Data-sufficiency gate per the `transcript` flag (Sheets today). On a read
+    // error, fall through to hasRecentGrades([]) — the exact prior behavior of the
+    // old `.catch(() => null)` + `transcriptRes?.data?.values || []`.
+    studentGradeGate(sheets, studentSheetId, studentRow[1], { year: nowLA.year, month: nowLA.month })
+      .catch(() => hasRecentGrades([], studentRow[1], { year: nowLA.year, month: nowLA.month })),
     sheets.spreadsheets.values
       .get({
         spreadsheetId: studentSheetId,
@@ -195,15 +191,9 @@ export async function GET() {
     fetchPastBookedMeetings(calendar, process.env.GOOGLE_CALENDAR_ID_RYAN, 'ryan', masterName),
   ])
 
-  // Data-sufficiency gate: a student with no recorded grades for the current or
-  // previous semester gets a grayed-out score dashboard (and the cron skips
-  // scoring them). Computed from the transcript so it overrides any stale row.
-  const nowLA = DateTime.now().setZone(ZONE)
-  const gradeGate = hasRecentGrades(
-    transcriptRes?.data?.values || [],
-    studentRow[1],
-    { year: nowLA.year, month: nowLA.month }
-  )
+  // gradeGate (data-sufficiency) and projectRows now come straight from the
+  // flag-gated readers in the Promise.all above. A student with no recent grades
+  // gets a grayed-out dashboard; the NAS cron applies the same gate.
   const scores = gradeGate.enough ? rawScores : { insufficientData: true }
 
   const sessions = weeklySessionCounts(
@@ -230,7 +220,6 @@ export async function GET() {
   const studentName = nameRes.data.values?.[0]?.[0] || ''
   console.log('Student name:', studentName)
 
-  const projectRows = projectsRes.data.values || []
   console.log('7. Project rows found:', projectRows.length)
   console.log('8. All project rows:', JSON.stringify(projectRows))
 

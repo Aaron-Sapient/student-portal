@@ -2,7 +2,8 @@ import { DateTime } from 'luxon';
 import { requireAdmin } from '@/lib/developerAuth';
 import { getGoogleSheetsClient } from '@/lib/google';
 import { getSupabaseClient, STUDENT_PROFILES } from '@/lib/supabase';
-import { listRoster, readLatestCheckins, normName } from '../studentScores/shared';
+import { listRoster, normName } from '../studentScores/shared';
+import { readLatestCheckins } from '@/lib/checkins';
 
 const ZONE = 'America/Los_Angeles';
 

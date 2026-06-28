@@ -1,7 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
 import { DateTime } from 'luxon';
-import { listBlocks, isDateBlocked } from '@/lib/blocks';
+import { listBlocksForBooking, isDateBlocked } from '@/lib/blocks';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -90,7 +90,7 @@ export async function POST(request) {
     let reason = `Student selected ${responsePreference || '15min (default)'}.`;
 
     const today = DateTime.now().setZone('America/Los_Angeles').toFormat('yyyy-LL-dd');
-    const blocks = await listBlocks(sheets).catch(() => []);
+    const blocks = await listBlocksForBooking(sheets).catch(() => []);
     if (isDateBlocked(blocks, 'aaron', today)) {
       decision = 'email';
       reason = 'Aaron is unavailable today — finalize over email this week.';

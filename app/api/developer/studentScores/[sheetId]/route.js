@@ -4,11 +4,11 @@ import { readScoreParams } from '@/lib/scoreParams';
 import { curveScore, gradeFromClass } from '@/lib/scores';
 import {
   SCORES_TAB,
-  cellToISODate,
   clearCachedScores,
   getWriteSheets,
   listRoster,
 } from '../shared';
+import { getCheckinTimeline } from '@/lib/checkins';
 
 // GET: one student's full scoring history (every 📊 Scores row, with its sheet
 // row number so sessions can be edited in place) plus their check-in dates
@@ -19,13 +19,6 @@ import {
 // CoachNote is what /api/coach serves to the student). Overall recomputes
 // from the ⚙️ Score Params blend and the Model column gets an "· edited"
 // stamp so the provenance stays visible.
-
-const CHECKIN_TABS = [
-  { tab: 'CheckinForm', who: 'Ryan' },
-  { tab: 'A_CheckinForm', who: 'Aaron' },
-];
-
-const normName = (s) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 // Same column layout lib/scores.js parses, but keeping the sheet row number
 // and both raw + shown values (the page shows the pair while calibration is
@@ -75,15 +68,13 @@ export async function GET(_request, { params }) {
       return Response.json({ error: 'Unknown student sheet' }, { status: 404 });
     }
 
-    const [scoresRes, checkinsRes] = await Promise.all([
+    const [scoresRes, checkins] = await Promise.all([
       sheets.spreadsheets.values
         .get({ spreadsheetId: sheetId, range: `'${SCORES_TAB}'!A2:I400` })
         .catch(() => null), // tab not created yet
-      sheets.spreadsheets.values.batchGet({
-        spreadsheetId: process.env.MASTER_SHEET_ID,
-        ranges: CHECKIN_TABS.map((t) => `${t.tab}!A:B`),
-        valueRenderOption: 'UNFORMATTED_VALUE',
-      }),
+      // Check-in tick list per the `checkins` flag (Sheets today): both form-log
+      // tabs joined by normalized name → [{date,who}] sorted. Dispatch is internal.
+      getCheckinTimeline(sheets, sheetId, student.name),
     ]);
 
     const grade = gradeFromClass(student.grade);
@@ -91,19 +82,6 @@ export async function GET(_request, { params }) {
       .map((r, i) => parseSession(r, i, grade))
       .filter(Boolean)
       .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.row - b.row));
-
-    // Check-in dates: the two form-log tabs (A=Timestamp, B=Name), joined by
-    // normalized student name like checkinCompliance does.
-    const key = normName(student.name);
-    const checkins = [];
-    (checkinsRes.data.valueRanges || []).forEach((vr, i) => {
-      for (const r of (vr.values || []).slice(1)) {
-        if (normName(r?.[1]) !== key) continue;
-        const date = cellToISODate(r?.[0]);
-        if (date) checkins.push({ date, who: CHECKIN_TABS[i].who });
-      }
-    });
-    checkins.sort((a, b) => (a.date < b.date ? -1 : 1));
 
     return Response.json({ ...student, sessions, checkins });
   } catch (err) {

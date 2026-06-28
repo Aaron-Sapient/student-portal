@@ -2,7 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
-import { listBlocks, isDateBlocked, blockedWindowsForDate } from '@/lib/blocks';
+import { listBlocksForBooking, isDateBlocked, blockedWindowsForDate } from '@/lib/blocks';
 import {
   getSeniorByEmail,
   loadSeniorBookingState,
@@ -113,7 +113,7 @@ export async function GET(request) {
         singleEvents: true,
         orderBy: 'startTime',
       }),
-      listBlocks(sheets).catch(() => []),
+      listBlocksForBooking(sheets).catch(() => []),
     ]);
 
     const busyWindows = (eventsRes.data.items || [])
