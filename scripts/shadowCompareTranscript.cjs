@@ -68,6 +68,7 @@ async function main() {
       const res = await sheets.spreadsheets.values.get({
         spreadsheetId: s.student_sheet_id,
         range: TRANSCRIPT_GRADE_RANGE,
+        valueRenderOption: 'UNFORMATTED_VALUE', // match the production reads exactly
         quotaUser: QUOTA_USER,
       });
       sheetGate = hasRecentGrades(res.data.values || [], s.class, nowLA);
