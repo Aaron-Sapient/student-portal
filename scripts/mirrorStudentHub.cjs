@@ -47,9 +47,37 @@ const clean = (v) => {
   return s || null;
 };
 
+// 📆 dates are M/d/yy ("4/28/23") or M/d/yyyy ("4/2/2024") per the cell's date
+// format — most older logs are 2-digit. Kept in LOCKSTEP with lib/collegeList.js
+// parseMeetingDate (this .cjs script can't import the ESM lib). M/d/yyyy alone
+// returned null on every 2-digit date (~69% of rows blanked).
+const parseMeetingDate = (raw) => {
+  for (const fmt of ['M/d/yyyy', 'M/d/yy']) {
+    const dt = DateTime.fromFormat(raw, fmt, { zone: ZONE });
+    if (dt.isValid) return dt;
+  }
+  return null;
+};
+
+// "100%"/"79%"/"0.79" → "79%" display string. Rejects → null: blanks, "#N/A"/"N/A"/
+// "#REF!" (non-numeric), and date serials that landed in a percent-formatted cell
+// (render as e.g. "4530000%" = serial 45300 — far past any real 0..1 progress value).
+const normPct = (raw) => {
+  const s = String(raw ?? '').trim();
+  if (!s) return null;
+  const n = Number(s.replace('%', ''));
+  if (Number.isNaN(n)) return null;
+  const f = s.includes('%') ? n / 100 : n;
+  if (f < 0 || f > 2) return null;
+  return `${Math.round(f * 100)}%`;
+};
+
 // Parse the 📆 Meetings values grid into rows, mirroring lib/collegeList.js
-// parseMeetingsGrid EXACTLY (header at col B == "Date"; stop at the first empty
-// date; hw_status lowercased; columns Date|Teacher|Project|Agenda|Homework|HW|%).
+// parseMeetingsGrid (header at col B == "Date"; stop at the first empty date;
+// hw_status lowercased; columns Date|Teacher|Project|Agenda|Homework|HW|%). Dates
+// use the shared parseMeetingDate (M/d/yy + M/d/yyyy); pct is normalized to a clean
+// "NN%" display string via normPct (the table column is text; the hub doesn't math
+// on it) where parseMeetingsGrid returns a 0..1 fraction for its numeric consumer.
 // `seq` is the row ordinal so upsert/prune is stable.
 function meetingRowsFor(studentSheetId, values) {
   const rows = values || [];
@@ -67,17 +95,17 @@ function meetingRowsFor(studentSheetId, values) {
     const c = rows[i] || [];
     const rawDate = clean(c[1]);
     if (!rawDate) break; // contiguous log — first blank date ends it
-    const dt = DateTime.fromFormat(rawDate, 'M/d/yyyy', { zone: ZONE });
+    const dt = parseMeetingDate(rawDate);
     out.push({
       student_sheet_id: studentSheetId,
       seq: seq++,
-      meeting_date: dt.isValid ? dt.toISODate() : null,
+      meeting_date: dt ? dt.toISODate() : null,
       teacher: clean(c[2]),
       project: clean(c[3]),
       agenda: clean(c[4]),
       homework: clean(c[5]),
       hw_status: clean(c[6]) ? String(c[6]).trim().toLowerCase() : null,
-      pct: clean(c[7]),
+      pct: normPct(c[7]),
     });
   }
   return out;
