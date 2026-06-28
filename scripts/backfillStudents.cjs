@@ -113,11 +113,13 @@ async function main() {
       student_sheet_id: sheetId,
       name,
       class: nc ? null : (String(r?.[1] ?? '').trim() || null),
-      grade: null, // deferred (Overview!C4)
+      // grade (Overview!C4) is OMITTED on purpose — mirrorStudentHub owns it; listing
+      // it here (even as null) would clobber that write every fast-tier reconcile.
       student_email: cleanEmail(r?.[9]) || null,
       portal_url: String(r?.[6] ?? '').trim() || null,
       drive_folder_url: null, // deferred (Overview H2/L2)
       package_type: pkg,
+      gender: String(r?.[49] ?? '').trim() || null, // 👩‍🎓 All Data col AX (idx 49)
       art_eligible: r?.[54] === 'TRUE' || r?.[54] === true,
       status: nc ? 'nc' : 'active',
       updated_at: new Date().toISOString(),

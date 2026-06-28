@@ -29,7 +29,15 @@ const { createClient } = require('@supabase/supabase-js');
 const { DateTime } = require('luxon');
 
 const ZONE = 'America/Los_Angeles';
-const OVERVIEW_MAJOR = "'🔎 Overview'!C6";
+// Overview B2:D20 + Meetings in ONE batchGet (1 read/student — keeps us under the
+// 60/min/user Sheets quota; two separate calls doubled the rate and 429'd). Default
+// FORMATTED render so meetings dates/agenda stay text for the parser. Overview values
+// live in col C (index 1), labels in col B — name=B2=[0][0], year=C4=[2][1],
+// major=C6=[4][1], sat=C17=[15][1], numAPs=C18=[16][1]. generateReport reads these
+// UNFORMATTED, but for these plain text/integer cells FORMATTED == UNFORMATTED as a
+// string, so the String()-based overview_profile shadow still matches (and would flag
+// any number-format divergence before a flip).
+const OVERVIEW_RANGE = "'🔎 Overview'!B2:D20";
 const MEETINGS_RANGE = "'📆 Meetings'!A1:H400";
 const QUOTA_USER = 'mirror-student-hub';
 
@@ -45,6 +53,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const clean = (v) => {
   const s = String(v ?? '').trim();
   return s || null;
+};
+// Overview cell → stored value. UN-trimmed (display_name keeps a trailing space if
+// present — generateReport uses the raw cell), empty → null. A number (SAT/#APs under
+// UNFORMATTED) becomes its string form so the column stays TEXT and byte-faithful.
+const ovCell = (v) => {
+  const s = v == null ? '' : String(v);
+  return s === '' ? null : s;
 };
 
 // 📆 dates are M/d/yy ("4/28/23") or M/d/yyyy ("4/2/2024") per the cell's date
@@ -137,8 +152,9 @@ async function main() {
   if (error) throw error;
 
   const profiles = [];
+  const grades = []; // {student_sheet_id, grade} — students.grade from Overview C4
   const allMeetings = [];
-  const readIds = new Set();
+  const meetingReadIds = new Set(); // ONLY students whose 📆 grid we actually read (prune scope)
   let withMajor = 0;
   let processed = 0;
 
@@ -146,28 +162,58 @@ async function main() {
     if (processed >= LIMIT) break;
     processed++;
     try {
-      const res = await sheets.spreadsheets.values.batchGet({
-        spreadsheetId: s.student_sheet_id,
-        ranges: [OVERVIEW_MAJOR, MEETINGS_RANGE],
-        quotaUser: QUOTA_USER,
-      });
-      const ranges = res.data.valueRanges || [];
-      const major = clean(ranges[0]?.values?.[0]?.[0]);
-      const meetings = meetingRowsFor(s.student_sheet_id, ranges[1]?.values || []);
-      profiles.push({ student_sheet_id: s.student_sheet_id, major });
-      allMeetings.push(...meetings);
-      if (major) withMajor++;
-      readIds.add(s.student_sheet_id);
+      let ov = [];
+      let meetingVals = null; // null ⇒ meetings NOT read this run (never prune them)
+      try {
+        const res = await sheets.spreadsheets.values.batchGet({
+          spreadsheetId: s.student_sheet_id,
+          ranges: [OVERVIEW_RANGE, MEETINGS_RANGE],
+          quotaUser: QUOTA_USER,
+        });
+        const ranges = res.data.valueRanges || [];
+        ov = ranges[0]?.values || [];
+        meetingVals = ranges[1]?.values || [];
+      } catch (combErr) {
+        // A missing 📆 Meetings tab fails the whole batchGet — still mirror the
+        // Overview profile (meetings left untouched, NOT pruned). Re-throws to the
+        // outer catch if Overview is ALSO missing (old-template sheet) → full skip.
+        const res = await sheets.spreadsheets.values.get({
+          spreadsheetId: s.student_sheet_id,
+          range: OVERVIEW_RANGE,
+          quotaUser: QUOTA_USER,
+        });
+        ov = res.data.values || [];
+        meetingVals = null;
+      }
+      const profile = {
+        student_sheet_id: s.student_sheet_id,
+        display_name: ovCell(ov[0]?.[0]), // B2
+        current_year: ovCell(ov[2]?.[1]), // C4
+        major: ovCell(ov[4]?.[1]), // C6
+        sat: ovCell(ov[15]?.[1]), // C17
+        num_aps: ovCell(ov[16]?.[1]), // C18
+      };
+      profiles.push(profile);
+      if (profile.current_year != null) {
+        grades.push({ student_sheet_id: s.student_sheet_id, grade: profile.current_year });
+      }
+      if (profile.major) withMajor++;
+      if (meetingVals !== null) {
+        allMeetings.push(...meetingRowsFor(s.student_sheet_id, meetingVals));
+        meetingReadIds.add(s.student_sheet_id);
+      }
     } catch (e) {
-      // No Overview/Meetings tab or a transient failure — do NOT prune this one.
+      // No Overview tab at all (old-template sheet) or a transient failure — skip
+      // entirely; do NOT prune this student's meetings.
       console.warn(`  skip ${s.name} (${s.student_sheet_id}): ${e.message}`);
     }
     await sleep(60); // gentle pacing under the per-project quota ceiling
   }
 
   console.log(
-    `Read ${readIds.size}/${Math.min(students.length, LIMIT)} students · ` +
-      `${withMajor} with a major · ${allMeetings.length} meeting rows.`
+    `Mirrored ${profiles.length}/${Math.min(students.length, LIMIT)} profiles · ` +
+      `${withMajor} with a major · ${grades.length} with a grade · ` +
+      `${allMeetings.length} meeting rows (${meetingReadIds.size} students).`
   );
   if (!WRITE) {
     console.log('DRY RUN — re-run with --write to upsert.');
@@ -187,6 +233,24 @@ async function main() {
     }
   }
   console.log(`✓ Upserted ${profiles.length} student_profiles row(s).`);
+
+  // ── students.grade: write Overview C4 (the roster reconcile no longer touches
+  // grade, so this is its sole writer). Per-row UPDATE, not upsert — a partial
+  // upsert builds an INSERT tuple first and trips students' NOT NULL columns even
+  // though every id already exists. UPDATE only sets `grade`. ──
+  let gradeOk = 0;
+  for (const g of grades) {
+    const { error: gErr } = await sb
+      .from('students')
+      .update({ grade: g.grade })
+      .eq('student_sheet_id', g.student_sheet_id);
+    if (gErr) {
+      console.error(`students.grade update failed for ${g.student_sheet_id}:`, gErr.message);
+      process.exit(1);
+    }
+    gradeOk++;
+  }
+  if (gradeOk) console.log(`✓ Wrote grade on ${gradeOk} students row(s).`);
 
   // ── meetings: upsert on (student_sheet_id, seq) ────────────────────────────
   for (let i = 0; i < allMeetings.length; i += 500) {
@@ -212,7 +276,7 @@ async function main() {
     process.exit(1);
   }
   const orphanIds = (existing || [])
-    .filter((r) => readIds.has(r.student_sheet_id) && !currentKeys.has(`${r.student_sheet_id}|${r.seq}`))
+    .filter((r) => meetingReadIds.has(r.student_sheet_id) && !currentKeys.has(`${r.student_sheet_id}|${r.seq}`))
     .map((r) => r.id);
   if (orphanIds.length) {
     for (let i = 0; i < orphanIds.length; i += 500) {

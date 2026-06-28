@@ -40,7 +40,7 @@ const STALE_MS = 20 * 60 * 1000; // a run older than this is assumed dead → ov
 
 const ALL_STEPS = [
   // ---- fast tier (cheap Master-tab reads; run in --fast every ~10 min) ----
-  { name: 'roster (students + guardians + soft-deactivate)', script: 'backfillStudents.cjs', args: ['--reconcile'] },
+  { name: 'roster (students + guardians + gender + soft-deactivate)', script: 'backfillStudents.cjs', args: ['--reconcile'] },
   { name: 'score_params', script: 'backfillScoreParams.cjs', args: [] },
   { name: 'checkins (live-safe upsert)', script: 'backfillCheckins.cjs', args: ['--reconcile'] },
   { name: 'instructor_blocks (live-safe insert-missing/update/prune)', script: 'reconcileInstructorBlocks.cjs', args: [] },
@@ -50,7 +50,7 @@ const ALL_STEPS = [
   // per-student fan-out; read-only one-way (never writes the sheet). Requires
   // supabase/students_hub_schema.sql applied first, or its upserts fail this step
   // (other steps still run). See scripts/mirrorStudentHub.cjs.
-  { name: 'student hub (profiles + meetings)', script: 'mirrorStudentHub.cjs', args: [], heavy: true },
+  { name: 'student hub (profiles + overview + grade + meetings)', script: 'mirrorStudentHub.cjs', args: [], heavy: true },
   { name: 'transcript (live-safe upsert + prune)', script: 'reconcileTranscript.cjs', args: [], heavy: true },
   { name: 'college lists (jsonb mirror)', script: 'mirrorCollegeLists.cjs', args: ['--all'], heavy: true },
   { name: 'comps (per-student 🏆 Comps & Projects mirror)', script: 'mirrorComps.cjs', args: [], heavy: true },
