@@ -100,6 +100,11 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
 
   const inst = meeting ? getInstructorPublic(meeting.instructor) : null;
   const instructorSlug = (meeting?.instructor || 'ryan').toLowerCase();
+  // Project meetings can't be rescheduled in place: the rebook would need ?m=project:<id>
+  // (else it drops the project track and mis-charges the essay grant), and the
+  // still-active booking would block its own week's slots via the 1/week cap. So we route
+  // them to cancel+rebook — cancel correctly frees the week, then the Projects card rebooks.
+  const isProject = meeting?.bookingType === 'project';
 
   useEffect(() => {
     if (mode !== 'reschedule' || !rDate || !meeting) return;
@@ -242,7 +247,7 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
 
         {mode === 'view' && !within2 && (
           <div className="flex shrink-0 flex-col gap-2">
-            {!within24 && (
+            {!within24 && !isProject && (
               <button
                 type="button"
                 onClick={() => setMode('reschedule')}
@@ -282,9 +287,14 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
       {mode === 'view' && within2 && (
         <p className="mt-3 text-xs text-ink-faint">Changes are locked within 2 hours of the meeting.</p>
       )}
-      {mode === 'view' && within24 && !within2 && (
+      {mode === 'view' && within24 && !within2 && !isProject && (
         <p className="mt-3 text-[11px] text-ink-faint">
           Rescheduling needs 24 hours’ notice — you can still cancel.
+        </p>
+      )}
+      {mode === 'view' && !within2 && isProject && (
+        <p className="mt-3 text-[11px] text-ink-faint">
+          To move a project meeting, cancel it and rebook the new time from Book.
         </p>
       )}
 

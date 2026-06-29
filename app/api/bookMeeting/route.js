@@ -4,6 +4,7 @@ import nodemailer from 'nodemailer';
 import { DateTime } from 'luxon';
 import { getInstructor, validateInstructorHours } from '@/lib/instructors';
 import { getSeniorByEmail, loadSeniorBookingState, canBookOnDate, recordBooking, consumeOneoff } from '@/lib/seniors';
+import { loadProjectPlanForBooking, loadProjectBookingsForPlan, canBookProjectOnDate, recordProjectBooking } from '@/lib/projectMeetings';
 
 // Human messages for canBookOnDate() rejection reasons (grant gates + package rules).
 const SENIOR_DENY = {
@@ -16,6 +17,15 @@ const SENIOR_DENY = {
   'secondary-done': 'You’ve already booked your once-a-month cross-meeting.',
   'budget-used': 'You’ve used all your meeting time for this check-in.',
   'bad-duration': 'That meeting length isn’t available on your package.',
+};
+
+// Human messages for canBookProjectOnDate() rejections (standing project-meeting track).
+const PROJECT_DENY = {
+  'no-plan': 'That project meeting isn’t set up for you.',
+  'wrong-teacher': 'That isn’t your project-meeting teacher.',
+  'bad-duration': 'That meeting length isn’t set for your project meeting.',
+  'out-of-window': 'You can book your project meeting for this week or next.',
+  'week-booked': 'You’ve already booked this week’s project meeting.',
 };
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
@@ -70,8 +80,10 @@ export async function POST(request) {
 
   try {
     const body = await request.json();
-    const { start, end, duration, studentName, agenda, isReschedule, instructor: instructorSlug } = body;
+    const { start, end, duration, studentName, agenda, isReschedule, instructor: instructorSlug, m } = body;
     const instructor = getInstructor(instructorSlug);
+    // Deep-linked project-meeting booking (?m=project:<id> → carried in the POST body).
+    const projectPlanId = String(m || '').startsWith('project:') ? String(m).slice('project:'.length) : null;
 
     if (!start || !end || !duration || !studentName) {
       return Response.json({ error: 'Missing required fields' }, { status: 400 });
@@ -108,15 +120,37 @@ export async function POST(request) {
       }, { status: 409 });
     }
 
-    // Senior path — the final authority (slot endpoints can be bypassed). Authorize
-    // against the auditable token ledger: an active check-in grant, the meeting in
-    // the grant's window, no same-day collision, tokens left, and the per-week
-    // teacher/length/secondary-first rules. On success the booking is recorded
-    // against the grant AFTER the calendar event is created (below).
-    const senior = await getSeniorByEmail(email);
+    const seniorMins = parseInt(String(duration).replace(/\D/g, ''), 10);
+
+    // Project-meeting path — the final authority (slot endpoints can be bypassed).
+    // Authorize against the standing plan + 1/week ledger, NOT the essay/senior gate,
+    // so a senior's project booking with their essay teacher can't be charged to the
+    // essay grant. Recorded on its OWN ledger AFTER the event is created (below).
+    let projectPlan = null;
+    if (projectPlanId) {
+      projectPlan = await loadProjectPlanForBooking(email, projectPlanId);
+      if (!projectPlan || projectPlan.teacher !== instructor.slug) {
+        return Response.json({ error: 'That project meeting isn’t available to book.' }, { status: 409 });
+      }
+      const bookings = await loadProjectBookingsForPlan(projectPlanId, now);
+      const verdict = canBookProjectOnDate(projectPlan, startTime, instructor.slug, seniorMins, bookings, now);
+      if (!verdict.ok) {
+        return Response.json(
+          { error: PROJECT_DENY[verdict.reason] || 'You can’t book that project meeting.' },
+          { status: 409 }
+        );
+      }
+    }
+
+    // Senior essay path — the final authority (slot endpoints can be bypassed).
+    // Authorize against the auditable token ledger: an active check-in grant, the
+    // meeting in the grant's window, no same-day collision, tokens left, and the
+    // per-week teacher/length/secondary-first rules. On success the booking is recorded
+    // against the grant AFTER the calendar event is created (below). Skipped for a
+    // project booking (its own gate ran above).
+    const senior = projectPlanId ? null : await getSeniorByEmail(email);
     let seniorGrant = null;
     let seniorOneoffId = null;
-    const seniorMins = parseInt(String(duration).replace(/\D/g, ''), 10);
     if (senior) {
       const state = await loadSeniorBookingState(senior);
       const verdict = canBookOnDate(senior, startTime, instructor.slug, seniorMins, state);
@@ -155,11 +189,43 @@ export async function POST(request) {
             studentEmail: email,
             type: duration,
             instructor: instructor.slug,
-            bookingType: senior ? 'senior' : instructor.slug === 'art' ? 'art' : 'standard',
+            bookingType: projectPlanId ? 'project' : senior ? 'senior' : instructor.slug === 'art' ? 'art' : 'standard',
+            // Plan id on the event so getUpcomingMeetings can identify a project meeting
+            // (the reschedule UI routes those to cancel+rebook, never a bare-rebook that
+            // would drop the project track and mis-charge the essay grant).
+            ...(projectPlanId ? { projectPlanId } : {}),
           },
         },
       },
     });
+
+    // Project booking: record on its own ledger. If the write fails, delete the
+    // just-created event so we never leave an un-accounted booking (same rollback
+    // contract as the senior path below).
+    if (projectPlan) {
+      try {
+        await recordProjectBooking(projectPlan, {
+          eventId: eventRes.data.id,
+          dt: startTime,
+          minutes: seniorMins,
+          studentSheetId: projectPlan.student_sheet_id,
+        });
+      } catch (ledgerErr) {
+        console.error('Project booking ledger write failed — rolling back event:', ledgerErr);
+        try {
+          await calendar.events.delete({ calendarId: instructor.calendarId, eventId: eventRes.data.id });
+        } catch (delErr) {
+          console.error('Failed to roll back orphaned event:', delErr);
+        }
+        // 23505 = the pmb_one_active_per_week unique violation: a concurrent request won
+        // the week. Surface it as the honest "already booked this week" rather than a 500.
+        const weekRace = ledgerErr?.code === '23505';
+        return Response.json(
+          { error: weekRace ? PROJECT_DENY['week-booked'] : 'Booking could not be recorded. Please try again.' },
+          { status: weekRace ? 409 : 500 }
+        );
+      }
+    }
 
     // Seniors: record the consumption against whichever ledger authorized it (the
     // weekly grant, or the separate one-off track). If the ledger write fails, delete
@@ -200,7 +266,8 @@ export async function POST(request) {
     // Consume booking token (skip if rescheduling — token already consumed by the original booking).
     // ART tracks the timestamp of the booking; everyone else uses a 'no' flag.
     // Seniors have NO token (deterministic, count-based) — never write a column for them.
-    if (!isReschedule && rowIndex > 0 && !senior) {
+    // Project meetings have their OWN ledger (above) — never touch a Master token column.
+    if (!isReschedule && rowIndex > 0 && !senior && !projectPlanId) {
       const tokenValue = instructor.tokenIsTimestamp ? new Date().toISOString() : 'no';
       await sheets.spreadsheets.values.update({
         spreadsheetId: MASTER_SHEET_ID,
@@ -211,8 +278,9 @@ export async function POST(request) {
     }
 
     // Write agenda back to the appropriate CheckinForm tab.
-    // Ryan's tab: col J. Aaron's tab: col H.
-    if (agendaTrimmed) {
+    // Ryan's tab: col J. Aaron's tab: col H. Skip for project meetings — there's no
+    // check-in row to attach to, and a name-match write could clobber an unrelated row.
+    if (agendaTrimmed && !projectPlanId) {
       const checkinTab = instructor.slug === 'aaron' ? AARON_CHECKIN_TAB : RYAN_CHECKIN_TAB;
       const agendaCol = instructor.slug === 'aaron' ? 'H' : 'J';
       const checkinRes = await sheets.spreadsheets.values.get({

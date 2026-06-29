@@ -4,6 +4,7 @@ import nodemailer from 'nodemailer';
 import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
 import { getSeniorByEmail, cancelBookingByEventId, cancelOneoffByEventId } from '@/lib/seniors';
+import { cancelProjectBookingByEventId } from '@/lib/projectMeetings';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -81,9 +82,11 @@ export async function POST(request) {
 
     // Seniors: return the consumed token to their check-in grant OR their one-off
     // track (both no-op for non-matching events). On a reschedule the follow-up
-    // bookMeeting re-consumes whichever applied.
+    // bookMeeting re-consumes whichever applied. Project meetings free their own
+    // 1/week ledger row (no-op for non-project events).
     await cancelBookingByEventId(eventId);
     await cancelOneoffByEventId(eventId);
+    const wasProject = await cancelProjectBookingByEventId(eventId);
 
     // Reset the instructor's booking column to 'no'
     const masterRes = await sheets.spreadsheets.values.get({
@@ -102,7 +105,7 @@ export async function POST(request) {
     //  - Real cancel + standard tracking: restore token to the meeting's original duration ('15min' / '30min').
     //  - Real cancel + timestamp tracking (ART): clear the column so weekly check sees no booking.
     const senior = await getSeniorByEmail(email);
-    if (rowIndex > 0 && !senior) {
+    if (rowIndex > 0 && !senior && !wasProject) {
       let newValue = null;
       if (instructor.tokenIsTimestamp) {
         if (!isReschedule) newValue = '';

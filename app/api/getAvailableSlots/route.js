@@ -4,6 +4,11 @@ import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
 import { listBlocksForBooking, isDateBlocked, blockedWindowsForDate } from '@/lib/blocks';
 import { getSeniorByEmail, loadSeniorBookingState, canBookOnDate } from '@/lib/seniors';
+import {
+  loadProjectPlanForBooking,
+  loadProjectBookingsForPlan,
+  canBookProjectOnDate,
+} from '@/lib/projectMeetings';
 
 function getServiceAuth() {
   return new google.auth.GoogleAuth({
@@ -83,13 +88,27 @@ export async function GET(request) {
     const calendar = google.calendar({ version: 'v3', auth: authClient });
     const sheets = google.sheets({ version: 'v4', auth: authClient });
 
-    // Senior gate: authorize this date against the check-in token ledger (active
-    // grant → window → same-day → tokens → teacher/length/phase).
-    const senior = await getSeniorByEmail(sessionClaims.email);
-    if (senior) {
-      const state = await loadSeniorBookingState(senior);
-      if (!canBookOnDate(senior, requestedDate, instructor.slug, duration, state).ok) {
+    // Project-meeting gate (deep-linked ?m=project:<id>): authorize this date against
+    // the standing plan + 1/week ledger. Else the senior essay gate. (One or the other —
+    // a project booking is never run through the essay gate, even for a senior.)
+    const mKey = searchParams.get('m') || '';
+    const projectPlanId = mKey.startsWith('project:') ? mKey.slice('project:'.length) : null;
+    if (projectPlanId) {
+      const plan = await loadProjectPlanForBooking(sessionClaims.email, projectPlanId);
+      if (!plan || plan.teacher !== instructor.slug) {
         return Response.json({ slots: [], recommendations: [], unavailable: true });
+      }
+      const bookings = await loadProjectBookingsForPlan(projectPlanId, now);
+      if (!canBookProjectOnDate(plan, requestedDate, instructor.slug, duration, bookings, now).ok) {
+        return Response.json({ slots: [], recommendations: [], unavailable: true });
+      }
+    } else {
+      const senior = await getSeniorByEmail(sessionClaims.email);
+      if (senior) {
+        const state = await loadSeniorBookingState(senior);
+        if (!canBookOnDate(senior, requestedDate, instructor.slug, duration, state).ok) {
+          return Response.json({ slots: [], recommendations: [], unavailable: true });
+        }
       }
     }
 

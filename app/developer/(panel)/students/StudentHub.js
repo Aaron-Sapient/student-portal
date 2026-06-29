@@ -15,6 +15,7 @@ import {
   FileText,
   GraduationCap,
   Loader2,
+  FlaskConical,
 } from 'lucide-react';
 import { Halo } from '@/app/(portal)/neu';
 import { Badge, Card, EmptyNote, ErrorNote, PageHeader, TabSkeleton } from '../devUi';
@@ -157,6 +158,94 @@ function GrantMeetingCard({ sheetId, studentName }) {
   );
 }
 
+// Set up a STANDING weekly project meeting (solo research, etc.) — a separate, additive
+// track from the senior essay cadence and the one-off grant. Creates a recurring plan;
+// the student gets a "Project meeting" card they book once per week. Stopgap for the
+// eventual "assign students to projects + designate leads/co-leads" model.
+function ProjectMeetingCard({ sheetId, studentName }) {
+  const [instructor, setInstructor] = useState('aaron');
+  const [minutes, setMinutes] = useState(30);
+  const [label, setLabel] = useState('Solo Research');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+
+  async function grant() {
+    setBusy(true);
+    setResult(null);
+    try {
+      const res = await fetch('/api/admin/grantProjectMeeting', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentSheetId: sheetId, instructor, minutes, label: label.trim() }),
+      });
+      const d = await res.json();
+      if (!res.ok || d.error) setResult({ error: d.error || 'Setup failed' });
+      else setResult({ ok: true, message: d.message });
+    } catch {
+      setResult({ error: 'Setup failed — try again.' });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card className="mt-5" delay={70}>
+      <h2 className="mb-1 flex items-center gap-2 font-display text-lg font-semibold text-ink">
+        <FlaskConical className="h-5 w-5 text-terracotta" strokeWidth={2} /> Set up a weekly project meeting
+      </h2>
+      <p className="mb-3 text-[12px] leading-relaxed text-ink-soft">
+        A standing weekly meeting for solo research / project work — separate from
+        {studentName ? ` ${studentName.split(' ')[0]}’s` : ' the'} check-in &amp; college-app cadence. They’ll
+        book it once per week (1/week). Works for seniors and non-seniors alike.
+      </p>
+
+      <div className="space-y-2.5">
+        <div className="flex gap-2">
+          <Pill active={instructor === 'aaron'} onClick={() => setInstructor('aaron')}>Aaron</Pill>
+          <Pill active={instructor === 'ryan'} onClick={() => setInstructor('ryan')}>Ryan</Pill>
+        </div>
+        <div className="flex gap-2">
+          <Pill active={minutes === 15} onClick={() => setMinutes(15)}>15-min</Pill>
+          <Pill active={minutes === 30} onClick={() => setMinutes(30)}>30-min</Pill>
+        </div>
+        <input
+          type="text"
+          value={label}
+          onChange={(e) => setLabel(e.target.value.slice(0, 40))}
+          placeholder="Label — e.g. Solo Research, Solo Research + Book Project"
+          className="neu-inset w-full rounded-2xl px-4 py-2.5 text-[14px] text-ink outline-none transition placeholder:text-ink-faint focus:ring-2 focus:ring-terracotta/25"
+        />
+      </div>
+
+      <button
+        type="button"
+        onClick={grant}
+        disabled={busy || !label.trim()}
+        className="mt-3 flex w-full items-center justify-center gap-2 rounded-full bg-terracotta px-5 py-3 text-sm font-bold text-paper shadow-lift transition active:scale-[0.98] disabled:opacity-60"
+      >
+        {busy ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.4} /> Setting up…
+          </>
+        ) : (
+          <>
+            <FlaskConical className="h-4 w-4" strokeWidth={2.4} /> Set up weekly {minutes}-min with{' '}
+            {instructor === 'ryan' ? 'Ryan' : 'Aaron'}
+          </>
+        )}
+      </button>
+
+      {result?.error && <p className="mt-2.5 text-[13px] font-medium text-terracotta-deep">{result.error}</p>}
+      {result?.ok && (
+        <p className="mt-2.5 flex items-start gap-1.5 text-[13px] font-medium text-moss">
+          <Check className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={2.4} />
+          <span>{result.message}</span>
+        </p>
+      )}
+    </Card>
+  );
+}
+
 export default function StudentHub() {
   const { sheetId } = useParams();
   const pathname = usePathname() || '';
@@ -234,6 +323,9 @@ export default function StudentHub() {
 
       {/* Grant a one-off meeting (bypasses the check-in gate) */}
       <GrantMeetingCard sheetId={sheetId} studentName={hub.name} />
+
+      {/* Set up a standing weekly project meeting (solo research, etc.) */}
+      <ProjectMeetingCard sheetId={sheetId} studentName={hub.name} />
 
       {/* Scores summary */}
       <Card>

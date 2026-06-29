@@ -11,6 +11,11 @@ import {
   weekOfMonth,
   OTHER,
 } from '@/lib/seniors';
+import {
+  loadProjectPlanForBooking,
+  loadProjectBookingsForPlan,
+  canBookProjectOnDate,
+} from '@/lib/projectMeetings';
 
 function getServiceAuth() {
   return new google.auth.GoogleAuth({
@@ -64,10 +69,26 @@ export async function GET(request) {
     const calendar = google.calendar({ version: 'v3', auth: authClient });
     const sheets = google.sheets({ version: 'v4', auth: authClient });
 
+    // Project-meeting gate (deep-linked ?m=project:<id>): authorize days against the
+    // standing plan + 1/week ledger, NOT the senior essay gate. Resolved first so a
+    // senior's project booking with their essay teacher uses the project window/cap.
+    const mKey = searchParams.get('m') || '';
+    const projectPlanId = mKey.startsWith('project:') ? mKey.slice('project:'.length) : null;
+    let projectPlan = null;
+    let projectBookings = null;
+    if (projectPlanId) {
+      projectPlan = await loadProjectPlanForBooking(sessionClaims.email, projectPlanId);
+      if (!projectPlan || projectPlan.teacher !== instructor.slug) {
+        return Response.json({ availableDates: [], phaseWeek: null });
+      }
+      projectBookings = await loadProjectBookingsForPlan(projectPlanId, now);
+    }
+
     // Senior gate: a day is bookable only if the check-in token ledger allows a
     // meeting that day (active grant → window → same-day → tokens → teacher/length/
     // phase). Load the ledger state once; each day's check is pure/in-memory.
-    const senior = await getSeniorByEmail(sessionClaims.email);
+    // Skipped entirely for a project booking (its own gate runs in the day loop).
+    const senior = projectPlanId ? null : await getSeniorByEmail(sessionClaims.email);
     let seniorState = null;
     // The viewed month's cross-meeting week, as {start,end} ISO — colored ONLY on
     // the secondary teacher's calendar (the one this cross-meeting is actually
@@ -129,9 +150,15 @@ export async function GET(request) {
       const dateStr = cursor.toFormat('yyyy-LL-dd');
       const hours = instructor.hoursByWeekday[cursor.weekday];
 
-      // Seniors: skip any day the token ledger won't authorize (out of the grant
+      // Project: skip any day outside the plan's window or already booked this week.
+      // Else seniors: skip any day the token ledger won't authorize (out of the grant
       // window, same-day collision, tokens used, wrong teacher/length/phase).
-      if (senior) {
+      if (projectPlanId) {
+        if (!canBookProjectOnDate(projectPlan, cursor, instructor.slug, duration, projectBookings, now).ok) {
+          cursor = cursor.plus({ days: 1 });
+          continue;
+        }
+      } else if (senior) {
         if (!canBookOnDate(senior, cursor, instructor.slug, duration, seniorState).ok) {
           cursor = cursor.plus({ days: 1 });
           continue;

@@ -3,6 +3,7 @@ import { requireDeveloper } from '@/lib/developerAuth';
 import { getInstructor } from '@/lib/instructors';
 import { sendStudentCancellationEmail } from '@/lib/studentEmails';
 import { cancelBookingByEventId, cancelOneoffByEventId } from '@/lib/seniors';
+import { cancelProjectBookingByEventId } from '@/lib/projectMeetings';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -38,9 +39,11 @@ export async function POST(request) {
     await calendar.events.delete({ calendarId: instructor.calendarId, eventId });
 
     // Return any senior token tied to this event — weekly grant OR one-off track
-    // (both no-op for non-matching events).
+    // (both no-op for non-matching events). Project meetings free their own 1/week
+    // ledger row; wasProject then skips the standard Master-token restore below.
     await cancelBookingByEventId(eventId);
     await cancelOneoffByEventId(eventId);
+    const wasProject = await cancelProjectBookingByEventId(eventId);
 
     // Restore the student's booking token. Lookup by studentEmail (admin is logged in,
     // not the student — so we cannot use sessionClaims.email like the student-facing route does).
@@ -53,7 +56,8 @@ export async function POST(request) {
       const rows = masterRes.data.values || [];
       const rowIndex = rows.findIndex(r => r[0] === studentEmail) + 1;
 
-      if (rowIndex > 0) {
+      // Project meetings have their own ledger (freed above) — never restore a Master token.
+      if (rowIndex > 0 && !wasProject) {
         const newValue = instructor.tokenIsTimestamp ? '' : (duration || '15min');
         await sheets.spreadsheets.values.update({
           spreadsheetId: MASTER_SHEET_ID,

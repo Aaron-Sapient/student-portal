@@ -180,8 +180,8 @@ return (res.data.items || [])
       return eventTitle.includes(searchName);
     })
     .map(e => {
-      const isArt = e.extendedProperties?.private?.bookingType === 'art'
-        || e.summary?.startsWith('ART:');
+      const fromExt = e.extendedProperties?.private || {};
+      const isArt = fromExt.bookingType === 'art' || e.summary?.startsWith('ART:');
       return {
         id: e.id,
         title: e.summary,
@@ -189,6 +189,9 @@ return (res.data.items || [])
         end: e.end.dateTime || e.end.date,
         description: e.description || '',
         instructor: isArt ? 'ART' : instructorName,
+        // Surfaced so the reschedule UI can route project meetings to cancel+rebook
+        // (a bare rebook drops ?m=project:<id> and mis-charges the essay grant).
+        bookingType: fromExt.bookingType || null,
       };
     });
 }

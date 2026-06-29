@@ -162,12 +162,16 @@ export default function BookingFlow({ slug }) {
           setValidating(false);
           return;
         }
-        if (data.senior) {
+        // Seniors AND project meetings share the windowed, single-/fixed-duration
+        // calendar flow (a project meeting is just a standing weekly meeting with its
+        // own window). data.project rides the same seniorMeta rendering path.
+        if (data.senior || data.project) {
           const ds = (data.durations && data.durations.length ? data.durations : [30]).map((n) => `${n}min`);
           setSeniorDurations(ds);
           setDuration(ds[0]);
           setSeniorMeta({
-            kind: data.kind || 'primary',
+            kind: data.kind || 'primary', // 'cross' | 'primary' | 'oneoff' | 'project'
+            label: data.label || null,
             eligibleWindow: data.eligibleWindow || null,
             grantWindow: data.grantWindow || null,
             phase: data.phase,
@@ -203,7 +207,7 @@ export default function BookingFlow({ slug }) {
     setLoadingMonth(true);
     setAvailableDates(new Set());
     setPhaseWeek(null);
-    fetch(`/api/getMonthAvailability?month=${calMonth}&year=${calYear}&duration=${durationMins}&instructor=${instructor.slug}`)
+    fetch(`/api/getMonthAvailability?month=${calMonth}&year=${calYear}&duration=${durationMins}&instructor=${instructor.slug}&m=${encodeURIComponent(m)}`)
       .then((r) => r.json())
       .then((data) => {
         if (cancelled) return;
@@ -222,7 +226,7 @@ export default function BookingFlow({ slug }) {
     setSlots([]);
     setRecommended([]);
     setLoadingSlots(true);
-    fetch(`/api/getAvailableSlots?date=${formatDateStr(selectedDate)}&duration=${durationMins}&instructor=${instructor.slug}`)
+    fetch(`/api/getAvailableSlots?date=${formatDateStr(selectedDate)}&duration=${durationMins}&instructor=${instructor.slug}&m=${encodeURIComponent(m)}`)
       .then((r) => r.json())
       .then((data) => {
         setSlots(data.slots || []);
@@ -247,6 +251,7 @@ export default function BookingFlow({ slug }) {
           studentName,
           agenda: agenda.trim(),
           instructor: instructor.slug,
+          m, // carries ?m=project:<id> so bookMeeting authorizes/charges the right track
         }),
       });
       const result = await res.json();
@@ -462,6 +467,8 @@ export default function BookingFlow({ slug }) {
                     ? `Monthly cross-meeting with ${bodyName}`
                     : seniorMeta.kind === 'oneoff'
                     ? `One-off meeting with ${bodyName}`
+                    : seniorMeta.kind === 'project'
+                    ? `${seniorMeta.label || 'Weekly project meeting'} with ${bodyName}`
                     : `Your weekly meeting with ${bodyName}`}
                 </p>
                 {seniorMeta.eligibleWindow && (

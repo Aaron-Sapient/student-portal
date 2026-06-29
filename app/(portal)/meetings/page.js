@@ -153,6 +153,8 @@ function BookSection({ data, loading }) {
   const ryan = ryanState(data);
   const aaron = aaronState(data);
   const art = artState(data);
+  const projectMeetings = data?.projectMeetings || [];
+  const hasBookableProject = projectMeetings.some((p) => p.bookable);
 
   return (
     <div className="space-y-7">
@@ -194,10 +196,13 @@ function BookSection({ data, loading }) {
         )}
       </section>
 
+      <ProjectSection projectMeetings={projectMeetings} loading={loading} baseDelay={290} />
+
       {!loading &&
         !ryan.bookable &&
         !aaron.bookable &&
         !(art && art.bookable) &&
+        !hasBookableProject &&
         !ryan.checkedIn &&
         !aaron.checkedIn && (
           <p className="portal-rise text-center text-sm text-ink-soft" style={{ animationDelay: '270ms' }}>
@@ -286,6 +291,40 @@ function OneoffSection({ oneoffs, loading, baseDelay = 110 }) {
   );
 }
 
+// Standing weekly "project meeting" cards (solo research, etc.) — a separate, additive
+// track surfaced for BOTH seniors and non-seniors, in its own labeled section. Each
+// card deep-links its plan (?m=project:<id>) so the booking gate charges the right
+// ledger. Bookable → a terracotta "Book" pill; this week already taken → a moss
+// "Booked this week" confirmation (the calendar still opens next week's days).
+function ProjectSection({ projectMeetings, loading, baseDelay = 110 }) {
+  const cards = projectMeetings || [];
+  if (cards.length === 0) return null;
+  return (
+    <section className="space-y-3.5">
+      <p className="portal-rise px-1 text-xs font-semibold uppercase tracking-[0.13em] text-ink-faint" style={{ animationDelay: '70ms' }}>
+        {cards.length > 1 ? 'Project meetings' : 'Project meeting'}
+      </p>
+      {cards.map((c, i) => (
+        <OptionCard
+          key={c.planId}
+          href={c.bookable ? `/meetings/${c.slug}?m=${encodeURIComponent(`project:${c.planId}`)}` : undefined}
+          icon={FlaskConical}
+          name={c.label}
+          role={`Weekly with ${c.name}${c.bookable && c.window ? ` · ${fmtRange(c.window.start, c.window.end)}` : ''}`}
+          state={
+            c.bookable
+              ? { bookable: true, label: lenLabel(c.durations) }
+              : { checkedIn: true, note: c.bookedThisWeek ? 'Booked this week' : 'All set this week' }
+          }
+          loading={loading}
+          delay={baseDelay + i * 60}
+          tag={{ label: 'Weekly', tone: 'terracotta' }}
+        />
+      ))}
+    </section>
+  );
+}
+
 function SeniorBookSection({ data, loading }) {
   const s = data.senior;
   const oneoffs = s.oneoffs || [];
@@ -309,6 +348,7 @@ function SeniorBookSection({ data, loading }) {
           <ChevronRight className="h-5 w-5 shrink-0 text-ink-faint transition-transform group-hover:translate-x-0.5" strokeWidth={2.2} />
         </Link>
         <OneoffSection oneoffs={oneoffs} loading={loading} baseDelay={170} />
+        <ProjectSection projectMeetings={data.projectMeetings} loading={loading} baseDelay={230} />
       </div>
     );
   }
@@ -364,6 +404,7 @@ function SeniorBookSection({ data, loading }) {
         )}
       </section>
       <OneoffSection oneoffs={oneoffs} loading={loading} />
+      <ProjectSection projectMeetings={data.projectMeetings} loading={loading} />
     </div>
   );
 }

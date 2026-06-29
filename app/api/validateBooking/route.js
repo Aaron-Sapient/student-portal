@@ -3,6 +3,7 @@ import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
 import { getSeniorByEmail, loadSeniorBookingState, seniorBookingPlan } from '@/lib/seniors';
+import { loadProjectPlanForBooking, loadProjectBookingsForPlan, buildProjectCard } from '@/lib/projectMeetings';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -64,6 +65,47 @@ export async function GET(request) {
     });
     const studentName = nameRes.data.values?.[0]?.[0] || '';
 
+    // Project-meeting path (deep-linked ?m=project:<id>) — a standing weekly track,
+    // authorized PURELY by the plan (no check-in / senior gate). Resolved FIRST so a
+    // senior's project booking with their essay teacher is never mistaken for an essay
+    // meeting (same teacher, same length — the disambiguation IS the path).
+    const mKey = searchParams.get('m') || '';
+    if (mKey.startsWith('project:')) {
+      const planId = mKey.slice('project:'.length);
+      const plan = await loadProjectPlanForBooking(email, planId);
+      if (!plan || plan.teacher !== instructor.slug) {
+        return Response.json({
+          allowed: false,
+          project: true,
+          reason: 'That project meeting isn’t available to book right now.',
+        });
+      }
+      const now = DateTime.now().setZone('America/Los_Angeles');
+      const bookings = await loadProjectBookingsForPlan(planId, now);
+      const card = buildProjectCard(plan, bookings, now);
+      if (!card.bookable) {
+        return Response.json({
+          allowed: false,
+          project: true,
+          reason: card.bookedThisWeek
+            ? 'You’ve already booked this week’s project meeting.'
+            : 'No open project-meeting days right now — check back next week.',
+        });
+      }
+      return Response.json({
+        allowed: true,
+        project: true,
+        studentName,
+        instructor: instructor.slug,
+        durations: card.durations, // single fixed length
+        kind: 'project',
+        label: card.label,
+        eligibleWindow: card.window,
+        grantWindow: card.window,
+        goldWeek: false,
+      });
+    }
+
     // Senior path: an active check-in grant is the prerequisite. The shared
     // booking plan (same one the meetings card + calendar read) tells us whether
     // THIS teacher is actually bookable on this check-in, so a direct visit to a
@@ -81,7 +123,6 @@ export async function GET(request) {
       // else the single weekly meeting for this teacher ('cross'/'primary'/absent,
       // since primary ≠ secondary there's at most one). A one-off is an additive
       // track bookable even with no weekly grant, so resolve it BEFORE the grant gate.
-      const mKey = searchParams.get('m') || '';
       const mine = plan.meetings.find((mm) => mm.slug === instructor.slug);
       const oneoffs = (plan.oneoffs || []).filter((o) => o.slug === instructor.slug);
       let option = null;

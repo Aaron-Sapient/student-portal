@@ -11,6 +11,7 @@ import {
   seniorBookingPlan,
   checkedInThisWeek,
 } from '@/lib/seniors'
+import { projectMeetingCards } from '@/lib/projectMeetings'
 import { DateTime } from 'luxon'
 
 const ZONE = 'America/Los_Angeles'
@@ -267,6 +268,11 @@ if (isART) {
     }
   }
 
+  // Standing weekly project-meeting cards (solo research, etc.) — a separate, additive
+  // track surfaced for BOTH seniors and non-seniors. Empty array when the student has
+  // no plan. [{ planId, slug, name, minutes, durations, label, window, bookable, bookedThisWeek }].
+  const projectMeetings = await projectMeetingCards(studentSheetId, nowLA)
+
   // Senior essay-program context. When present, the portal swaps the underclassman
   // check-in/15-30 booking UI for the deterministic senior flow. Everything the
   // client needs to render that (without importing the server-only seniors lib).
@@ -322,5 +328,6 @@ if (isART) {
     progress,
     sessions,
     senior: seniorContext,
+    projectMeetings,
   })
 }
