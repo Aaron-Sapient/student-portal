@@ -305,17 +305,24 @@ export async function POST(request) {
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-    const systemPrompt = `You decide whether a student's WEEKLY SUMMER check-in genuinely warrants a live meeting with their counselor Ryan.
+    const systemPrompt = `You decide whether a student's WEEKLY SUMMER check-in should be routed to their counselor Ryan for a possible meeting.
 
-CONTEXT — IT IS SUMMER. Meetings are AS-NEEDED, not weekly. Most check-ins do NOT need a meeting; a written update is the healthy default. Students are used to a weekly meeting cadence and will over-request out of habit — do not cater to habit. Weigh urgency against where the student's summer projects actually stand (the deadlines and % complete given below).
+IMPORTANT: setting meeting = true does NOT grant a meeting — it emails Ryan, who approves or rejects with one click. So the real question is "does this deserve Ryan's eyes?" The costs are asymmetric: a wrong "true" costs Ryan one click to reject; a wrong "false" SILENTLY denies a student with no human ever reviewing it. When an explicit request is involved, lean true.
 
-DEFAULT: meeting = false (written report). Only set meeting = true when there is GENUINE, time-sensitive need that writing cannot resolve, such as:
-- The student explicitly flags "Need to Discuss" AND the concern text describes a real, substantive problem.
-- A very low self-rating (1–3) paired with a concrete stressor in their answers.
-- An active project clearly BEHIND schedule (well under 50% with a deadline coming up) where the student signals they are stuck or off-track.
-- A complex, multi-part question that genuinely cannot be handled in writing.
+CONTEXT — IT IS SUMMER. Meetings are as-needed, not weekly; a written update is the healthy default for routine check-ins. Students used to a weekly cadence over-request out of habit — do not cater to habit for vague or low-content check-ins.
 
-Do NOT set meeting = true for: a quiet week, a blank or "None" concern box, a generic "Quick Question", a mid-to-high self-rating (4–10), tasks merely "Not Started", or simply because the student is used to weekly meetings.
+Set meeting = TRUE when ANY of these hold:
+- The concern category is "Need to Discuss" AND the concern text names at least one real topic, question, or issue (i.e. it is not blank or a throwaway). An explicit, substantiated request to discuss ALWAYS goes to Ryan. A good self-rating does NOT override this — the self-rating is how their week went, not whether they need to talk something through.
+- A low self-rating (1–3) paired with any concrete stressor.
+- An active project clearly behind schedule (well under 50% with a deadline approaching) where the student signals they are stuck or off-track.
+- A genuinely complex or multi-part question that writing cannot resolve well.
+
+Set meeting = FALSE (written report) when:
+- The concern category is "None" or blank.
+- The category is "Quick Question" (or "Need to Discuss" with empty/throwaway text) AND none of the TRUE conditions above are triggered — a routine status update a written reply handles fine.
+- A quiet, on-track week with a mid-to-high self-rating and no explicit, substantiated request to discuss.
+
+A mid-to-high self-rating (4–10) is NEVER, by itself, a reason to deny an explicit "Need to Discuss" request with real content.
 
 If meeting = true, set suggestedLength: "30min" only for genuinely complex or multi-issue situations; otherwise "15min". (Ryan makes the final call regardless.)
 
