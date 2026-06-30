@@ -12,6 +12,7 @@ import {
   checkedInThisWeek,
 } from '@/lib/seniors'
 import { projectMeetingCards } from '@/lib/projectMeetings'
+import { getSessionLog } from '@/lib/meetings'
 import { DateTime } from 'luxon'
 
 const ZONE = 'America/Los_Angeles'
@@ -26,31 +27,6 @@ function toLADate(raw) {
   }
   const dt = DateTime.fromISO(String(raw), { zone: ZONE })
   return dt.isValid ? dt : null
-}
-
-// 📆 Meetings grids aren't perfectly uniform: most sheets have Date in col B,
-// but some start the table at col A. Find the 'Date' header in the first few
-// rows and read that column (plus the Teacher column beside it); fall back to
-// the col-B convention. Returns [{ date, teacher }] with raw cell values.
-function meetingLogRows(rows) {
-  let dateCol = 1
-  let teacherCol = 2
-  let firstDataRow = 1
-  for (let r = 0; r < Math.min(rows.length, 4); r++) {
-    const cells = (rows[r] || []).map((v) => String(v ?? '').trim().toLowerCase())
-    const c = cells.indexOf('date')
-    if (c >= 0) {
-      dateCol = c
-      const t = cells.indexOf('teacher')
-      teacherCol = t >= 0 ? t : c + 1
-      firstDataRow = r + 1
-      break
-    }
-  }
-  return rows.slice(firstDataRow).map((row) => ({
-    date: (row || [])[dateCol],
-    teacher: String((row || [])[teacherCol] ?? '').trim().toLowerCase(),
-  }))
 }
 
 // Sessions = the union of the sheet log (📆 Meetings — Aaron's hand log) and
@@ -164,7 +140,7 @@ export async function GET() {
   // the weekly holistic scores (📊 Scores, written by the NAS cron), and the
   // session log (📆 Meetings dates → frequency strip) in parallel
   const nowLA = DateTime.now().setZone(ZONE)
-  const [projectRows, nameRes, rawScores, gradeGate, meetingDatesRes, aaronPast, ryanPast] = await Promise.all([
+  const [projectRows, nameRes, rawScores, gradeGate, sessionLog, aaronPast, ryanPast] = await Promise.all([
     // 🏆 Comps & Projects E:N rows per the `comps` flag (Sheets today). Owner in
     // col N (relative index 9), appended right of E:M so indices 0–8 are unchanged.
     getProjectRows(sheets, studentSheetId),
@@ -181,13 +157,9 @@ export async function GET() {
     // old `.catch(() => null)` + `transcriptRes?.data?.values || []`.
     studentGradeGate(sheets, studentSheetId, studentRow[1], { year: nowLA.year, month: nowLA.month })
       .catch(() => hasRecentGrades([], studentRow[1], { year: nowLA.year, month: nowLA.month })),
-    sheets.spreadsheets.values
-      .get({
-        spreadsheetId: studentSheetId,
-        range: "'📆 Meetings'!A1:C400",
-        valueRenderOption: 'UNFORMATTED_VALUE',
-      })
-      .catch(() => null),
+    // 📆 Meetings session log per the `meetings` flag (Sheets today). Returns
+    // [{ date, teacher }] — the meetingLogRows shape dailySessionCounts expects.
+    getSessionLog(sheets, studentSheetId).catch(() => []),
     fetchPastBookedMeetings(calendar, process.env.GOOGLE_CALENDAR_ID_AARON, 'aaron', masterName),
     fetchPastBookedMeetings(calendar, process.env.GOOGLE_CALENDAR_ID_RYAN, 'ryan', masterName),
   ])
@@ -199,7 +171,7 @@ export async function GET() {
 
   const sessions = weeklySessionCounts(
     dailySessionCounts(
-      meetingLogRows(meetingDatesRes?.data?.values || []),
+      sessionLog,
       [...aaronPast, ...ryanPast],
       DateTime.now().setZone(ZONE)
     )

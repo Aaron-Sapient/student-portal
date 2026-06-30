@@ -1,7 +1,8 @@
 import { auth } from '@clerk/nextjs/server';
 import { DateTime } from 'luxon';
 import { getGoogleSheetsClient } from '@/lib/google';
-import { getCoachMessage, hadRecentMeeting } from '@/lib/coachMessages';
+import { getCoachMessage } from '@/lib/coachMessages';
+import { hadRecentMeeting } from '@/lib/meetings';
 import { getSheetCoachNote } from '@/lib/scores';
 import { studentGradeGate } from '@/lib/transcript';
 
