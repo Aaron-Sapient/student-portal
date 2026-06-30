@@ -96,31 +96,40 @@ const normPct = (raw) => {
 // `seq` is the row ordinal so upsert/prune is stable.
 function meetingRowsFor(studentSheetId, values) {
   const rows = values || [];
+  // Flexible header: scan the first rows for a 'Date' cell in ANY column (matching
+  // home-data's meetingLogRows, the session-strip parity target). Most grids put Date
+  // in col B with a spacer in col A, but ~8 students' grids start the table at col A.
+  // `base` = the Date column; every other field is read RELATIVE to it (Teacher=base+1,
+  // Project=base+2, … %=base+6), so a col-A grid's columns shift left correctly. The
+  // old col-B-only search returned [] for every col-A grid (Victoria 103 mtgs → 0).
   let hdr = -1;
-  for (let i = 0; i < rows.length; i++) {
-    if (String(rows[i]?.[1] ?? '').trim().toLowerCase() === 'date') {
-      hdr = i;
-      break;
-    }
+  let base = 1;
+  for (let i = 0; i < Math.min(rows.length, 4); i++) {
+    const d = (rows[i] || []).map((v) => String(v ?? '').trim().toLowerCase()).indexOf('date');
+    if (d >= 0) { hdr = i; base = d; break; }
   }
   if (hdr < 0) return [];
   const out = [];
   let seq = 0;
+  // SCAN every row after the header — do NOT stop at the first blank. These logs have
+  // mid-table blank gaps with real meetings below them (Vedant 11→68, Pragna's latest,
+  // Victoria's post-gap block). Skip blank-date rows; keep every dated row, exactly the
+  // set the session strip surfaces. (Was `break`, which truncated at the first gap.)
   for (let i = hdr + 1; i < rows.length; i++) {
     const c = rows[i] || [];
-    const rawDate = clean(c[1]);
-    if (!rawDate) break; // contiguous log — first blank date ends it
+    const rawDate = clean(c[base]);
+    if (!rawDate) continue; // blank gap row — skip, but keep scanning
     const dt = parseMeetingDate(rawDate);
     out.push({
       student_sheet_id: studentSheetId,
       seq: seq++,
       meeting_date: dt ? dt.toISODate() : null,
-      teacher: clean(c[2]),
-      project: clean(c[3]),
-      agenda: clean(c[4]),
-      homework: clean(c[5]),
-      hw_status: clean(c[6]) ? String(c[6]).trim().toLowerCase() : null,
-      pct: normPct(c[7]),
+      teacher: clean(c[base + 1]),
+      project: clean(c[base + 2]),
+      agenda: clean(c[base + 3]),
+      homework: clean(c[base + 4]),
+      hw_status: clean(c[base + 5]) ? String(c[base + 5]).trim().toLowerCase() : null,
+      pct: normPct(c[base + 6]),
     });
   }
   return out;
