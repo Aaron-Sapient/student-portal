@@ -30,9 +30,9 @@ const KEEP_TEST_SHEET_IDS = ['1UW-RSqv30c_BUdv9nfm48YVVs7L-UmWKsYn_jXhYt6w'];
 // package (lowercased from the sheet) -> derived columns. lib/seniors.js
 // PACKAGE_RULES is the authoritative logic; these just mirror into SQL.
 const PACKAGE_DERIVED = {
-  vip: { meetings_per_week: 2, meeting_minutes: 30 },
-  comprehensive: { meetings_per_week: 2, meeting_minutes: 30 },
-  essential: { meetings_per_week: 2, meeting_minutes: null }, // 40-min budget: 1×40 or 2×20
+  vip: { meetings_per_week: 2, meeting_minutes: 20 },
+  comprehensive: { meetings_per_week: 2, meeting_minutes: 20 },
+  essential: { meetings_per_week: 2, meeting_minutes: null }, // 30-min budget: 1×30 or 2×15
 };
 
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z]/g, '');

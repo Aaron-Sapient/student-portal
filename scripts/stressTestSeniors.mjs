@@ -74,8 +74,8 @@ function pureLogicTests() {
   const gw = grantWindow(D(16));
   ok(gw.weekStart.toISODate() === '2026-06-13', `grant week_start = Jun 13 (got ${gw.weekStart.toISODate()})`);
   ok(gw.validThrough.toISODate() === '2026-06-26', `grant valid_through = Jun 26 (got ${gw.validThrough.toISODate()})`);
-  ok(grantRemaining(vipGrant, { count: 1, minutes: 30 }) === 1, 'VIP remaining 1 after 1 booked');
-  ok(grantRemaining(vipGrant, { count: 2, minutes: 60 }) === 0, 'VIP remaining 0 after 2 booked');
+  ok(grantRemaining(vipGrant, { count: 1, minutes: 20 }) === 1, 'VIP remaining 1 after 1 booked');
+  ok(grantRemaining(vipGrant, { count: 2, minutes: 40 }) === 0, 'VIP remaining 0 after 2 booked');
 
   console.log('\n── grantCarriesCrossMeeting: window must include the phase week ──');
   const p3 = { primary_teacher: 'aaron', package: 'vip', phase: 3 };
@@ -89,65 +89,70 @@ function pureLogicTests() {
   const vip = { primary_teacher: 'aaron', package: 'vip', phase: 3, student_sheet_id: 'x' };
   const st = (bookings) => ({ grant: vipGrant, bookings });
   // The reachability fix: the cross-meeting is bookable on ANY in-window day, not just phase-week days.
-  ok(canBookOnDate(vip, D(23), 'ryan', 30, st([])).ok, 'cross (ryan) bookable on Jun 23 — wk4, NOT the phase week');
-  ok(canBookOnDate(vip, D(23), 'aaron', 30, st([])).ok, 'primary (aaron) bookable while cross owed (one slot reserved, no hard "first")');
-  const bA23 = bk('aaron', 30, '2026-06-23');
-  ok(canBookOnDate(vip, D(24), 'aaron', 30, st([bA23])).reason === 'cross-reserved', '2nd primary blocked — last slot reserved for the cross');
-  ok(canBookOnDate(vip, D(24), 'ryan', 30, st([bA23])).ok, 'cross still bookable after a primary');
-  const bR24 = bk('ryan', 30, '2026-06-24');
-  ok(canBookOnDate(vip, D(25), 'ryan', 30, st([bA23, bR24])).reason === 'secondary-done', 'only one cross-meeting per grant');
-  ok(canBookOnDate(vip, D(25), 'aaron', 30, st([bA23, bR24])).reason === 'tokens-used', 'both tokens spent (1 primary + 1 cross)');
-  ok(canBookOnDate(vip, D(23), 'aaron', 20, st([])).reason === 'bad-duration', 'VIP only books 30-min');
-  ok(canBookOnDate(vip, D(23), 'aaron', 30, st([bA23])).reason === 'same-day', 'two meetings same day REFUSED');
-  ok(canBookOnDate(vip, D(30), 'aaron', 30, st([])).reason === 'out-of-window', 'out-of-window REFUSED');
-  ok(canBookOnDate(vip, D(23), 'aaron', 30, { grant: null, bookings: [] }).reason === 'no-grant', 'no active grant → must check in');
+  ok(canBookOnDate(vip, D(23), 'ryan', 20, st([])).ok, 'cross (ryan) bookable on Jun 23 — wk4, NOT the phase week');
+  ok(canBookOnDate(vip, D(23), 'aaron', 20, st([])).ok, 'primary (aaron) bookable while cross owed (one slot reserved, no hard "first")');
+  const bA23 = bk('aaron', 20, '2026-06-23');
+  ok(canBookOnDate(vip, D(24), 'aaron', 20, st([bA23])).reason === 'cross-reserved', '2nd primary blocked — last slot reserved for the cross');
+  ok(canBookOnDate(vip, D(24), 'ryan', 20, st([bA23])).ok, 'cross still bookable after a primary');
+  const bR24 = bk('ryan', 20, '2026-06-24');
+  ok(canBookOnDate(vip, D(25), 'ryan', 20, st([bA23, bR24])).reason === 'secondary-done', 'only one cross-meeting per grant');
+  ok(canBookOnDate(vip, D(25), 'aaron', 20, st([bA23, bR24])).reason === 'tokens-used', 'both tokens spent (1 primary + 1 cross)');
+  ok(canBookOnDate(vip, D(23), 'aaron', 30, st([])).reason === 'bad-duration', 'VIP only books 20-min');
+  ok(canBookOnDate(vip, D(23), 'aaron', 20, st([bA23])).reason === 'same-day', 'two meetings same day REFUSED');
+  ok(canBookOnDate(vip, D(30), 'aaron', 20, st([])).reason === 'out-of-window', 'out-of-window REFUSED');
+  ok(canBookOnDate(vip, D(23), 'aaron', 20, { grant: null, bookings: [] }).reason === 'no-grant', 'no active grant → must check in');
 
   console.log('\n── VIP NOT carrying the cross (primary=ryan, phase=1) — the Christine case ──');
   const vipR = { primary_teacher: 'ryan', package: 'vip', phase: 1, student_sheet_id: 'y' };
-  ok(canBookOnDate(vipR, D(23), 'ryan', 30, st([])).ok, 'primary cashes token 1 (Jun 23)');
-  const bR23 = bk('ryan', 30, '2026-06-23');
-  ok(canBookOnDate(vipR, D(25), 'ryan', 30, st([bR23])).ok, 'primary cashes token 2 (no slot reserved — no cross this grant)');
-  const bR25 = bk('ryan', 30, '2026-06-25');
-  ok(canBookOnDate(vipR, D(24), 'ryan', 30, st([bR23, bR25])).reason === 'tokens-used', 'in-window 3rd REFUSED — tokens used');
-  ok(canBookOnDate(vipR, D(23), 'aaron', 30, st([])).reason === 'wrong-teacher', 'secondary NOT bookable when the grant carries no cross-meeting');
+  ok(canBookOnDate(vipR, D(23), 'ryan', 20, st([])).ok, 'primary cashes token 1 (Jun 23)');
+  const bR23 = bk('ryan', 20, '2026-06-23');
+  ok(canBookOnDate(vipR, D(25), 'ryan', 20, st([bR23])).ok, 'primary cashes token 2 (no slot reserved — no cross this grant)');
+  const bR25 = bk('ryan', 20, '2026-06-25');
+  ok(canBookOnDate(vipR, D(24), 'ryan', 20, st([bR23, bR25])).reason === 'tokens-used', 'in-window 3rd REFUSED — tokens used');
+  ok(canBookOnDate(vipR, D(23), 'aaron', 20, st([])).reason === 'wrong-teacher', 'secondary NOT bookable when the grant carries no cross-meeting');
 
   console.log('\n── Once-a-month cross-meeting (month-level, across grants) ──');
   // A fresh grant (no bookings of its own) that still reaches the phase week, but
   // the student already booked a cross-meeting earlier this month under a PRIOR grant.
   const stCross = (crossDates) => ({ grant: vipGrant, bookings: [], crossMeetings: crossDates });
-  ok(canBookOnDate(vip, D(23), 'ryan', 30, stCross(['2026-06-15'])).reason === 'secondary-done',
+  ok(canBookOnDate(vip, D(23), 'ryan', 20, stCross(['2026-06-15'])).reason === 'secondary-done',
     'no 2nd cross-meeting in the same month (a prior-grant cross counts)');
-  ok(canBookOnDate(vip, D(23), 'aaron', 30, stCross(['2026-06-15'])).ok,
+  ok(canBookOnDate(vip, D(23), 'aaron', 20, stCross(['2026-06-15'])).ok,
     'primary is NOT reserved once the month’s cross is already booked');
-  ok(canBookOnDate(vip, D(24), 'aaron', 30, { grant: vipGrant, bookings: [bk('aaron', 30, '2026-06-23')], crossMeetings: ['2026-06-15'] }).ok,
+  ok(canBookOnDate(vip, D(24), 'aaron', 20, { grant: vipGrant, bookings: [bk('aaron', 20, '2026-06-23')], crossMeetings: ['2026-06-15'] }).ok,
     'both primary tokens usable when the cross is already done for the month');
-  ok(canBookOnDate(vip, D(23), 'ryan', 30, stCross(['2026-07-04'])).ok,
+  ok(canBookOnDate(vip, D(23), 'ryan', 20, stCross(['2026-07-04'])).ok,
     'a cross in a DIFFERENT month does not block this month’s cross');
 
   console.log('\n── Comprehensive carrying (primary=aaron, phase=3) — up to 2 ──');
   const compGrant = { ...vipGrant, package: 'comprehensive' };
   const comp = { primary_teacher: 'aaron', package: 'comprehensive', phase: 3, student_sheet_id: 'z' };
   const stC = (bookings) => ({ grant: compGrant, bookings });
-  ok(canBookOnDate(comp, D(23), 'aaron', 30, stC([])).ok, 'comp primary bookable');
-  ok(canBookOnDate(comp, D(23), 'ryan', 30, stC([])).ok, 'comp cross bookable on any in-window day');
-  ok(canBookOnDate(comp, D(24), 'aaron', 30, stC([bk('aaron', 30, '2026-06-23')])).reason === 'cross-reserved', 'comp reserves a slot for the cross');
+  ok(canBookOnDate(comp, D(23), 'aaron', 20, stC([])).ok, 'comp primary bookable');
+  ok(canBookOnDate(comp, D(23), 'ryan', 20, stC([])).ok, 'comp cross bookable on any in-window day');
+  ok(canBookOnDate(comp, D(24), 'aaron', 20, stC([bk('aaron', 20, '2026-06-23')])).reason === 'cross-reserved', 'comp reserves a slot for the cross');
 
-  console.log('\n── Essential carrying (40-min budget, primary=aaron, phase=3) ──');
-  const essGrant = { week_start: '2026-06-13', valid_through: '2026-06-26', meeting_tokens: 0, budget_minutes: 40, package: 'essential' };
+  console.log('\n── Essential carrying (30-min budget, primary=aaron, phase=3) ──');
+  const essGrant = { week_start: '2026-06-13', valid_through: '2026-06-26', meeting_tokens: 0, budget_minutes: 30, package: 'essential' };
   const ess = { primary_teacher: 'aaron', package: 'essential', phase: 3, student_sheet_id: 'e' };
   const stE = (bookings) => ({ grant: essGrant, bookings });
-  ok(canBookOnDate(ess, D(23), 'aaron', 40, stE([])).reason === 'cross-reserved', 'primary 1×40 blocked while cross owed — 20 held for the cross');
-  ok(canBookOnDate(ess, D(23), 'aaron', 20, stE([])).ok, 'primary 20 ok (leaves 20 for the cross)');
-  ok(canBookOnDate(ess, D(23), 'ryan', 40, stE([])).ok, 'cross can take the full 40 if booked first');
-  const eA20 = bk('aaron', 20, '2026-06-23');
-  ok(canBookOnDate(ess, D(24), 'aaron', 20, stE([eA20])).reason === 'cross-reserved', '2nd primary 20 blocked — cross still owed');
-  ok(canBookOnDate(ess, D(24), 'ryan', 20, stE([eA20])).ok, 'cross 20 fits the remaining budget');
-  ok(canBookOnDate(ess, D(25), 'aaron', 20, stE([eA20, bk('ryan', 20, '2026-06-24')])).reason === 'budget-used', 'budget spent (20 primary + 20 cross)');
+  ok(canBookOnDate(ess, D(23), 'aaron', 30, stE([])).reason === 'cross-reserved', 'primary 1×30 blocked while cross owed — 15 held for the cross');
+  ok(canBookOnDate(ess, D(23), 'aaron', 15, stE([])).ok, 'primary 15 ok (leaves 15 for the cross)');
+  ok(canBookOnDate(ess, D(23), 'ryan', 30, stE([])).ok, 'cross can take the full 30 if booked first');
+  const eA15 = bk('aaron', 15, '2026-06-23');
+  ok(canBookOnDate(ess, D(24), 'aaron', 15, stE([eA15])).reason === 'cross-reserved', '2nd primary 15 blocked — cross still owed');
+  ok(canBookOnDate(ess, D(24), 'ryan', 15, stE([eA15])).ok, 'cross 15 fits the remaining budget');
+  ok(canBookOnDate(ess, D(25), 'aaron', 15, stE([eA15, bk('ryan', 15, '2026-06-24')])).reason === 'budget-used', 'budget spent (15 primary + 15 cross)');
+  // grantRemaining now divides the budget by the SMALLEST denomination (15), so a
+  // 30-min budget reads as 2 meetings — not floor(30/20)=1 (the old hardcoded /20 bug).
+  ok(grantRemaining(essGrant, { count: 0, minutes: 0 }) === 2, 'Essential remaining 2 on a fresh 30-min budget (2×15)');
+  ok(grantRemaining(essGrant, { count: 1, minutes: 15 }) === 1, 'Essential remaining 1 after a 15');
+  ok(grantRemaining(essGrant, { count: 1, minutes: 30 }) === 0, 'Essential remaining 0 after a 30 (budget spent)');
 
   console.log('\n── Essential NOT carrying (primary=ryan, phase=1) ──');
   const essR = { primary_teacher: 'ryan', package: 'essential', phase: 1, student_sheet_id: 'er' };
-  ok(canBookOnDate(essR, D(23), 'ryan', 40, { grant: essGrant, bookings: [] }).ok, 'primary 1×40 ok when no cross is owed');
-  ok(canBookOnDate(essR, D(23), 'aaron', 20, { grant: essGrant, bookings: [] }).reason === 'wrong-teacher', 'secondary not bookable (no cross this grant)');
+  ok(canBookOnDate(essR, D(23), 'ryan', 30, { grant: essGrant, bookings: [] }).ok, 'primary 1×30 ok when no cross is owed');
+  ok(canBookOnDate(essR, D(23), 'aaron', 15, { grant: essGrant, bookings: [] }).reason === 'wrong-teacher', 'secondary not bookable (no cross this grant)');
 
   console.log('\n── buildSeniorBookingPlan: the reported bug, fixed (now = Fri Jun 19) ──');
   const now = D(19);
@@ -178,7 +183,7 @@ function pureLogicTests() {
   ok(canBookOnDate(vipR, D(17), 'ryan', 15, stOO([oo])).ok === false, 'one-off respects its window (Jun 17 < valid_from)');
   ok(canBookOnDate(vipR, D(23), 'ryan', 15, stOO([{ ...oo, status: 'consumed' }])).ok === false, 'a consumed one-off is not bookable');
   // Weekly is tried FIRST: when the weekly grant already covers it, the weekly track is charged (additive, not a substitute).
-  ok(canBookOnDate(vipR, D(23), 'ryan', 30, { grant: vipGrant, bookings: [], oneoffs: [{ ...oo, minutes: 30 }] }).via === 'weekly', 'weekly cadence is spent before the one-off');
+  ok(canBookOnDate(vipR, D(23), 'ryan', 20, { grant: vipGrant, bookings: [], oneoffs: [{ ...oo, minutes: 20 }] }).via === 'weekly', 'weekly cadence is spent before the one-off');
   // It surfaces in the booking plan as a separate list, even with no weekly grant.
   const ooPlan = buildSeniorBookingPlan(vipR, D(19), stOO([oo]));
   ok(ooPlan.oneoffs.length === 1 && ooPlan.oneoffs[0].slug === 'ryan' && ooPlan.oneoffs[0].minutes === 15, 'plan surfaces the one-off as its own entry');

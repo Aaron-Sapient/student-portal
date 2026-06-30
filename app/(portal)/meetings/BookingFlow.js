@@ -111,8 +111,8 @@ export default function BookingFlow({ slug }) {
   const [routedKind, setRoutedKind] = useState(null); // 'written' | 'email'
   const [studentName, setStudentName] = useState('');
   const [duration, setDuration] = useState('30min');
-  // Seniors: the package's bookable lengths, e.g. ['40min','20min'] (Essential) or
-  // ['30min'] (VIP/Comprehensive). null for underclassmen (15/30 token flow).
+  // Seniors: the package's bookable lengths, e.g. ['30min','15min'] (Essential) or
+  // ['20min'] (VIP/Comprehensive). null for underclassmen (15/30 token flow).
   const [seniorDurations, setSeniorDurations] = useState(null);
   // Senior calendar context from /api/validateBooking: { kind, eligibleWindow,
   // grantWindow, phase }. null for underclassmen. Drives the context header and
@@ -166,7 +166,7 @@ export default function BookingFlow({ slug }) {
         // calendar flow (a project meeting is just a standing weekly meeting with its
         // own window). data.project rides the same seniorMeta rendering path.
         if (data.senior || data.project) {
-          const ds = (data.durations && data.durations.length ? data.durations : [30]).map((n) => `${n}min`);
+          const ds = (data.durations && data.durations.length ? data.durations : [15]).map((n) => `${n}min`);
           setSeniorDurations(ds);
           setDuration(ds[0]);
           setSeniorMeta({
@@ -416,7 +416,7 @@ export default function BookingFlow({ slug }) {
       <div className="lg:grid lg:grid-cols-[minmax(0,21rem)_minmax(0,1fr)] lg:items-start lg:gap-7">
         {/* ── LEFT: meeting length (a true sub-choice) + calendar ───────────── */}
         <div>
-          {/* Only Essential offers a real length choice (1×40 or 2×20). It filters
+          {/* Only Essential offers a real length choice (1×30 or 2×15). It filters
               the calendar's open days, so it sits right above the calendar under a
               label — a sub-control, not a page heading. Single-length meetings
               (one-offs, VIP/Comprehensive weekly, the cross) show no pill at all. */}

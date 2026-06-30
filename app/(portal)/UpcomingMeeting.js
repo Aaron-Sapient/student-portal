@@ -37,9 +37,13 @@ function buildCalendarGrid(year, month) {
   if (week.length > 0) { while (week.length < 7) week.push(null); grid.push(week); }
   return grid;
 }
-function getMeetingDuration(start, end) {
-  const mins = (new Date(end) - new Date(start)) / 60000;
-  return mins <= 15 ? '15min' : '30min';
+// The meeting's ACTUAL length in minutes (from its span) — never a 15/30 bucket.
+// Reschedule reuses the same length, so it must be exact: Essential is 15 or 30,
+// Comprehensive/VIP are 20, and a one-off can be any admin-set length. Bucketing
+// everything >15 to "30min" silently broke reschedule for the 20-min packages
+// (30 isn't a valid denomination → canBookOnDate 'bad-duration' → empty calendar).
+function meetingMinutes(start, end) {
+  return Math.round((new Date(end) - new Date(start)) / 60000);
 }
 function isWithinHours(dateStr, hours) {
   return new Date(dateStr) < new Date(Date.now() + hours * 60 * 60 * 1000);
@@ -111,7 +115,7 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
     setSlot(null);
     setSlots([]);
     setLoadingSlots(true);
-    const mins = getMeetingDuration(meeting.start, meeting.end) === '15min' ? 15 : 30;
+    const mins = meetingMinutes(meeting.start, meeting.end);
     fetch(`/api/getAvailableSlots?date=${formatDateStr(rDate)}&duration=${mins}&instructor=${instructorSlug}`)
       .then((r) => r.json())
       .then((data) => { setSlots(data.slots || []); setLoadingSlots(false); })
@@ -130,7 +134,7 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
           studentName,
           meetingTitle: meeting.title,
           meetingStart: meeting.start,
-          duration: getMeetingDuration(meeting.start, meeting.end),
+          duration: `${meetingMinutes(meeting.start, meeting.end)}min`,
           instructor: instructorSlug,
         }),
       });
@@ -172,7 +176,7 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
         body: JSON.stringify({
           start: slot.start,
           end: slot.end,
-          duration: getMeetingDuration(meeting.start, meeting.end),
+          duration: `${meetingMinutes(meeting.start, meeting.end)}min`,
           studentName,
           agenda: agenda.trim(),
           isReschedule: true,
@@ -398,7 +402,10 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
                   Checking availability…
                 </p>
               ) : slots.length === 0 ? (
-                <p className="text-sm text-ink-soft">No times open this day.</p>
+                <p className="text-sm text-ink-soft">
+                  No times open this day. Try another day, or cancel and rebook from{' '}
+                  <span className="font-semibold text-ink">Book</span>.
+                </p>
               ) : (
                 <div className="flex flex-wrap gap-2">
                   {slots.map((s, i) => (

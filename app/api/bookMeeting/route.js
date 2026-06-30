@@ -122,6 +122,18 @@ export async function POST(request) {
 
     const seniorMins = parseInt(String(duration).replace(/\D/g, ''), 10);
 
+    // The booked event's ACTUAL span must equal the validated/charged length. Both
+    // canBookOnDate/canBookProjectOnDate and the ledger key off `seniorMins` (from the
+    // `duration` string), while the calendar event is created from the client's
+    // start/end — so without this a crafted request could charge 15 of the 30-min
+    // budget while placing a longer event. Legit flows always match (slots are
+    // generated at exactly this length), so this never rejects a real booking.
+    const endTime = DateTime.fromISO(end).setZone('America/Los_Angeles');
+    const spanMins = endTime.isValid ? Math.round(endTime.diff(startTime, 'minutes').minutes) : NaN;
+    if (!Number.isFinite(seniorMins) || spanMins !== seniorMins) {
+      return Response.json({ error: 'Meeting length mismatch.' }, { status: 400 });
+    }
+
     // Project-meeting path — the final authority (slot endpoints can be bypassed).
     // Authorize against the standing plan + 1/week ledger, NOT the essay/senior gate,
     // so a senior's project booking with their essay teacher can't be charged to the
