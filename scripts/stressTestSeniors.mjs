@@ -23,6 +23,7 @@ import {
   grantRemaining,
   canBookOnDate,
   grantCarriesCrossMeeting,
+  phaseWeekBounds,
   buildSeniorBookingPlan,
   startOfSaturdayWeek,
   bookedForWeekOf,
@@ -84,6 +85,29 @@ function pureLogicTests() {
   ok(grantCarriesCrossMeeting(p3, { week_start: '2026-06-20' }) === false, 'check-in AFTER the phase week does NOT carry it');
   ok(grantCarriesCrossMeeting({ primary_teacher: 'ryan', package: 'vip', phase: 1 }, { week_start: '2026-06-13' }) === false,
     'phase-1 senior, wk3/wk4 grant → no cross-meeting');
+
+  console.log('\n── phase-1 MONTH-BOUNDARY week (the Aasrith bug, Jul 2026 — locks in the fix) ──');
+  // Jul 1, 2026 is a Wednesday, so July's phase-1 week is the Saturday-week Jun
+  // 27 - Jul 3 — it STARTS in June. Before the fix, weekOfMonth(Jun 27) scored
+  // this as June's OWN week 5, never as July's week 1, so a phase-1 grant reaching
+  // this week silently never carried the cross-meeting.
+  const p1 = { primary_teacher: 'aaron', package: 'vip', phase: 1, student_sheet_id: 'aasrith' };
+  const boundaryGrant = { week_start: '2026-06-27', valid_through: '2026-07-10', meeting_tokens: 2, budget_minutes: null, package: 'vip' };
+  ok(grantCarriesCrossMeeting(p1, boundaryGrant) === true,
+    'Jun27-week grant DOES carry July\'s phase-1 cross-meeting, even though the week starts in June');
+  const pwb = phaseWeekBounds(p1, boundaryGrant);
+  ok(pwb && pwb.start === '2026-06-27' && pwb.end === '2026-07-03',
+    `phase week bounds are the TRUE Jun27-Jul3 span, not truncated to Jul 1 (got ${JSON.stringify(pwb)})`);
+  const D0706 = DateTime.fromISO('2026-07-06', { zone: ZONE });
+  const D0710 = DateTime.fromISO('2026-07-10', { zone: ZONE });
+  const stB = (bookings) => ({ grant: boundaryGrant, bookings });
+  ok(canBookOnDate(p1, D0706, 'aaron', 20, stB([])).ok, '1st primary (aaron) booking OK');
+  const bA0706 = bk('aaron', 20, '2026-07-06');
+  ok(canBookOnDate(p1, D0710, 'aaron', 20, stB([bA0706])).reason === 'cross-reserved',
+    '2nd primary booking BLOCKED — reserved for the July cross-meeting with ryan (this WAS the bug: it used to be silently allowed)');
+  ok(canBookOnDate(p1, D0710, 'ryan', 20, stB([bA0706])).ok, 'secondary (ryan) bookable instead, using the reserved slot');
+  ok(grantCarriesCrossMeeting({ ...p1, phase: 1 }, { week_start: '2026-08-01', valid_through: '2026-08-14' }) === true,
+    'August (starts ON a Saturday — no boundary) still carries phase-1 correctly');
 
   console.log('\n── VIP carrying the cross (primary=aaron, phase=3) — capacity reservation, any-day cross ──');
   const vip = { primary_teacher: 'aaron', package: 'vip', phase: 3, student_sheet_id: 'x' };

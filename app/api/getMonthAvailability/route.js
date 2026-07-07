@@ -8,7 +8,7 @@ import {
   loadSeniorBookingState,
   canBookOnDate,
   phaseWeekMonthKey,
-  weekOfMonth,
+  phaseWeekBounds,
   OTHER,
 } from '@/lib/seniors';
 import {
@@ -95,8 +95,8 @@ export async function GET(request) {
     // with), when this grant carries the cross-meeting (its window reaches the
     // phase week) and we're viewing that month. On the primary calendar the week
     // carries no special meaning, so we leave it out. We derive it from the booking
-    // logic's OWN helpers (phaseWeekMonthKey/weekOfMonth) so the gold highlight can
-    // never contradict what the rules will let you book.
+    // logic's OWN helpers (phaseWeekMonthKey/phaseWeekBounds) so the gold highlight
+    // can never contradict what the rules will let you book.
     let phaseWeek = null;
     if (senior) {
       seniorState = await loadSeniorBookingState(senior);
@@ -110,15 +110,7 @@ export async function GET(request) {
         const isCrossCalendar = instructor.slug === OTHER[senior.primary_teacher];
         const monthKey = phaseWeekMonthKey(senior, seniorState.grant);
         if (isCrossCalendar && monthKey && monthKey === monthStart.toFormat('yyyy-LL')) {
-          let pwStart = null;
-          let pwEnd = null;
-          for (let d = monthStart; d <= monthEnd; d = d.plus({ days: 1 })) {
-            if (weekOfMonth(d) === senior.phase) {
-              if (!pwStart) pwStart = d;
-              pwEnd = d;
-            }
-          }
-          if (pwStart) phaseWeek = { start: pwStart.toISODate(), end: pwEnd.toISODate() };
+          phaseWeek = phaseWeekBounds(senior, seniorState.grant);
         }
       }
     }
