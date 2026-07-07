@@ -1,12 +1,23 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { GraduationCap, Trophy, CheckCircle2, ChevronRight, Circle } from 'lucide-react';
+import { Award, GraduationCap, Trophy, CheckCircle2, ChevronRight, Circle } from 'lucide-react';
 import { usePortalData } from '../PortalDataContext';
 import { checkedInThisWeek } from '../portalUtils';
 import { ClayCheck, IconTile } from '../neu';
 
-function PersonCard({ href, icon: Icon, name, role, done, loading, delay }) {
+function PersonCard({
+  href,
+  icon: Icon,
+  name,
+  role,
+  done,
+  loading,
+  delay,
+  doneLabel = 'Checked in',
+  pendingLabel = 'Check-in available',
+}) {
   return (
     <Link
       href={href}
@@ -23,12 +34,12 @@ function PersonCard({ href, icon: Icon, name, role, done, loading, delay }) {
             {done ? (
               <>
                 <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={2.4} />
-                Checked in
+                {doneLabel}
               </>
             ) : (
               <>
                 <Circle className="h-3.5 w-3.5" strokeWidth={2.4} />
-                Check-in available
+                {pendingLabel}
               </>
             )}
           </span>
@@ -43,11 +54,35 @@ function PersonCard({ href, icon: Icon, name, role, done, loading, delay }) {
   );
 }
 
+// Own lightweight fetch — annual, not part of the shared weekly check-in data
+// PortalDataContext carries (mirrors how `coach` gets its own small endpoint).
+function useApScoresStatus() {
+  const [state, setState] = useState({ loading: true, submittedThisYear: false });
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/apScores')
+      .then((r) => r.json())
+      .then((data) => {
+        if (!alive) return;
+        setState({ loading: false, submittedThisYear: !!data?.submittedThisYear });
+      })
+      .catch(() => {
+        if (!alive) return;
+        setState({ loading: false, submittedThisYear: false });
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return state;
+}
+
 export default function CheckInsPage() {
   const { data, loading } = usePortalData();
   const ryanDone = checkedInThisWeek(data?.lastCheckin);
   const aaronDone = checkedInThisWeek(data?.aaronLastCheckin);
   const isSenior = !!data?.senior;
+  const apScores = useApScoresStatus();
 
   return (
     <div className="space-y-7">
@@ -96,6 +131,25 @@ export default function CheckInsPage() {
             done={aaronDone}
             loading={loading}
             delay={140}
+          />
+        </section>
+      )}
+
+      {/* Once reported, this card disappears entirely rather than lingering as
+          a "done" tile for the rest of the year (info-once — a closed-out
+          annual task isn't something to keep showing). Hidden while loading
+          too, so it never flashes in only to vanish a moment later. */}
+      {!apScores.loading && !apScores.submittedThisYear && (
+        <section className="space-y-3">
+          <PersonCard
+            href="/check-ins/ap-scores"
+            icon={Award}
+            name="AP Scores"
+            role="Report this year's exam results"
+            done={false}
+            loading={false}
+            pendingLabel="Report available"
+            delay={200}
           />
         </section>
       )}
