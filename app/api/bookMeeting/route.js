@@ -178,7 +178,11 @@ export async function POST(request) {
       else seniorGrant = state.grant;
     }
 
-    const agendaTrimmed = agenda?.trim() || '';
+    // Seniors' non-project bookings are the college-app essay track — default the
+    // agenda to "College Apps" so the title/description/email identify it, but
+    // anything the student actually types always wins (senior is never ART-eligible,
+    // so this never collides with the ART prefix below).
+    const agendaTrimmed = agenda?.trim() || (senior ? 'College Apps' : '');
     const titlePrefix = instructor.slug === 'art' ? 'ART: ' : '';
     const eventTitle = agendaTrimmed
       ? `${titlePrefix}${studentName} – ${duration}: ${agendaTrimmed}`
