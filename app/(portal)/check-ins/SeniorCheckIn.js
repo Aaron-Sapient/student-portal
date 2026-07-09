@@ -20,6 +20,7 @@ import {
   ArrowLeft,
 } from 'lucide-react';
 import { ZONE } from '../portalUtils';
+import { usePortalData } from '../PortalDataContext';
 import WeekFeel, { feelToRating } from './WeekFeel';
 import TaskTrough from './TaskTrough';
 
@@ -27,20 +28,6 @@ const GRADE_OPTIONS = ['A+', 'A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D+', 
 const CONCERN_OPTIONS = ['None', 'Quick Question', 'Need to Discuss'];
 
 const semesterLabel = (s) => (s === 'S1' ? 'Fall' : 'Spring');
-
-// Weekly reset: a check-in stays valid through the week until the next Saturday.
-function mostRecentSaturday() {
-  const now = new Date();
-  const diff = (now.getDay() + 1) % 7;
-  const sat = new Date(now);
-  sat.setHours(0, 0, 0, 0);
-  sat.setDate(now.getDate() - diff);
-  return sat;
-}
-function stillValid(lastSubmitted) {
-  if (!lastSubmitted) return false;
-  return new Date(lastSubmitted) >= mostRecentSaturday();
-}
 
 function isSummer() {
   const m = DateTime.now().setZone(ZONE).month;
@@ -90,6 +77,7 @@ const fieldCls =
 /* ── main ───────────────────────────────────────────────────────────────── */
 
 export default function SeniorCheckIn() {
+  const { data: portalData, loading: portalLoading, refreshHome } = usePortalData();
   const [status, setStatus] = useState('loading'); // loading | error | done | needed
   const [formData, setFormData] = useState(null);
   const [error, setError] = useState(null);
@@ -111,6 +99,17 @@ export default function SeniorCheckIn() {
   const [feel, setFeel] = useState(50);
 
   useEffect(() => {
+    if (portalLoading) return;
+    // Same grant-ledger-backed flag the Meetings page and the /check-ins card
+    // trust (see app/api/home-data's seniorContext.checkedIn) — NOT a second,
+    // looser re-derivation from the raw Sheet AY timestamp. A grant is
+    // spendable across the current OR next Saturday-week, so this can be
+    // true even when today isn't in the same calendar week as the last
+    // submission.
+    if (portalData?.senior?.checkedIn) {
+      setStatus('done');
+      return;
+    }
     let alive = true;
     (async () => {
       try {
@@ -118,10 +117,6 @@ export default function SeniorCheckIn() {
         const data = await res.json();
         if (!alive) return;
         if (data.error) throw new Error(data.error);
-        if (stillValid(data.lastSubmitted)) {
-          setStatus('done');
-          return;
-        }
         if (!data.skip && data.classes) {
           const g = {};
           data.classes.forEach((c, i) => (g[i] = c.grade || ''));
@@ -138,7 +133,7 @@ export default function SeniorCheckIn() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [portalLoading, portalData]);
 
   const showGrades =
     !!formData &&
@@ -192,6 +187,7 @@ export default function SeniorCheckIn() {
       const result = await res.json();
       if (!result.success) throw new Error(result.error || 'Submission failed');
       setStatus('done'); // recorded → booking is now unlocked for the week
+      refreshHome(); // sync the shared cache so a nav-away-and-back doesn't re-show the form
     } catch (e) {
       setError(e.message);
       setSubmitting(false);

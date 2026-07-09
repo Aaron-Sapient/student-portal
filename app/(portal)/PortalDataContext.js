@@ -10,6 +10,7 @@ const PortalDataContext = createContext({
   loading: true,
   error: null,
   refreshMeetings: () => {},
+  refreshHome: () => {},
 });
 
 export const usePortalData = () => useContext(PortalDataContext);
@@ -36,6 +37,20 @@ export default function PortalDataProvider({ children }) {
       setState((s) => ({ ...s, meetings, meeting: meetings[0] || null }));
     } catch {
       /* keep current list */
+    }
+  }, []);
+
+  // After a senior check-in, re-pull home-data so `data.senior.checkedIn` (the
+  // grant-ledger-backed flag) reflects the new grant immediately, instead of
+  // waiting for the next full layout mount.
+  const refreshHome = useCallback(async () => {
+    try {
+      const res = await fetch('/api/home-data');
+      const home = await res.json();
+      if (home?.error) return;
+      setState((s) => ({ ...s, data: home }));
+    } catch {
+      /* keep current data */
     }
   }, []);
 
@@ -76,7 +91,7 @@ export default function PortalDataProvider({ children }) {
   }, []);
 
   return (
-    <PortalDataContext.Provider value={{ ...state, refreshMeetings }}>
+    <PortalDataContext.Provider value={{ ...state, refreshMeetings, refreshHome }}>
       {children}
     </PortalDataContext.Provider>
   );
