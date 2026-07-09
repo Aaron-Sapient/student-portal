@@ -9,7 +9,6 @@ import {
   getSeniorBySheetId,
   loadSeniorBookingState,
   seniorBookingPlan,
-  checkedInThisWeek,
 } from '@/lib/seniors'
 import { projectMeetingCards } from '@/lib/projectMeetings'
 import { getSessionLog } from '@/lib/meetings'
@@ -282,7 +281,15 @@ if (isART) {
       crossOwed: plan.crossOwed,
       crossDone: plan.crossDone,
       remaining: plan.remaining,
-      checkedIn: checkedInThisWeek(studentRow[50], nowLA),
+      // Whether the senior has anything unlocked to book, per the Supabase grant
+      // ledger (the actual booking authority) — NOT the Sheets AY timestamp
+      // compared against the literal current week. A grant is spendable across
+      // the current OR next Saturday-week (see seniorsCore.js), so a senior who
+      // checked in last week can still have a live grant (and an owed phase-week
+      // cross-meeting) this week without having re-submitted the form today; the
+      // old AY-based check read that as "not checked in" and walled off the
+      // meeting cards behind a false "check in to unlock" gate.
+      checkedIn: plan.hasGrant,
     }
   }
 
