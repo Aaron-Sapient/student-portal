@@ -1,17 +1,21 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { DateTime } from 'luxon';
-import { CircleAlert, Rocket, Sun, Video } from 'lucide-react';
+import { CircleAlert, Rocket, Sun, Users, Video } from 'lucide-react';
 import { usePortalData } from '../PortalDataContext';
 import CoachCard from '../CoachCard';
 import { ClayBloom, PointerRow, SectionDial } from '../neu';
 import { GaugeCluster, ScoreReadout, ProgressLine, Projects } from '../homeSections';
+import { subscribeNoProject, readNoProject, readNoProjectServer } from '../noProjectFlag';
 import { ZONE } from '../portalUtils';
 
 const SECTIONS = [
   { key: 'today', label: 'Today', icon: Sun },
-  { key: 'projects', label: 'Projects', icon: Rocket },
+  // "In-Flight" = the student's active work (renamed from "Projects" so the
+  // bottom-nav Projects tab owns that word). Post-canonization this narrows to
+  // solo work; today the Comps rows carry no solo/group marker to filter on.
+  { key: 'projects', label: 'In-Flight', icon: Rocket },
 ];
 
 /* ── Today: conditional pointer rows (the only text containers) ─────────── */
@@ -39,7 +43,7 @@ function NextMeetingRow({ meetings }) {
   );
 }
 
-function Today({ data, meetings, coach }) {
+function Today({ data, meetings, coach, noProject }) {
   // Rhythm: gauges → next meeting → project progress → the readout text, last.
   // (Session frequency lives in the Meetings tab — its perfect place.)
   return (
@@ -48,6 +52,17 @@ function Today({ data, meetings, coach }) {
       <CoachCard coach={coach} />
       <GaugeCluster scores={data.scores} />
       <NextMeetingRow meetings={meetings} />
+      {/* Safety net: only for students who opted out of the census (their Projects
+          tab is hidden) — a pointer back in case they were on a project after all. */}
+      {noProject && (
+        <PointerRow
+          icon={Users}
+          label="On a group project?"
+          sub="Report in to book time with Ryan"
+          href="/project-report"
+          delay={190}
+        />
+      )}
       <ProgressLine progress={data.progress} />
       <ScoreReadout scores={data.scores} />
     </div>
@@ -76,6 +91,7 @@ function Skeleton() {
 export default function HomePage() {
   const { data, meetings, coach, loading, error } = usePortalData();
   const [section, setSection] = useState('today');
+  const noProject = useSyncExternalStore(subscribeNoProject, readNoProject, readNoProjectServer);
 
   if (loading) return <Skeleton />;
 
@@ -115,7 +131,9 @@ export default function HomePage() {
 
       {/* Keyed so each section replays the staggered rise on switch. */}
       <div key={section}>
-        {section === 'today' && <Today data={data} meetings={meetings} coach={coach} />}
+        {section === 'today' && (
+          <Today data={data} meetings={meetings} coach={coach} noProject={noProject} />
+        )}
         {section === 'projects' && <Projects data={data} />}
       </div>
     </div>

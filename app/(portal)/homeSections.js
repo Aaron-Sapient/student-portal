@@ -310,7 +310,7 @@ export function Projects({ data }) {
     return (
       <div className="portal-rise flex min-h-[40vh] flex-col items-center justify-center text-center">
         <IconTile icon={Rocket} size="lg" />
-        <p className="mt-5 font-display text-xl font-semibold text-ink">No active projects</p>
+        <p className="mt-5 font-display text-xl font-semibold text-ink">Nothing in flight</p>
         <p className="mt-1.5 max-w-xs text-sm text-ink-soft">
           New competitions and projects will show up here once they’re scoped.
         </p>

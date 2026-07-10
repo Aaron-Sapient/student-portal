@@ -18,7 +18,7 @@ export default async function PortalLayout({ children }) {
   if (sessionClaims?.role === 'parent') redirect('/parent/home');
 
   return (
-    <PortalShell iconNames="calendar_month,fact_check,folder_open,home,school">
+    <PortalShell iconNames="calendar_month,fact_check,folder_open,groups,home,school">
       <PortalDataProvider>
         {/* Thumb-reachable floating dock, bottom on every breakpoint. */}
         <PortalTabBar />

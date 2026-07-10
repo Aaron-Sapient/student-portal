@@ -4,12 +4,17 @@ import { useEffect, useSyncExternalStore } from 'react';
 import { usePortalData } from './PortalDataContext';
 import { hasBookingAvailable, hasCheckinDue } from './portalUtils';
 import TabDock from '@/components/portal/TabDock';
+import { subscribeNoProject, readNoProject, readNoProjectServer } from './noProjectFlag';
 
 // Student tab list + gating/alert logic. The dock mechanics (glass lens,
 // viewport handling) live in components/portal/TabDock.
 const BASE_TABS = [
   { href: '/dashboard', label: 'Home', sym: 'home' },
   { href: '/check-ins', label: 'Check-Ins', sym: 'fact_check', alert: 'checkin' },
+  // Summer 2026 group-project census — a temporary report-in surface (remove
+  // once the census is done). Shown to every student; a non-project student
+  // self-opts-out on the tab's first screen.
+  { href: '/project-report', label: 'Projects', sym: 'groups' },
   { href: '/meetings', label: 'Meetings', sym: 'calendar_month', alert: 'book' },
   { href: '/files', label: 'Files', sym: 'folder_open' },
 ];
@@ -45,6 +50,8 @@ export default function PortalTabBar() {
     readCollegesCacheServer
   );
   const showColleges = data ? !!data.hasCollegeList : cachedColleges;
+
+  const noProject = useSyncExternalStore(subscribeNoProject, readNoProject, readNoProjectServer);
   useEffect(() => {
     if (!data) return;
     try {
@@ -57,9 +64,14 @@ export default function PortalTabBar() {
     book: hasBookingAvailable(data),
   };
 
+  // Hide the census Projects tab from students who opted out ("no group project").
+  const base = noProject
+    ? BASE_TABS.filter((t) => t.href !== '/project-report')
+    : BASE_TABS;
+
   const tabs = (showColleges
-    ? [BASE_TABS[0], COLLEGES_TAB, ...BASE_TABS.slice(1)]
-    : BASE_TABS
+    ? [base[0], COLLEGES_TAB, ...base.slice(1)]
+    : base
   ).map(({ href, label, sym, alert }) => ({
     href,
     label,
