@@ -4,20 +4,20 @@ import { getGoogleSheetsClient } from '@/lib/google';
 import { resolveIdentity, sessionEmail } from '@/lib/identity';
 import { getSupabaseClient, PROJECT_REPORTS } from '@/lib/supabase';
 
-// Student "report in" for the summer group-project census. Raw intake only —
-// the fuzzy team-name/roster reconciliation happens in a separate one-shot pass,
-// and booking tokens are granted downstream from the reconciled result (NOT here
-// on submit). Supabase is authoritative; no Sheets mirror.
-
-const RESPONSES = new Set(['finalized', 'not_finalized', 'no_project']);
+// Student "report in" for the summer group-project census. A student can be in
+// MULTIPLE group projects → one row per (student, project_index). Raw intake only;
+// fuzzy team/roster reconciliation + booking-token grants happen downstream, not
+// here. Supabase is authoritative; no Sheets mirror.
+//
+// response per row: 'finalized' (full report) | 'not_finalized' (on it, roster not
+// set → email Ryan) | 'no_project' (a single marker row: student is on no project).
 
 function sheetIdFromPortalUrl(url) {
   const m = String(url ?? '').match(/\/d\/([a-zA-Z0-9-_]+)/);
   return m ? m[1] : null;
 }
 
-// The logged-in STUDENT (not a parent viewing on their behalf — this is the
-// student's own report of their own project).
+// The logged-in STUDENT (not a parent viewing on their behalf).
 async function resolveStudent() {
   const { sessionClaims } = await auth();
   const email = sessionEmail(sessionClaims);
@@ -41,16 +41,14 @@ async function resolveStudent() {
   };
 }
 
-function toReport(r) {
-  if (!r) return null;
+function toProject(r) {
   return {
-    response: r.response,
-    projectName: r.project_name,
-    projectPlan: r.project_plan,
-    teamMembers: r.team_members,
-    timeline: r.timeline,
-    preferredTime: r.preferred_time,
-    updatedAt: r.updated_at,
+    projectName: r.project_name || '',
+    projectPlan: r.project_plan || '',
+    teamMembers: r.team_members || '',
+    timeline: r.timeline || '',
+    preferredTime: r.preferred_time || '',
+    finalized: r.response === 'finalized',
   };
 }
 
@@ -60,14 +58,22 @@ export async function GET() {
   const { sheetId } = resolved;
 
   const sb = getSupabaseClient();
-  const { data: row, error } = await sb
+  const { data: rows, error } = await sb
     .from(PROJECT_REPORTS)
     .select('*')
     .eq('student_sheet_id', sheetId)
-    .maybeSingle();
+    .order('project_index', { ascending: true });
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
-  return Response.json({ submitted: !!row, report: toReport(row) });
+  const list = rows || [];
+  if (list.length === 0) {
+    return Response.json({ submitted: false, response: 'none', projects: [] });
+  }
+  if (list.length === 1 && list[0].response === 'no_project') {
+    return Response.json({ submitted: true, response: 'no_project', projects: [] });
+  }
+  const projects = list.filter((r) => r.response !== 'no_project').map(toProject);
+  return Response.json({ submitted: true, response: 'in_project', projects });
 }
 
 export async function POST(request) {
@@ -82,59 +88,99 @@ export async function POST(request) {
     return Response.json({ error: 'Invalid request body' }, { status: 400 });
   }
 
-  const response = String(body?.response ?? '').trim();
-  if (!RESPONSES.has(response)) {
-    return Response.json({ error: 'Invalid response' }, { status: 400 });
-  }
-
   const clean = (v) => String(v ?? '').trim();
-  const payload = {
+  const sb = getSupabaseClient();
+  const base = {
     student_sheet_id: sheetId,
     student_email: email,
     student_name: name,
     student_class: studentClass,
-    response,
     updated_at: DateTime.utc().toISO(),
   };
 
-  if (response === 'finalized') {
-    const projectName = clean(body?.projectName);
-    const projectPlan = clean(body?.projectPlan);
-    const teamMembers = clean(body?.teamMembers);
-    const timeline = clean(body?.timeline);
-    const preferredTime = clean(body?.preferredTime);
-    if (!projectName || !projectPlan || !teamMembers || !timeline) {
-      return Response.json(
-        { error: 'Please fill in your project name, plan, team members, and timeline.' },
-        { status: 400 }
-      );
-    }
-    Object.assign(payload, {
-      project_name: projectName,
-      project_plan: projectPlan,
-      team_members: teamMembers,
-      timeline,
-      preferred_time: preferredTime || null,
-    });
-  } else {
-    // A census-only response ('not_finalized' / 'no_project') — clear any prior
-    // full-report fields (e.g. if a student edits down from a finalized report).
-    Object.assign(payload, {
-      project_name: null,
-      project_plan: null,
-      team_members: null,
-      timeline: null,
-      preferred_time: null,
-    });
+  // Replace the student's whole set safely: upsert the current rows FIRST (never a
+  // window where their data is gone), then delete any trailing rows they dropped.
+  async function replaceWith(rows) {
+    const { error: upErr } = await sb
+      .from(PROJECT_REPORTS)
+      .upsert(rows, { onConflict: 'student_sheet_id,project_index' });
+    if (upErr) return upErr;
+    const { error: delErr } = await sb
+      .from(PROJECT_REPORTS)
+      .delete()
+      .eq('student_sheet_id', sheetId)
+      .gte('project_index', rows.length);
+    return delErr || null;
   }
 
-  const sb = getSupabaseClient();
-  const { data, error } = await sb
-    .from(PROJECT_REPORTS)
-    .upsert(payload, { onConflict: 'student_sheet_id' })
-    .select('*')
-    .maybeSingle();
-  if (error) return Response.json({ error: error.message }, { status: 500 });
+  // Not on any group project → a single marker row.
+  if (body?.inProject === false) {
+    const err = await replaceWith([
+      {
+        ...base,
+        project_index: 0,
+        response: 'no_project',
+        project_name: null,
+        project_plan: null,
+        team_members: null,
+        timeline: null,
+        preferred_time: null,
+      },
+    ]);
+    if (err) return Response.json({ error: err.message }, { status: 500 });
+    return Response.json({ success: true, response: 'no_project' });
+  }
 
-  return Response.json({ success: true, report: toReport(data) });
+  // On one or more group projects → one row per project.
+  const raw = Array.isArray(body?.projects) ? body.projects : [];
+  if (raw.length === 0) {
+    return Response.json({ error: 'Add at least one project.' }, { status: 400 });
+  }
+  const rows = [];
+  for (let i = 0; i < raw.length; i++) {
+    const p = raw[i];
+    const projectName = clean(p?.projectName);
+    if (!projectName) {
+      return Response.json({ error: `Project ${i + 1} needs a name.` }, { status: 400 });
+    }
+    const finalized = p?.finalized !== false; // default true unless explicitly false
+    if (finalized) {
+      const projectPlan = clean(p?.projectPlan);
+      const teamMembers = clean(p?.teamMembers);
+      const timeline = clean(p?.timeline);
+      if (!projectPlan || !teamMembers || !timeline) {
+        return Response.json(
+          {
+            error: `"${projectName}" needs a plan, team members, and timeline — or mark its roster as not finalized.`,
+          },
+          { status: 400 }
+        );
+      }
+      rows.push({
+        ...base,
+        project_index: i,
+        response: 'finalized',
+        project_name: projectName,
+        project_plan: projectPlan,
+        team_members: teamMembers,
+        timeline,
+        preferred_time: clean(p?.preferredTime) || null,
+      });
+    } else {
+      rows.push({
+        ...base,
+        project_index: i,
+        response: 'not_finalized',
+        project_name: projectName,
+        project_plan: clean(p?.projectPlan) || null,
+        team_members: clean(p?.teamMembers) || null,
+        timeline: clean(p?.timeline) || null,
+        preferred_time: clean(p?.preferredTime) || null,
+      });
+    }
+  }
+
+  const err = await replaceWith(rows);
+  if (err) return Response.json({ error: err.message }, { status: 500 });
+  return Response.json({ success: true, response: 'in_project' });
 }
