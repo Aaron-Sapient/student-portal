@@ -79,6 +79,34 @@ function ProjectCard({ index, project, canRemove, onChange, onRemove }) {
           <input className={inputCls} value={project.name} onChange={set('name')} placeholder="What's it called?" />
         </Field>
 
+        {/* Asked FIRST, before the detail fields: a student with an unfinalized
+            roster picks the email-Ryan path up front instead of filling in work
+            that then collapses when they flag it. */}
+        <div className={`rounded-2xl p-3.5 ${nf ? 'neu-inset bg-ochre/[0.07]' : 'neu-inset'}`}>
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              checked={nf}
+              onChange={(e) => onChange({ ...project, notFinalized: e.target.checked })}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-terracotta"
+            />
+            <span className="text-sm text-ink-soft">
+              <span className="font-semibold text-ink">Our roster isn’t finalized yet.</span>
+              {nf ? (
+                <>
+                  {' '}No need to fill anything else —{' '}
+                  <a href={RYAN_MAILTO} className="font-semibold text-terracotta-deep underline underline-offset-2">
+                    email Ryan
+                  </a>{' '}
+                  to lock in your team, then come back to report the rest.
+                </>
+              ) : (
+                <>{' '}Check this to skip the details and just flag it to Ryan.</>
+              )}
+            </span>
+          </label>
+        </div>
+
         {!nf && (
           <>
             <Field label="Project plan" hint="What are you building or researching, and toward what?">
@@ -100,29 +128,6 @@ function ProjectCard({ index, project, canRemove, onChange, onRemove }) {
             </Field>
           </>
         )}
-
-        <div className="neu-inset rounded-2xl p-3.5">
-          <label className="flex items-start gap-3">
-            <input
-              type="checkbox"
-              checked={nf}
-              onChange={(e) => onChange({ ...project, notFinalized: e.target.checked })}
-              className="mt-0.5 h-4 w-4 shrink-0 accent-terracotta"
-            />
-            <span className="text-sm text-ink-soft">
-              Our roster isn’t finalized yet.
-              {nf && (
-                <>
-                  {' '}Just give the project a name above, then{' '}
-                  <a href={RYAN_MAILTO} className="font-semibold text-terracotta-deep underline underline-offset-2">
-                    email Ryan
-                  </a>{' '}
-                  to lock in your team.
-                </>
-              )}
-            </span>
-          </label>
-        </div>
       </div>
     </div>
   );
@@ -387,9 +392,9 @@ export default function ProjectReport() {
       <button
         type="button"
         onClick={addProject}
-        className="neu-chip portal-rise mt-3 flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-sm font-semibold text-ink-soft transition active:scale-[0.99]"
+        className="portal-rise mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-terracotta/45 py-4 text-sm font-bold text-terracotta-deep transition active:scale-[0.99] hover:border-terracotta/70"
       >
-        <Plus className="h-4 w-4" strokeWidth={2.4} />
+        <Plus className="h-5 w-5" strokeWidth={2.6} />
         Add another project
       </button>
 
