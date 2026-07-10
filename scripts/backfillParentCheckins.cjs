@@ -3,7 +3,7 @@
  * `parent_checkins` (Bucket A). One row per parent submission.
  *
  *   node scripts/backfillParentCheckins.cjs           # DRY RUN
- *   node scripts/backfillParentCheckins.cjs --write    # insert
+ *   node scripts/backfillParentCheckins.cjs --write    # upsert (live-safe)
  *
  * Source VERIFIED against lib/parentCheckinCore.js:296-313 — cols:
  *   A ts · B parentEmail · C studentName · D purpose · E deadlines
@@ -12,7 +12,10 @@
  * K(10)/L(11) AND/OR studentName vs Master A(0); sheet_id from Master G(6).
  * Resolution order: (1) studentName name-match; (2) if email maps to exactly
  * ONE student, use it; else skip+warn (can't disambiguate, FK needs a real id).
- * No natural unique key → --write clears `parent_checkins` first.
+ * Natural key (student_sheet_id, parent_email, submitted_at) → --write UPSERTs
+ * (live-safe; no delete window) and dedupes vs the app dual-write in
+ * lib/parentCheckinCore.js. Runs on the reconcile cron. Keeps the FORMATTED read
+ * (col A is stored as plain ISO text, so FORMATTED === UNFORMATTED here).
  */
 const fs = require('fs');
 const path = require('path');
@@ -79,11 +82,11 @@ async function main() {
   warns.slice(0, 15).forEach((w) => console.log(`  ⚠ ${w}`));
 
   if (!WRITE) { console.log('\nDRY RUN — re-run with --write.'); return; }
-  await sb.from('parent_checkins').delete().neq('id', '00000000-0000-0000-0000-000000000000');
   if (records.length) {
-    const { error } = await sb.from('parent_checkins').insert(records);
-    if (error) { console.error('insert failed:', error.message); process.exit(1); }
+    const { error } = await sb.from('parent_checkins')
+      .upsert(records, { onConflict: 'student_sheet_id,parent_email,submitted_at', ignoreDuplicates: false });
+    if (error) { console.error('upsert failed:', error.message); process.exit(1); }
   }
-  console.log(`\n✓ Inserted ${records.length} parent_checkins (table cleared first).`);
+  console.log(`\n✓ Upserted ${records.length} parent_checkins (natural-key; live-safe, no delete window).`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });

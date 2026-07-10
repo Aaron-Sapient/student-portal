@@ -17,6 +17,7 @@ export async function POST(request) {
       parentEmail: email,
       concern: String(concern),
       knownStudentName: child.name,
+      knownSheetId: child.sheetId,
     })
     return Response.json(result)
   } catch (err) {

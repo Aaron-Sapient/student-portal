@@ -21,11 +21,12 @@
  * prevents overlapping runs. Mac↔NAS deploy is Aaron's call.
  *
  * NOTE — scope: covers the built-flag domains. Wave 1 added checkins,
- * instructor_blocks, transcript, college lists, and comps (all live-safe:
- * upsert / insert-missing+prune-by-key, never delete-then-insert). Still NOT
- * reconciled here (Wave 3): parent_checkins + written_reports (their reads need
- * the app dual-write first); meetings_log is being retired in favor of the
- * `meetings` hub table (kept fresh by the student-hub step).
+ * instructor_blocks, transcript, college lists, and comps; Wave 3 added
+ * parent_checkins (best-effort app dual-write in lib/parentCheckinCore.js +
+ * this upsert backstop). All live-safe (upsert / insert-missing+prune-by-key,
+ * never delete-then-insert). Still NOT reconciled here: written_reports (its
+ * reads need the app dual-write first); meetings_log is being retired in favor
+ * of the `meetings` hub table (kept fresh by the student-hub step).
  */
 const fs = require('fs');
 const os = require('os');
@@ -44,6 +45,7 @@ const ALL_STEPS = [
   { name: 'score_params', script: 'backfillScoreParams.cjs', args: [] },
   { name: 'checkins (live-safe upsert)', script: 'backfillCheckins.cjs', args: ['--reconcile'] },
   { name: 'instructor_blocks (live-safe insert-missing/update/prune)', script: 'reconcileInstructorBlocks.cjs', args: [] },
+  { name: 'parent_checkins (live-safe upsert on natural key)', script: 'backfillParentCheckins.cjs', args: [] },
   // ---- heavy tier (per-student fan-out; full hourly pass only) ----
   { name: 'scores (live-safe upsert + prune)', script: 'reconcileScores.cjs', args: [], heavy: true },
   // Students-tab hub mirror (intended major + 📆 Meetings agenda). Heavy
