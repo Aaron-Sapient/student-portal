@@ -75,5 +75,7 @@ supabase/.temp/
 
 # canonical local notes folder — handoffs, build plans, scratch (never commit)
 /_notes/
+# local Claude working docs — handoff + client-email drafts (never commit; repo is public)
+/Claude/
 # dated working-notes folders (screenshots, fix lists) — local only
 /June 19 2026/
