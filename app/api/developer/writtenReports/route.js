@@ -1,6 +1,7 @@
 import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { requireDeveloper } from '@/lib/developerAuth';
+import { getSupabaseClient, WRITTEN_REPORTS } from '@/lib/supabase';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -12,6 +13,15 @@ const FIELD_TO_COL = {
   needsAttention: 'D',
   strategy: 'E',
   parentRequests: 'F',
+};
+
+// Supabase (snake_case) column for each editable field — for the best-effort
+// written_reports mirror dual-write (Bucket-A cutover), keyed on sheet_row.
+const FIELD_TO_DBCOL = {
+  onTarget: 'on_target',
+  needsAttention: 'needs_attention',
+  strategy: 'strategy',
+  parentRequests: 'parent_requests',
 };
 
 // Mirrors the original HTML email's color palette so the student-sheet output
@@ -200,6 +210,23 @@ export async function PATCH(request) {
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [[value || '']] },
     });
+
+    // Best-effort mirror the field edit to Supabase written_reports (keyed on
+    // sheet_row = rowIndex). Non-authoritative — never fail the request on a
+    // mirror error, and no read flag is flipped.
+    try {
+      const dbcol = FIELD_TO_DBCOL[field];
+      if (dbcol) {
+        const { error } = await getSupabaseClient()
+          .from(WRITTEN_REPORTS)
+          .update({ [dbcol]: value || null })
+          .eq('sheet_row', rowIndex);
+        if (error) console.warn('[dual-write:written_reports] PATCH failed:', error.message);
+      }
+    } catch (e) {
+      console.warn('[dual-write:written_reports] PATCH skipped:', e?.message || e);
+    }
+
     return Response.json({ success: true });
   } catch (err) {
     console.error('writtenReports PATCH error:', err);
@@ -453,6 +480,17 @@ export async function POST(request) {
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [[true]] },
     });
+
+    // Best-effort mirror the status flip to Supabase (keyed on sheet_row).
+    try {
+      const { error } = await getSupabaseClient()
+        .from(WRITTEN_REPORTS)
+        .update({ status: true })
+        .eq('sheet_row', rowIndex);
+      if (error) console.warn('[dual-write:written_reports] POST status failed:', error.message);
+    } catch (e) {
+      console.warn('[dual-write:written_reports] POST status skipped:', e?.message || e);
+    }
 
     // 7. Fire-and-forget the parent-notifier webhook. The Apps Script
     //    (deployed under support@admissions.partners) does its own

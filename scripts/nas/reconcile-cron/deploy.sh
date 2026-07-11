@@ -28,6 +28,7 @@ scp -i "$KEY" \
   "$REPO/scripts/backfillCheckins.cjs" \
   "$REPO/scripts/reconcileInstructorBlocks.cjs" \
   "$REPO/scripts/backfillParentCheckins.cjs" \
+  "$REPO/scripts/backfillWrittenReports.cjs" \
   "$REPO/scripts/reconcileScores.cjs" \
   "$REPO/scripts/mirrorStudentHub.cjs" \
   "$REPO/scripts/reconcileTranscript.cjs" \

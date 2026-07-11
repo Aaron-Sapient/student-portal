@@ -4,14 +4,17 @@
  * truth; body_html (the per-student rich-text rendered copy) is left NULL — it's
  * derivable from the on_target/needs_attention/strategy/parent_requests text.
  *
- *   node scripts/backfillWrittenReports.cjs           # DRY RUN
- *   node scripts/backfillWrittenReports.cjs --write    # insert
+ *   node scripts/backfillWrittenReports.cjs             # DRY RUN
+ *   node scripts/backfillWrittenReports.cjs --write     # initial clean backfill (delete-then-insert)
+ *   node scripts/backfillWrittenReports.cjs --write --reconcile  # live-safe upsert on sheet_row
  *
- * Source VERIFIED against developer/writtenReports/route.js:11-14,158-172 — cols:
- *   A date(serial) · B studentName · C onTarget · D needsAttention · E strategy
+ * Source VERIFIED against developer/writtenReports/route.js:10-15,156-172 — cols:
+ *   A date · B studentName · C onTarget · D needsAttention · E strategy
  *   · F parentRequests · G status(bool) · H parentNotified(bool).
- * Student link = col B name → Master col A → col G sheet_id. Date read UNFORMATTED
- * (sheet serial) → ISO. No natural unique key → --write clears the table first.
+ * Student link = col B name → Master col A → col G sheet_id. Col A is plain ISO
+ * TEXT (verified — NOT a serial), so report_at = the raw instant and report_date =
+ * its America/Los_Angeles day. sheet_row (the 1-based tab row = the route's
+ * rowIndex) is the natural key the app dual-write + this backfill converge on.
  */
 const fs = require('fs');
 const path = require('path');
@@ -60,13 +63,25 @@ async function main() {
   const warns = [];
   wr.forEach((r, i) => {
     const name = String(r?.[1] ?? '').trim();
-    const report_date = serialDate(r?.[0]);
+    // Col A is plain ISO TEXT (verified — not a serial), full ms precision.
+    const reportAtIso = (() => {
+      const d = DateTime.fromISO(String(r?.[0] ?? '').trim(), { zone: 'utc' });
+      return d.isValid ? d.toISO() : null;
+    })();
+    // report_date = the America/Los_Angeles day of report_at (fixes the prior
+    // machine-tz off-by-one for reports stamped 00:00–08:00Z).
+    const report_date = reportAtIso
+      ? DateTime.fromISO(reportAtIso, { zone: 'utc' }).setZone('America/Los_Angeles').toISODate()
+      : serialDate(r?.[0]);   // legacy fallback (no such rows today)
     if (!name && !report_date) return;               // blank
     if (norm(name) === 'student' || /^date$/i.test(String(r?.[0]))) return; // header
     const id = nameToId[norm(name)];
     if (!id) { warns.push(`row ${i + 1}: no Master match for "${name}"`); return; }
     records.push({
-      student_sheet_id: id, report_date, on_target: t(r?.[2]), needs_attention: t(r?.[3]),
+      sheet_row: i + 1,                            // true 1-based sheet row (= route rowIndex)
+      student_sheet_id: id, student_name: name || null,
+      report_at: reportAtIso, report_date,
+      on_target: t(r?.[2]), needs_attention: t(r?.[3]),
       strategy: t(r?.[4]), parent_requests: t(r?.[5]), body_html: null,
       status: truthy(r?.[6]), parent_notified: truthy(r?.[7]),
     });
@@ -76,12 +91,27 @@ async function main() {
   records.slice(0, 8).forEach((r) => console.log(`  ${r.report_date || '????'} status=${r.status ? 'Y' : 'n'} notified=${r.parent_notified ? 'Y' : 'n'} ${r.student_sheet_id.slice(0, 10)}…  onTarget="${String(r.on_target).slice(0, 30)}"`));
   warns.slice(0, 15).forEach((w) => console.log(`  ⚠ ${w}`));
 
-  if (!WRITE) { console.log('\nDRY RUN — re-run with --write.'); return; }
-  await sb.from('written_reports').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-  for (let i = 0; i < records.length; i += 500) {
-    const { error } = await sb.from('written_reports').insert(records.slice(i, i + 500));
-    if (error) { console.error('insert failed:', error.message); process.exit(1); }
+  if (!WRITE) { console.log('\nDRY RUN — re-run with --write (add --reconcile for live-safe upsert).'); return; }
+  const RECONCILE = process.argv.includes('--reconcile');
+  if (RECONCILE) {
+    // Live-safe: upsert on sheet_row (no delete window). Refreshes status +
+    // parent_notified (the external Apps Script writes col H) + any field edits.
+    // Requires the unique index on sheet_row (added after the initial backfill).
+    for (let i = 0; i < records.length; i += 500) {
+      const { error } = await sb.from('written_reports')
+        .upsert(records.slice(i, i + 500), { onConflict: 'sheet_row', ignoreDuplicates: false });
+      if (error) { console.error('upsert failed:', error.message); process.exit(1); }
+    }
+    console.log(`\n✓ Upserted ${records.length} written_reports (sheet_row key; live-safe, no delete window).`);
+  } else {
+    // Initial clean backfill only (flag off): delete-then-insert to reset the
+    // table with sheet_row/report_at/student_name populated for every row.
+    await sb.from('written_reports').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    for (let i = 0; i < records.length; i += 500) {
+      const { error } = await sb.from('written_reports').insert(records.slice(i, i + 500));
+      if (error) { console.error('insert failed:', error.message); process.exit(1); }
+    }
+    console.log(`\n✓ Inserted ${records.length} written_reports (table cleared first — initial backfill).`);
   }
-  console.log(`\n✓ Inserted ${records.length} written_reports (table cleared first).`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });
