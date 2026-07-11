@@ -16,6 +16,7 @@ export const metadata = {
 const DEV_TABS = [
   { href: '/dev/scoring', label: 'Scoring', sym: 'tune' },
   { href: '/dev/students', label: 'Students', sym: 'group' },
+  { href: '/dev/projects', label: 'Projects', sym: 'hub' },
   { href: '/dev/writing', label: 'Writing', sym: 'stylus_note' },
   { href: '/dev/packages', label: 'Packages', sym: 'sell' },
 ];
@@ -25,7 +26,7 @@ export default async function DevLayout({ children }) {
   if (!ADMIN_EMAILS.includes(sessionClaims?.email)) redirect('/dashboard');
 
   return (
-    <PortalShell className="dev-root" iconNames="group,sell,stylus_note,tune">
+    <PortalShell className="dev-root" iconNames="group,hub,sell,stylus_note,tune">
       <DevDataProvider>
         {/* Only three tabs here, so this surface uses the student portal's
             horizontal glass dock (bottom on every breakpoint) rather than the

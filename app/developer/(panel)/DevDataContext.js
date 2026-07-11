@@ -16,6 +16,7 @@ const RESOURCES = {
   compliance: { url: '/api/developer/checkinCompliance', pick: (j) => j },
   pricing: { url: '/api/developer/pricing', pick: (j) => j.config },
   packageQuotes: { url: '/api/developer/packageQuotes', pick: (j) => j.quotes || [] },
+  projectReports: { url: '/api/developer/projectReports', pick: (j) => j },
 };
 
 const DevDataContext = createContext(null);
