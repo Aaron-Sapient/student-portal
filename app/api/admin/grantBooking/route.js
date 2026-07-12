@@ -5,6 +5,7 @@ import { getInstructor } from '@/lib/instructors';
 import { getSeniorBySheetId, createOneoffGrant } from '@/lib/seniors';
 import { sendMeetingGrantedEmail } from '@/lib/checkinEmails';
 import { getSupabaseClient, MEETING_CAP_SUMMARY } from '@/lib/supabase';
+import { mirrorBookingToken } from '@/lib/bookingTokens';
 
 // Admin tool: grant a student a ONE-OFF meeting that bypasses the weekly check-in
 // gate and unlocks booking in their Meetings tab. Two tracks, auto-detected:
@@ -110,6 +111,10 @@ export async function POST(request) {
       });
       kind = 'regular';
       detail = 'booking unlocked';
+
+      // Best-effort mirror to the booking_tokens cutover table (read side stays on
+      // Sheets). studentSheetId is validated non-empty at the top of the route.
+      await mirrorBookingToken({ studentSheetId, slug, value: `${mins}min` });
 
       // Ryan's monthly cap (✅ Check-Ins cols H=used, I=allowed) would otherwise
       // block an extra meeting once the student is at their limit. Lift it by one so

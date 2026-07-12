@@ -2,6 +2,7 @@ import { google } from 'googleapis';
 import { verifyApprovalToken, actionToDecision } from '@/lib/checkinApproval';
 import { sendMeetingGrantedEmail } from '@/lib/checkinEmails';
 import { triggerReportGeneration } from '@/lib/generateReport';
+import { mirrorBookingToken } from '@/lib/bookingTokens';
 
 // Applies Ryan's emailed meeting decision. PUBLIC route (Ryan clicks from his
 // inbox with no Clerk session) — authorization is the HMAC-signed token, not a
@@ -73,6 +74,10 @@ export async function POST(request) {
         ],
       },
     });
+
+    // Best-effort mirror to the booking_tokens cutover table (Ryan/AZ; read side
+    // stays on Sheets). studentSheetId comes from the signed approval payload.
+    await mirrorBookingToken({ studentSheetId, slug: 'ryan', value: decision });
 
     if (action === 'reject') {
       // No email on rejection — just generate the written report.

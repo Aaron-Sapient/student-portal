@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { listBlocksForBooking, isDateBlocked } from '@/lib/blocks';
+import { mirrorBookingToken, resolveStudentSheetId } from '@/lib/bookingTokens';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -103,6 +104,11 @@ export async function POST(request) {
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [[decision]] },
     });
+
+    // Best-effort mirror to the booking_tokens cutover table (Aaron/BB; read side
+    // stays on Sheets). Resolve sheetId via a separate col-G read (rowIndex only here).
+    const aaronSid = await resolveStudentSheetId(sheets, studentRowIndex);
+    await mirrorBookingToken({ studentSheetId: aaronSid, slug: 'aaron', value: decision });
 
     // ── 6. Backfill routing reason (col I) and decision (col J) on the appended row ──
     const allRowsRes = await sheets.spreadsheets.values.get({

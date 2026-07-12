@@ -5,6 +5,7 @@ import { DateTime } from 'luxon';
 import { getInstructor, validateInstructorHours } from '@/lib/instructors';
 import { getSeniorByEmail, loadSeniorBookingState, canBookOnDate, recordBooking, consumeOneoff } from '@/lib/seniors';
 import { loadProjectPlanForBooking, loadProjectBookingsForPlan, canBookProjectOnDate, recordProjectBooking } from '@/lib/projectMeetings';
+import { mirrorBookingToken, resolveStudentSheetId } from '@/lib/bookingTokens';
 
 // Human messages for canBookOnDate() rejection reasons (grant gates + package rules).
 const SENIOR_DENY = {
@@ -291,6 +292,10 @@ export async function POST(request) {
         valueInputOption: 'USER_ENTERED',
         requestBody: { values: [[tokenValue]] },
       });
+      // Best-effort mirror to the booking_tokens cutover table (read side stays
+      // on Sheets). Same exact value written above → ART ISO byte-fidelity.
+      const sid = await resolveStudentSheetId(sheets, rowIndex);
+      await mirrorBookingToken({ studentSheetId: sid, slug: instructor.slug, value: tokenValue });
     }
 
     // Write agenda back to the appropriate CheckinForm tab.

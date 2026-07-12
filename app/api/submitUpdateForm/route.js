@@ -8,6 +8,7 @@ import { getProjectRows } from '@/lib/projects';
 import { makeApprovalToken } from '@/lib/checkinApproval';
 import { sendRyanMeetingRequestEmail } from '@/lib/checkinEmails';
 import { getSeniorBySheetId, createCheckinGrant } from '@/lib/seniors';
+import { mirrorBookingToken } from '@/lib/bookingTokens';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -384,6 +385,10 @@ CURRENT GRADES (usually none in summer): ${currentGradesText}`;
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [[decision]] },
     });
+
+    // Best-effort mirror to the booking_tokens cutover table (Ryan/AZ;
+    // non-seniors only — the senior branch returned above). Read stays on Sheets.
+    await mirrorBookingToken({ studentSheetId, slug: 'ryan', value: decision });
 
     // ── 8. Stamp the just-appended CheckinForm row: K=reason, L=status ────────
     const allRowsRes = await sheets.spreadsheets.values.get({

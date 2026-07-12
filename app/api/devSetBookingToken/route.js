@@ -1,5 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
+import { mirrorBookingToken, resolveStudentSheetId } from '@/lib/bookingTokens';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -33,6 +34,10 @@ export async function POST() {
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [['30min']] },
   });
+
+  // Best-effort mirror to the booking_tokens cutover table (test helper; Ryan/AZ).
+  const sid = await resolveStudentSheetId(sheets, rowIndex);
+  await mirrorBookingToken({ studentSheetId: sid, slug: 'ryan', value: '30min' });
 
   return Response.json({ success: true });
 }

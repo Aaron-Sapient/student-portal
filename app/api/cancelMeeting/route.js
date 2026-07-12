@@ -5,6 +5,7 @@ import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
 import { getSeniorByEmail, cancelBookingByEventId, cancelOneoffByEventId } from '@/lib/seniors';
 import { cancelProjectBookingByEventId } from '@/lib/projectMeetings';
+import { mirrorBookingToken, resolveStudentSheetId } from '@/lib/bookingTokens';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -119,6 +120,9 @@ export async function POST(request) {
           valueInputOption: 'USER_ENTERED',
           requestBody: { values: [[newValue]] },
         });
+        // Best-effort mirror to booking_tokens ('' = ART clear → delete the row).
+        const sid = await resolveStudentSheetId(sheets, rowIndex);
+        await mirrorBookingToken({ studentSheetId: sid, slug: instructor.slug, value: newValue });
       }
     }
 
