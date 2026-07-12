@@ -4,6 +4,7 @@ import { requireAdmin } from '@/lib/developerAuth';
 import { getInstructor } from '@/lib/instructors';
 import { getSeniorBySheetId, createOneoffGrant } from '@/lib/seniors';
 import { sendMeetingGrantedEmail } from '@/lib/checkinEmails';
+import { getSupabaseClient, MEETING_CAP_SUMMARY } from '@/lib/supabase';
 
 // Admin tool: grant a student a ONE-OFF meeting that bypasses the weekly check-in
 // gate and unlocks booking in their Meetings tab. Two tracks, auto-detected:
@@ -134,6 +135,19 @@ export async function POST(request) {
                 requestBody: { values: [[used + 1]] },
               });
               detail = 'booking unlocked · monthly cap lifted +1';
+
+              // Best-effort mirror to the compliance_cap cutover table (Bucket-A;
+              // read side stays on Sheets for now — see lib/supabase.js). Never
+              // block the grant on this.
+              try {
+                const sb = getSupabaseClient();
+                const { error: mirrorErr } = await sb
+                  .from(MEETING_CAP_SUMMARY)
+                  .upsert({ student_sheet_id: studentSheetId, meetings_allowed: used + 1 }, { onConflict: 'student_sheet_id' });
+                if (mirrorErr) console.warn('grantBooking: meeting_cap_summary mirror failed (non-fatal):', mirrorErr.message);
+              } catch (mirrorErr) {
+                console.warn('grantBooking: meeting_cap_summary mirror threw (non-fatal):', mirrorErr.message);
+              }
             }
           }
         } catch (capErr) {

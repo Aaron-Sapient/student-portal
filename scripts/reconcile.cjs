@@ -24,10 +24,14 @@
  * instructor_blocks, transcript, college lists, and comps; Wave 3 added
  * parent_checkins + written_reports (best-effort app dual-writes in
  * lib/parentCheckinCore.js / lib/generateReport.js + the developer/writtenReports
- * route, backstopped by these upsert steps). All live-safe (upsert /
- * insert-missing+prune-by-key, never delete-then-insert). booking_tokens is the
- * only Bucket-A domain still pending; meetings_log is being retired in favor of
- * the `meetings` hub table (kept fresh by the student-hub step).
+ * route, backstopped by these upsert steps) + compliance_cap (roster fields
+ * needs_checkin/last_ryan_checkin/last_aaron_checkin folded into the existing
+ * roster step; meeting_cap_summary best-effort dual-written by
+ * admin/grantBooking's cap-bump, backstopped by backfillCheckinSummary.cjs).
+ * All live-safe (upsert / insert-missing+prune-by-key, never delete-then-insert).
+ * booking_tokens is the only Bucket-A domain still pending; meetings_log is
+ * being retired in favor of the `meetings` hub table (kept fresh by the
+ * student-hub step).
  */
 const fs = require('fs');
 const os = require('os');
@@ -48,6 +52,7 @@ const ALL_STEPS = [
   { name: 'instructor_blocks (live-safe insert-missing/update/prune)', script: 'reconcileInstructorBlocks.cjs', args: [] },
   { name: 'parent_checkins (live-safe upsert on natural key)', script: 'backfillParentCheckins.cjs', args: [] },
   { name: 'written_reports (live-safe upsert on sheet_row)', script: 'backfillWrittenReports.cjs', args: ['--reconcile'] },
+  { name: 'meeting_cap_summary (live-safe upsert on student_sheet_id)', script: 'backfillCheckinSummary.cjs', args: [] },
   // ---- heavy tier (per-student fan-out; full hourly pass only) ----
   { name: 'scores (live-safe upsert + prune)', script: 'reconcileScores.cjs', args: [], heavy: true },
   // Students-tab hub mirror (intended major + 📆 Meetings agenda). Heavy

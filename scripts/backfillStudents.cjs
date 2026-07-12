@@ -14,6 +14,12 @@
  *   J=9 student email · K=10 parent email 1 · L=11 parent email 2
  *   AL=37 package type · BC=54 ART eligible ('TRUE') · BD=55 ART booking ts
  *
+ * compliance_cap domain (added for the Bucket-A dual-write foundation) —
+ * VERIFIED against app/api/developer/checkinCompliance/route.js:95-96,107 and
+ * a live cell probe: AY=50 last Ryan check-in · BA=52 last Aaron check-in
+ * (both native `Date.toISOString()` instants, already ISO text) · BE=56
+ * "Needs Checkin" (boolean; explicit FALSE excludes, blank/TRUE does not).
+ *
  * DEFERRED to the per-student pass (N+1 reads of 🔎 Overview, with scores/
  * transcript): students.grade (Overview!C4) and students.drive_folder_url
  * (Overview H2/L2) — left NULL here so this step is a single cached Master read.
@@ -47,6 +53,19 @@ const sheetIdFromPortalUrl = (url) => {
 };
 const isNCrow = (r) => String(r?.[1] ?? '').trim().toUpperCase() === 'NC';
 const cleanEmail = (v) => String(v ?? '').trim().toLowerCase();
+const tsOrNull = (v) => {
+  const s = String(v ?? '').trim();
+  if (!s) return null;
+  const d = new Date(s);
+  return isNaN(d) ? null : d.toISOString();
+};
+const boolOrNull = (v) => {
+  if (v === true || v === false) return v;
+  const s = String(v ?? '').trim().toLowerCase();
+  if (s === 'true') return true;
+  if (s === 'false') return false;
+  return null;
+};
 
 async function main() {
   const WRITE = process.argv.includes('--write');
@@ -72,7 +91,8 @@ async function main() {
     (
       await sheets.spreadsheets.values.get({
         spreadsheetId: MASTER_SHEET_ID,
-        range: `${MASTER_TAB}!A:BD`,
+        range: `${MASTER_TAB}!A:BE`,
+        valueRenderOption: 'UNFORMATTED_VALUE',
       })
     ).data.values || [];
 
@@ -121,6 +141,9 @@ async function main() {
       package_type: pkg,
       gender: String(r?.[49] ?? '').trim() || null, // 👩‍🎓 All Data col AX (idx 49)
       art_eligible: r?.[54] === 'TRUE' || r?.[54] === true,
+      needs_checkin: boolOrNull(r?.[56]), // col BE (idx 56)
+      last_ryan_checkin: tsOrNull(r?.[50]), // col AY (idx 50)
+      last_aaron_checkin: tsOrNull(r?.[52]), // col BA (idx 52)
       status: nc ? 'nc' : 'active',
       updated_at: new Date().toISOString(),
     });
