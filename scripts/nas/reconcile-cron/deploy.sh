@@ -21,7 +21,8 @@ ssh -i "$KEY" "$HOST" "mkdir -p $BASE/app/scripts $BASE/app/lib $BASE/logs"
 # Every script named in reconcile.cjs's ALL_STEPS must be hand-carried (the repo is NOT
 # synced to the NAS). Wave 1 added checkins, instructor_blocks, student-hub, transcript,
 # college lists, and comps to the prior roster/params/scores set. Wave 3 added
-# parent_checkins, written_reports, and backfillCheckinSummary.cjs (compliance_cap).
+# parent_checkins, written_reports, backfillCheckinSummary.cjs (compliance_cap),
+# and backfillBookingTokens.cjs (booking_tokens — the final Bucket-A domain).
 scp -i "$KEY" \
   "$REPO/scripts/reconcile.cjs" \
   "$REPO/scripts/backfillStudents.cjs" \
@@ -31,6 +32,7 @@ scp -i "$KEY" \
   "$REPO/scripts/backfillParentCheckins.cjs" \
   "$REPO/scripts/backfillWrittenReports.cjs" \
   "$REPO/scripts/backfillCheckinSummary.cjs" \
+  "$REPO/scripts/backfillBookingTokens.cjs" \
   "$REPO/scripts/reconcileScores.cjs" \
   "$REPO/scripts/mirrorStudentHub.cjs" \
   "$REPO/scripts/reconcileTranscript.cjs" \
