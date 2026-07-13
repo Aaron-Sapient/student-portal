@@ -85,7 +85,9 @@ on conflict (slug) do nothing;
 -- buildGrammarQuiz; see lib/satQuiz.js for the shape + scoring).
 --   classify : { id, type:'classify', word, answer }          answer ∈ verb | not_verb
 --   fill     : { id, type:'fill', sentence, options[], answer } answer = the literal option text
---   odd      : { id, type:'odd', options[], answer }            answer = the one real verb (odd one out)
+--   odd      : { id, type:'odd', options[], answer, prompt? }   answer = the one real verb (odd one out);
+--                                                                prompt overrides the default
+--                                                                verb-confusion framing
 -- 3 classify (verb vs not-verb), 3 fill-in-the-blank (correct form), 1 odd-one-out 3v1.
 insert into sat_quizzes (slug, title, kind, content, sort_order) values
   ('grammar-1', 'Grammar Quiz 1', 'grammar', '[
@@ -97,4 +99,36 @@ insert into sat_quizzes (slug, title, kind, content, sort_order) values
     {"id":"f3","type":"fill","sentence":"The students ______ in the front row answered every question correctly.","options":["sitting","sat","sit","will sit"],"answer":"sitting"},
     {"id":"o1","type":"odd","options":["to swim","running","to bake","writes"],"answer":"writes"}
   ]'::jsonb, 2)
+on conflict (slug) do nothing;
+
+-- ── Seed: Grammar Cumulative Quiz ────────────────────────────────────────────
+-- Adds two item types beyond grammar-1 (see lib/satQuiz.js buildGrammarQuiz /
+-- scoreGrammarResponses for the full shape + scoring):
+--   identify   : { id, type:'identify', choices[], options[], answer } → 4 read-only
+--                reference choices, then pick which grammar category they test
+--                (answer = the literal option text)
+--   first_noun : { id, type:'first_noun', instructions?, parts:[{id,sentence,answer}] } →
+--                one dropdown per sentence (populated from that sentence's own words),
+--                scored as `parts.length` separate 1-point sub-questions (kept as whole
+--                integers — sat_attempts.vocab_score is an int column)
+-- Any item may also carry a `badge` string (e.g. "Mod 2") shown as a small tag.
+insert into sat_quizzes (slug, title, kind, content, sort_order) values
+  ('grammar-cumulative', 'Grammar Cumulative Quiz', 'grammar', '[
+    {"id":"i1","type":"identify","choices":["A) hammers","B) to hammer","C) hammering","D) having hammered"],"options":["Verb vs. Not-Verb","Subject-Verb Agreement (singular vs. plural)","Verb Tense"],"answer":"Verb vs. Not-Verb"},
+    {"id":"i2","type":"identify","choices":["A) watered","B) will water","C) waters","D) have watered"],"options":["Verb vs. Not-Verb","Subject-Verb Agreement (singular vs. plural)","Verb Tense"],"answer":"Verb Tense"},
+    {"id":"i3","type":"identify","choices":["A) type","B) types","C) have typed","D) were typing"],"options":["Verb vs. Not-Verb","Subject-Verb Agreement (singular vs. plural)","Verb Tense"],"answer":"Subject-Verb Agreement (singular vs. plural)"},
+    {"id":"i4","type":"identify","choices":["A) is eating","B) are eating","C) were eating","D) have eaten"],"options":["Verb vs. Not-Verb","Subject-Verb Agreement (singular vs. plural)","Verb Tense"],"answer":"Subject-Verb Agreement (singular vs. plural)"},
+    {"id":"o1","type":"odd","prompt":"Three of these agree with a singular subject — one agrees with a plural subject (or works as a command). Which is the odd one out?","options":["consider","considers","has considered","was considered"],"answer":"consider"},
+    {"id":"f1","type":"fill","sentence":"Mr. _____ for his students, debuted his first lesson last week.","options":["Smith created an impressive SAT grammar curriculum","Smith, created an impressive SAT grammar curriculum,","Smith, creating an impressive SAT grammar curriculum","Smith creating an impressive SAT grammar curriculum,"],"answer":"Smith, creating an impressive SAT grammar curriculum"},
+    {"id":"f2","type":"fill","badge":"Mod 2","sentence":"Bob worked all night on the ______ who had been expecting a simple one-pager summarizing the company''s financials that quarter, it was an impressive display.","options":["quarterly report for his boss","quarterly report for his boss,","quarterly report; for his boss,","quarterly report, for his boss;"],"answer":"quarterly report; for his boss,"},
+    {"id":"f3","type":"fill","badge":"Mod 2","sentence":"Cool jazz, often represented Birth of the Cool—an album by Miles ______ has become associated with the West Coast.","options":["Davis featured an unconventional nonet","Davis—featuring an unconventional nonet,","Davis, featuring an unconventional nonet—","Davis featuring an unconventional nonet,"],"answer":"Davis featuring an unconventional nonet,"},
+    {"id":"f4","type":"fill","sentence":"Intentionally made out of a seemingly cheaper material, _____","options":["the aluminum in the iPhone 17 created frustration among Apple fans.","Apple fans felt frustrated by the aluminum in the iPhone 17.","the iPhone 17''s aluminum frustrated Apple fans.","the iPhone 17 frustrated Apple fans due to its aluminum."],"answer":"the iPhone 17 frustrated Apple fans due to its aluminum."},
+    {"id":"fn1","type":"first_noun","instructions":"Select the first noun in each sentence.","parts":[
+      {"id":"a","sentence":"Bob''s new grill cooked burgers well.","answer":"grill"},
+      {"id":"b","sentence":"the burgers were cooked well on Bob''s new grill.","answer":"burgers"},
+      {"id":"c","sentence":"it was Bob''s new grill that cooked burgers well.","answer":"it"},
+      {"id":"d","sentence":"Bob bought a new grill that cooked burgers well.","answer":"Bob"}
+    ]},
+    {"id":"f5","type":"fill","sentence":"Considering that Bluetooth mice and keyboards were horrible in the early days, it''s amazing that ____ so popular with gamers these days.","options":["its","it''s","they''re","their"],"answer":"they''re"}
+  ]'::jsonb, 7)
 on conflict (slug) do nothing;

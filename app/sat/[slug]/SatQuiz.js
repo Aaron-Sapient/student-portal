@@ -136,7 +136,7 @@ function GrammarResults({ title, result, alreadyTaken }) {
       </header>
 
       <div className="portal-rise mb-7" style={{ animationDelay: '60ms' }}>
-        <ScoreCard label="Verb confusion" score={result.vocab_score} total={result.total} />
+        <ScoreCard label="Grammar" score={result.vocab_score} total={result.total} />
       </div>
 
       <h2 className="portal-rise mb-3 text-[11px] font-bold uppercase tracking-[0.14em] text-ink-faint" style={{ animationDelay: '110ms' }}>
@@ -151,12 +151,23 @@ function GrammarResults({ title, result, alreadyTaken }) {
           >
             <p className="font-display text-base font-semibold leading-snug text-ink">{r.title}</p>
             {r.detail && <p className="mt-1 text-xs text-ink-faint">{r.detail}</p>}
-            <div className="mt-2 text-sm">
-              <p className={r.correct ? 'text-moss' : 'text-terracotta-deep'}>
-                {r.correct ? '✓' : '✗'} Your answer: {r.selectedLabel || '—'}
-              </p>
-              {!r.correct && <p className="text-ink-soft">Correct: {r.correctLabel}</p>}
-            </div>
+            {r.type === 'first_noun' ? (
+              <div className="mt-2 space-y-1.5 text-sm">
+                {(r.parts || []).map((p) => (
+                  <p key={p.id} className={p.ok ? 'text-moss' : 'text-terracotta-deep'}>
+                    {p.ok ? '✓' : '✗'} {p.sentence} — you picked &ldquo;{p.selected || '—'}&rdquo;
+                    {!p.ok && <span className="text-ink-soft"> (correct: &ldquo;{p.correct}&rdquo;)</span>}
+                  </p>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-2 text-sm">
+                <p className={r.correct ? 'text-moss' : 'text-terracotta-deep'}>
+                  {r.correct ? '✓' : '✗'} Your answer: {r.selectedLabel || '—'}
+                </p>
+                {!r.correct && <p className="text-ink-soft">Correct: {r.correctLabel}</p>}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -245,12 +256,21 @@ export default function SatQuiz({ slug }) {
     setAnswers((a) => ({ ...a, [qid]: { ...a[qid], selectedKey: key } }));
   const setConn = (qid, c) =>
     setAnswers((a) => ({ ...a, [qid]: { ...a[qid], selectedConnotation: c } }));
+  const setPart = (qid, partId, word) =>
+    setAnswers((a) => ({
+      ...a,
+      [qid]: { ...a[qid], parts: { ...(a[qid]?.parts || {}), [partId]: word } },
+    }));
 
-  const complete =
-    questions.length > 0 &&
-    questions.every(
-      (q) => answers[q.id]?.selectedKey && (!needsConn(q) || answers[q.id]?.selectedConnotation)
-    );
+  const isQuestionComplete = (q) => {
+    if (q.type === 'first_noun') {
+      const parts = answers[q.id]?.parts || {};
+      return (q.parts || []).every((p) => !!parts[p.id]);
+    }
+    return !!answers[q.id]?.selectedKey && (!needsConn(q) || !!answers[q.id]?.selectedConnotation);
+  };
+
+  const complete = questions.length > 0 && questions.every(isQuestionComplete);
 
   const submit = useCallback(async () => {
     if (!complete) return;
@@ -260,8 +280,9 @@ export default function SatQuiz({ slug }) {
       const responses = questions.map((q) => ({
         target: q.target,
         type: q.type,
-        selectedKey: answers[q.id].selectedKey,
-        selectedConnotation: answers[q.id].selectedConnotation,
+        selectedKey: answers[q.id]?.selectedKey,
+        selectedConnotation: answers[q.id]?.selectedConnotation,
+        parts: q.type === 'first_noun' ? answers[q.id]?.parts || {} : undefined,
       }));
       const res = await fetch('/api/sat/submit', {
         method: 'POST',
@@ -384,9 +405,16 @@ export default function SatQuiz({ slug }) {
               style={{ animationDelay: `${i * 55}ms` }}
             >
               <div className="mb-3 flex items-center justify-between gap-3">
-                <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-terracotta">
-                  {q.promptLabel}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-terracotta">
+                    {q.promptLabel}
+                  </span>
+                  {q.badge && (
+                    <span className="rounded-full bg-terracotta/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-terracotta-deep">
+                      {q.badge}
+                    </span>
+                  )}
+                </div>
                 <span className="text-[10px] font-semibold text-ink-faint">
                   {i + 1} / {questions.length}
                 </span>
@@ -395,17 +423,67 @@ export default function SatQuiz({ slug }) {
                 {q.prompt}
               </p>
 
-              <div className="space-y-2">
-                {q.options.map((o) => (
-                  <Choice
-                    key={o.key}
-                    selected={a.selectedKey === o.key}
-                    onClick={() => setMain(q.id, o.key)}
+              {q.type === 'identify' && (
+                <div className="mb-4 space-y-1 rounded-2xl border border-ink-faint/20 p-3 text-sm text-ink-soft">
+                  {q.choices.map((c, ci) => (
+                    <p key={ci}>{c}</p>
+                  ))}
+                </div>
+              )}
+
+              {q.type === 'first_noun' ? (
+                <div className="space-y-3">
+                  {q.parts.map((p) => (
+                    <div
+                      key={p.id}
+                      className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <p className="flex-1 text-sm text-ink">{p.sentence}</p>
+                      <div className="neu-inset shrink-0 rounded-2xl px-1 sm:w-40">
+                        <select
+                          value={a.parts?.[p.id] || ''}
+                          onChange={(e) => setPart(q.id, p.id, e.target.value)}
+                          className="w-full bg-transparent px-3 py-2.5 text-sm text-ink outline-none"
+                        >
+                          <option value="">Select…</option>
+                          {p.options.map((w, wi) => (
+                            <option key={wi} value={w}>
+                              {w}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : q.type === 'identify' ? (
+                <div className="neu-inset rounded-2xl px-1">
+                  <select
+                    value={a.selectedKey || ''}
+                    onChange={(e) => setMain(q.id, e.target.value)}
+                    className="w-full bg-transparent px-3 py-3 text-sm text-ink outline-none"
                   >
-                    {o.label}
-                  </Choice>
-                ))}
-              </div>
+                    <option value="">Select…</option>
+                    {q.options.map((o) => (
+                      <option key={o.key} value={o.key}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {q.options.map((o) => (
+                    <Choice
+                      key={o.key}
+                      selected={a.selectedKey === o.key}
+                      onClick={() => setMain(q.id, o.key)}
+                    >
+                      {o.label}
+                    </Choice>
+                  ))}
+                </div>
+              )}
 
               {needsConn(q) && (
                 <div className="mt-4">
