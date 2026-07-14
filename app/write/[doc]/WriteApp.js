@@ -1,26 +1,15 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
   ArrowLeft,
-  Bold,
   Check,
-  Command,
-  Heading1,
-  Heading2,
   History,
-  Italic,
-  Link2,
-  List,
-  ListOrdered,
   Loader2,
-  Redo2,
   RotateCcw,
-  Table,
   TriangleAlert,
-  Undo2,
   X,
 } from 'lucide-react';
 import { DateTime } from 'luxon';
@@ -84,23 +73,6 @@ function colorFor(s) {
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
-// Desktop-only formatting toolbar. The vendored editor exposes a whitelisted
-// command API (ed.cmd) plus ed.openPalette() — the same internals its command
-// palette uses — for a host to drive; we render the buttons. Mirrors the
-// canonical demo's pill (Utils/md-editor/demo.html). [cmd, Icon, label]
-const TOOLBAR_GROUPS = [
-  [['undo', Undo2, 'Undo'], ['redo', Redo2, 'Redo']],
-  [['bold', Bold, 'Bold'], ['italic', Italic, 'Italic']],
-  [
-    ['h1', Heading1, 'Heading 1'],
-    ['h2', Heading2, 'Heading 2'],
-    ['bullets', List, 'Bullet list'],
-    ['numbers', ListOrdered, 'Numbered list'],
-  ],
-  [['link', Link2, 'Insert link'], ['table', Table, 'Insert table']],
-  [['commands', Command, 'Commands (⌥/)']],
-];
-
 export default function WriteApp() {
   const params = useParams();
   const sp = useSearchParams();
@@ -110,7 +82,6 @@ export default function WriteApp() {
   const [state, setState] = useState({ loading: true, error: null, data: null });
   const [save, setSave] = useState('idle'); // idle | saving | saved | error
   const [history, setHistory] = useState(null);
-  const [toolbarReady, setToolbarReady] = useState(false);
 
   const mountRef = useRef(null);
   const edRef = useRef(null);
@@ -213,15 +184,6 @@ export default function WriteApp() {
     window.history.replaceState(null, '', url.toString());
   }, []);
 
-  // Run a toolbar command against the editor. mousedown+preventDefault on the
-  // button keeps the editor's selection intact, so the command applies to it.
-  const runCmd = useCallback((c) => {
-    const ed = edRef.current;
-    if (!ed) return;
-    if (c === 'commands') ed.openPalette?.();
-    else ed.cmd?.(c);
-  }, []);
-
   // ── live collaboration (Yjs over Supabase Realtime) ─────────────────────────
   const teardownCollab = useCallback(() => {
     const c = collabRef.current;
@@ -287,6 +249,7 @@ export default function WriteApp() {
       const opts = {
         tabs,
         activeId: initial,
+        toolbar: !ro, // engine's own Docs-style bar; read-only viewers never get one
         emptyLabel: ro ? 'Nothing written yet' : 'Add a tab to start',
         loadTab: (id) => bodiesRef.current[id] ?? '',
         onTabInput: (id) => {
@@ -368,7 +331,6 @@ export default function WriteApp() {
         const surf = mountRef.current.querySelector('.md-surface');
         if (surf) surf.contentEditable = 'false';
       } else if (edRef.current) {
-        setToolbarReady(true);
         // Identity for this viewer's cursor/presence. The random suffix makes each
         // session a distinct peer + color even for two anonymous link editors (who
         // share the name "Student (via link)") and the shared 'link@portal' email.
@@ -463,40 +425,12 @@ export default function WriteApp() {
 
   return (
     <div className="write-zen fixed inset-0 z-10 flex flex-col">
-      {/* Desktop-only formatting toolbar — an IN-FLOW centered pill at the top of
-          the column. It's a flex item, so it RESERVES its own height and the flex-1
-          editor below fills the rest; the toolbar can never overlap the document.
-          Hidden on phones, where the editor's own selection palette covers this. */}
-      {!readOnly && toolbarReady && (
-        <div className="write-toolbar-bar">
-          <div className="write-toolbar" role="toolbar" aria-label="Formatting">
-            {TOOLBAR_GROUPS.map((group, gi) => (
-              <Fragment key={gi}>
-                {gi > 0 && <span className="write-tb-sep" aria-hidden="true" />}
-                {group.map(([cmd, Icon, label]) => (
-                  <button
-                    key={cmd}
-                    type="button"
-                    title={label}
-                    aria-label={label}
-                    className="write-tb-btn"
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      runCmd(cmd);
-                    }}
-                  >
-                    <Icon className="h-[18px] w-[18px]" strokeWidth={2.1} />
-                  </button>
-                ))}
-              </Fragment>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* The document fills the rest of the column. Because this element is the
-          editor root (MarkdownTabs adds .mde-tabs to it), filling the remaining
-          space makes the tab drawer + scrim cover it even for a short doc. */}
+      {/* The document fills the column. Because this element is the editor root
+          (MarkdownTabs adds .mde-tabs to it), filling the remaining space makes
+          the tab drawer + scrim cover it even for a short doc. When editable, the
+          engine mounts its own Docs-style formatting bar (opts.toolbar) sticky
+          inside the scrolling stage — desktop-only via the .mde-toolbar media
+          query in globals.css; phones keep the selection palette + command search. */}
       <div ref={mountRef} className="mde-host min-h-0 flex-1" />
 
       {/* Autosave state + version history lived in the (now-removed) strip, so

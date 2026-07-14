@@ -337,35 +337,12 @@ body {
   box-shadow: inset 2px 2px 5px var(--neu-lo), inset -2px -2px 5px var(--neu-hi);
 }
 
-/* Desktop-only formatting toolbar (/write/[doc]) — an IN-FLOW centered clay pill.
-   The bar is a flex item at the top of the .write-zen column, so it reserves its
-   height and the flex-1 editor fills below it (the pill can never overlap the doc).
-   Hidden under 768px, where the editor's own selection palette + command search
-   (⌥/) cover formatting. */
-.write-toolbar-bar {
-  display: none;            /* desktop-only; shown via the min-width query below */
-  flex: none;
-  justify-content: center;
-  padding: 12px 12px 6px;
-}
-@media (min-width: 860px) { .write-toolbar-bar { display: flex; } }
-.write-toolbar {
-  display: inline-flex; align-items: center; gap: 2px;
-  padding: 5px 7px; border-radius: 15px;
-  background: var(--neu-inset-bg);
-  box-shadow: 4px 4px 10px var(--neu-lo), -4px -4px 10px var(--neu-hi);
-}
-.write-tb-btn {
-  display: grid; place-items: center; width: 34px; height: 34px;
-  border-radius: 10px; color: var(--color-ink-soft);
-  background: transparent; transition: color 0.14s, box-shadow 0.14s;
-}
-.write-tb-btn:hover { color: var(--color-terracotta-deep); }
-.write-tb-btn:active {
-  color: var(--color-terracotta-deep);
-  box-shadow: inset 2px 2px 5px var(--neu-lo), inset -2px -2px 5px var(--neu-hi);
-}
-.write-tb-sep { width: 1px; height: 18px; margin: 0 4px; background: var(--neu-lo); opacity: 0.45; }
+/* The /write formatting toolbar is now the ENGINE's own built-in Docs-style bar
+   (opts.toolbar:true in WriteApp.js), not a hand-rolled one — it themes via the
+   --mde-* tokens above and needs no display override here. Unlike the old
+   hand-rolled pill (desktop-only; mobile relied on the selection palette), the
+   engine's bar is designed to work at any width — it scrolls horizontally
+   (overflow-x:auto) rather than hiding, so it now shows on mobile too. */
 
 /* Version history as a bottom-sheet (mobile) / centered modal (desktop). */
 .write-overlay {

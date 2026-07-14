@@ -362,10 +362,11 @@
   .mde-tab-label[contenteditable="true"] { cursor: text; min-width: 2ch; text-overflow: clip; }
   .mde-tab-empty { font-family: var(--mde-sans); font-size: 13px; color: var(--mde-ink-faint); padding: 8px 6px; }
   /* The floating reveal handle (shown when the rail is collapsed) mirrors the TOC button
-     (.mde-toc-btn) — same size/offset — and owns the top-LEFT corner; the TOC/headings
-     button docks top-RIGHT, so the two read as a matched pair on opposite corners and
-     never collide. In toolbar mode the full-width bar insets its left edge past this
-     handle (see .mde-tabs.railcollapsed .mde-toolbar) so the handle stays clickable. */
+     (.mde-toc-btn) — same size/offset — and owns the top-LEFT corner. Without the built-in
+     toolbar, it and the TOC/headings button read as a matched pair on opposite corners
+     (unchanged legacy behavior for toolbar:false hosts). WITH opts.toolbar:true, both
+     dock below the bar stacked on the LEFT instead — see .mde-tab-reveal-below /
+     .mde-toc-btn-below — mirroring where Google Docs docks its own outline toggle. */
   .mde-tab-reveal {
     position: absolute; top: 7px; left: 12px; z-index: 5; display: none;
     width: 38px; height: 38px; border: none; border-radius: 11px;
@@ -377,6 +378,9 @@
   .mde-tab-reveal:hover { color: var(--mde-green-deep); background: var(--mde-clay-card); }
   .mde-tab-reveal:active { box-shadow: var(--mde-clay-sink-sm); }
   .mde-tabs.railcollapsed .mde-tab-reveal { display: grid; }
+  /* opts.toolbar:true — docks below the full-width bar (the top offset clears it; a host
+     can retune via --mde-toc-below-top, shared with the TOC button below it). */
+  .mde-tab-reveal.mde-tab-reveal-below { top: var(--mde-toc-below-top, 62px); }
   .mde-tab-stage { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; }
 
   /* per-tab kebab (⋮) — appears on hover/active, opens the options menu */
@@ -572,10 +576,13 @@
   .mde-toc-btn svg circle { fill: currentColor; stroke: none; }
   .mde-toc-btn:hover { color: var(--mde-green-deep); }
   .mde-toc-btn:active { box-shadow: var(--mde-clay-sink-sm); }
-  /* opts.toolbar:true — the headings button docks top-RIGHT of the document, just BELOW
-     the full-width toolbar bar (the top offset clears the bar; a host can retune it via
-     --mde-toc-below-top). Without the toolbar it keeps the default top-right corner. */
-  .mde-toc-btn.mde-toc-btn-below { top: var(--mde-toc-below-top, 62px); }
+  /* opts.toolbar:true — the headings button docks BELOW the full-width toolbar bar, on
+     the LEFT (the top offset clears the bar; a host can retune it via --mde-toc-below-top),
+     matching where Google Docs docks its own outline toggle — instead of the default
+     top-right corner it keeps without the toolbar. When a tab rail also shares that left
+     column (see .mde-tab-reveal-below), .mde-toc-btn-below-tabs stacks it underneath. */
+  .mde-toc-btn.mde-toc-btn-below { top: var(--mde-toc-below-top, 62px); left: 12px; right: auto; }
+  .mde-toc-btn.mde-toc-btn-below-tabs { top: calc(var(--mde-toc-below-top, 62px) + 46px); }
   .mde-toc-root.open .mde-toc-btn { opacity: 0; pointer-events: none; }
   /* While the tabs DRAWER is open (narrow mode), the floating TOC button would sit
      bright on top of the drawer's dark scrim and read as a glowing artifact. The
@@ -641,10 +648,6 @@
     font-family: var(--mde-sans); user-select: none; -webkit-user-select: none;
     transition: margin-left .2s var(--mde-clay-ease);
   }
-  /* Collapsed tab rail → its floating reveal handle owns the top-left corner (it's the
-     "tabs" control when the rail is hidden). Inset the bar so the handle stays clickable
-     beside it instead of being covered by the full-width bar. */
-  .mde-tabs.railcollapsed .mde-tab-stage .mde-toolbar { margin-left: 52px; }
   .mde-toolbar::-webkit-scrollbar { display: none; }
   .mde-toolbar svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; display: block; }
   .mde-toolbar svg .fill { fill: currentColor; stroke: none; }
