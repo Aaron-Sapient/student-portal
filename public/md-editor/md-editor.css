@@ -41,26 +41,48 @@
   --mde-clay-sink-sm: inset 2px 2px 5px var(--mde-clay-dark), inset -2px -2px 5px var(--mde-clay-light);
   --mde-clay-ease:    cubic-bezier(.22, .7, .3, 1);
 
+  /* toolbar — a Docs-style formatting bar docked above the surface. OPAQUE (paints the page
+     paper) so document text scrolling up vanishes cleanly UNDER it; a single hairline is the
+     only seam between the bar and the document. Re-skinnable via these tokens. */
+  --mde-tb-bg:          var(--mde-paper);    /* opaque — hides text scrolling underneath */
+  --mde-tb-line:        var(--mde-hairline); /* the thin rule segmenting the bar from the doc */
+  --mde-tb-stick:       0px;                 /* toolbar's sticky offset from the stage top (flush) */
+
+  /* generous default bottom padding on the editing surface — scrolled all the way down,
+     the last line lands roughly mid-viewport instead of jammed against the bottom edge,
+     so writers don't have to mash line breaks to bring recent text up out of the way. */
+  --mde-surface-bottom-pad: 45vh;
+
   --mde-cal-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3.5' y='5' width='17' height='16' rx='2.5'/%3E%3Cpath d='M3.5 9.5h17M8 3.5v3M16 3.5v3'/%3E%3C/svg%3E");
 }
 
-  /* the editing surface */
+  /* the editing surface — base font/size/color honor the per-document %%doc:…%% styles
+     (--mde-doc-*) and the per-user zoom (--mde-zoom), both set by JS on the surface. */
   .md-surface {
-    outline: none; font-family: var(--mde-sans); font-size: 16.5px; line-height: 1.7;
-    color: var(--mde-ink); caret-color: var(--mde-green); -webkit-font-smoothing: antialiased;
+    outline: none; font-family: var(--mde-doc-font, var(--mde-sans));
+    font-size: calc(var(--mde-doc-size, 16.5px) * var(--mde-zoom, 1)); line-height: var(--mde-doc-lh, 1.7);
+    color: var(--mde-doc-ink, var(--mde-ink)); caret-color: var(--mde-green); -webkit-font-smoothing: antialiased;
     word-break: break-word;
+    padding-bottom: var(--mde-surface-bottom-pad, 45vh);
   }
-  .md-surface .ln { white-space: pre-wrap; min-height: 1.7em; }
-  .md-surface .ln.blank { min-height: 1.7em; }
+  /* contain floats (text-wrapped images) so they never spill past the document */
+  .md-surface::after { content: ""; display: block; clear: both; }
+  .md-surface .ln { white-space: pre-wrap; min-height: calc(1em * var(--mde-doc-lh, 1.7)); }
+  .md-surface .ln.blank { min-height: calc(1em * var(--mde-doc-lh, 1.7)); }
+  /* paragraph first-line indent — a document-level default (--mde-doc-indent), overridable
+     per-paragraph by a hidden %%ind:N%% line (--p-indent, set inline per .ln.p by JS) — the
+     Tab-key equivalent of Word's "tab at the start of a paragraph sets its indent". Scoped to
+     plain paragraph lines only; never headings/lists/quotes/tables/code. */
+  .md-surface .ln.p { text-indent: var(--p-indent, var(--mde-doc-indent, 0)); }
 
-  /* headings */
-  .md-surface .ln.h { font-family: var(--mde-serif); font-weight: 600; color: var(--mde-green-deep);
+  /* headings — sizes in em so zoom scales them; colors/sizes overridable per-doc */
+  .md-surface .ln.h { font-family: var(--mde-doc-hfont, var(--mde-serif)); font-weight: 600; color: var(--mde-green-deep);
     letter-spacing: -.01em; line-height: 1.3; }
-  .md-surface .ln.h1 { font-size: 30px; margin: .5em 0 .15em; }
-  .md-surface .ln.h2 { font-size: 24px; margin: .5em 0 .15em; }
-  .md-surface .ln.h3 { font-size: 20px; margin: .4em 0 .1em; }
-  .md-surface .ln.h4 { font-size: 17.5px; margin: .4em 0 .1em; }
-  .md-surface .ln.h5, .md-surface .ln.h6 { font-size: 16px; color: var(--mde-ink-soft); margin: .3em 0 .1em; }
+  .md-surface .ln.h1 { font-size: var(--mde-doc-h1sz, 1.818em); color: var(--mde-doc-h1c, var(--mde-green-deep)); margin: .5em 0 .15em; }
+  .md-surface .ln.h2 { font-size: var(--mde-doc-h2sz, 1.455em); color: var(--mde-doc-h2c, var(--mde-green-deep)); margin: .5em 0 .15em; }
+  .md-surface .ln.h3 { font-size: var(--mde-doc-h3sz, 1.212em); color: var(--mde-doc-h3c, var(--mde-green-deep)); margin: .4em 0 .1em; }
+  .md-surface .ln.h4 { font-size: 1.061em; margin: .4em 0 .1em; }
+  .md-surface .ln.h5, .md-surface .ln.h6 { font-size: .97em; color: var(--mde-ink-soft); margin: .3em 0 .1em; }
 
   /* list lines — STATIC Word/Docs-style markers drawn from data-marker (never the raw
      "- "/"1." source, which is a hidden atomic .lmk leaf). --li-depth sets the indent;
@@ -75,13 +97,64 @@
   }
   .md-surface .ln.ol::before { font-family: var(--mde-mono); font-size: .9em; font-weight: 600; }
 
+  /* checklist items — "- [ ] " renders as a real clickable checkbox (source stays hidden) */
+  .md-surface .ln.task::before { content: none; }
+  .md-surface .tcb {
+    position: absolute; left: calc(var(--li-depth, 0) * 1.5em + .08em); top: .42em;
+    width: 1.02em; height: 1.02em; box-sizing: border-box; padding: 0;
+    border: 1.5px solid var(--mde-green-soft); border-radius: .3em; background: var(--mde-card);
+    cursor: pointer; appearance: none; transition: background .12s, border-color .12s;
+  }
+  .md-surface .tcb::after {
+    content: ""; position: absolute; left: 50%; top: 45%; width: .3em; height: .55em;
+    border: solid var(--mde-on-green); border-width: 0 2px 2px 0;
+    transform: translate(-50%, -55%) rotate(45deg); opacity: 0;
+  }
+  .md-surface .tcb:hover { border-color: var(--mde-green); }
+  .md-surface .ln.task.done .tcb { background: var(--mde-green); border-color: var(--mde-green); }
+  .md-surface .ln.task.done .tcb::after { opacity: 1; }
+  .md-surface .ln.task.done { color: var(--mde-ink-faint); text-decoration: line-through; text-decoration-color: var(--mde-ink-faint); }
+
+  /* ---------- images — ![alt](src) + %%img:…%% (size / align / text wrap) ---------- */
+  .md-surface .mimg { position: relative; display: inline-block; max-width: 100%; vertical-align: bottom; }
+  .md-surface .mimg img { display: block; max-width: 100%; height: auto; border-radius: 10px; }
+  .md-surface .mimg[style*="width"] img { width: 100%; }
+  .md-surface .mimg.al-left   { display: block; width: fit-content; margin: .3em auto .3em 0; }
+  .md-surface .mimg.al-center { display: block; width: fit-content; margin: .3em auto; }
+  .md-surface .mimg.al-right  { display: block; width: fit-content; margin: .3em 0 .3em auto; }
+  .md-surface .mimg.wrap-left  { float: left;  margin: .25em 1.1em .5em 0; }
+  .md-surface .mimg.wrap-right { float: right; margin: .25em 0 .5em 1.1em; }
+  .md-surface .mimg.sel img { outline: 2px solid var(--mde-green); outline-offset: 1px; }
+  .md-surface .mimg-grip {
+    position: absolute; right: -7px; bottom: -7px; width: 15px; height: 15px; border-radius: 50%;
+    background: var(--mde-green); border: 2.5px solid var(--mde-card); cursor: nwse-resize;
+    touch-action: none; z-index: 8; box-shadow: 0 1px 4px rgba(0,0,0,.25);
+  }
+  .md-surface .mimg-tools {
+    position: absolute; top: -42px; left: 50%; transform: translateX(-50%); z-index: 8;
+    display: flex; align-items: center; gap: 2px; white-space: nowrap;
+    background: var(--mde-clay-card); border: 1px solid var(--mde-hairline); border-radius: 999px;
+    padding: 3px 6px; box-shadow: var(--mde-clay-raise-sm);
+  }
+  .md-surface .mit {
+    appearance: none; border: 0; background: transparent; cursor: pointer; color: var(--mde-ink-soft);
+    width: 28px; height: 28px; border-radius: 999px; display: grid; place-items: center; padding: 0;
+    transition: background .12s, color .12s;
+  }
+  .md-surface .mit:hover { background: var(--mde-leaf); color: var(--mde-green-deep); }
+  .md-surface .mit.on { background: var(--mde-leaf); color: var(--mde-green-deep); }
+  .md-surface .mit svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+  .md-surface .mit-sep { width: 1px; height: 16px; background: var(--mde-hairline); margin: 0 3px; }
+
   /* blockquote */
   .md-surface .ln.bq { padding-left: 1.1em; position: relative; color: var(--mde-ink-soft); font-style: italic; }
   .md-surface .ln.bq::before { content: ""; position: absolute; left: 0; top: .15em; bottom: .15em;
     width: 3px; border-radius: 2px; background: var(--mde-leaf-line); }
 
-  /* horizontal rule */
-  .md-surface .ln.hr { text-align: center; }
+  /* horizontal rule — center only when NOT active. An active hr line (caret in it) shows its
+     raw source ("---"/"****") left-aligned like any other block being edited; this also kills
+     the transient center-then-snap-left flash when a bold toggle briefly makes an empty "****". */
+  .md-surface .ln.hr:not(.active) { text-align: center; }
   .md-surface .ln.hr::before { content: ""; display: inline-block; width: 60%; vertical-align: middle;
     border-top: 1px solid var(--mde-hairline); }
   .md-surface .ln.hr.active::before { content: none; }
@@ -94,7 +167,7 @@
   .md-surface .tok.del { text-decoration: line-through; text-decoration-color: var(--mde-ink-faint); color: var(--mde-ink-soft); }
   .md-surface .tok.code { font-family: var(--mde-mono); font-size: .88em;
     background: var(--mde-leaf); border: 1px solid var(--mde-leaf-line); border-radius: 5px; padding: .05em .35em; }
-  .md-surface .tok.a > .ltext { color: var(--mde-green); text-decoration: underline; text-decoration-color: var(--mde-leaf-line);
+  .md-surface .tok.a > .ltext { color: var(--mde-doc-linkc, var(--mde-green)); text-decoration: underline; text-decoration-color: var(--mde-leaf-line);
     text-underline-offset: 2px; cursor: pointer; }
   .md-surface .tok.a > .url, .md-surface .tok.a.on > .ltext { color: var(--mde-green-soft); }
 
@@ -203,10 +276,10 @@
   .md-surface .mtable th:last-child, .md-surface .mtable td:last-child { border-right: none; }
   .md-surface .mtable tbody tr:last-child td { border-bottom: none; }
   .md-surface .mtable thead th {
-    background: var(--mde-green); color: #fff; font-weight: 600; font-family: var(--mde-sans);
+    background: var(--mde-doc-thbg, var(--mde-green)); color: var(--mde-doc-thc, #fff); font-weight: 600; font-family: var(--mde-sans);
     border-bottom: none; border-right-color: rgba(255,255,255,.2);
   }
-  .md-surface .mtable tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--mde-leaf) 55%, var(--mde-card)); }
+  .md-surface .mtable tbody tr:nth-child(even) td { background: var(--mde-doc-tband, color-mix(in srgb, var(--mde-leaf) 55%, var(--mde-card))); }
   .md-surface .mcell { outline: none; min-width: 26px; }
   .md-surface .mcell:empty::after { content: "\200b"; color: transparent; }
   /* rich cell content: bold/italic inherit; give inline code the house chip look */
@@ -288,8 +361,11 @@
   .mde-tab-label { flex: 1 1 auto; min-width: 0; display: block; outline: none; overflow: hidden; text-overflow: ellipsis; }
   .mde-tab-label[contenteditable="true"] { cursor: text; min-width: 2ch; text-overflow: clip; }
   .mde-tab-empty { font-family: var(--mde-sans); font-size: 13px; color: var(--mde-ink-faint); padding: 8px 6px; }
-  /* The floating reveal handle mirrors the TOC button exactly (.mde-toc-btn) so the
-     two top-corner controls read as one matched pair, not two unrelated chips. */
+  /* The floating reveal handle (shown when the rail is collapsed) mirrors the TOC button
+     (.mde-toc-btn) — same size/offset — and owns the top-LEFT corner; the TOC/headings
+     button docks top-RIGHT, so the two read as a matched pair on opposite corners and
+     never collide. In toolbar mode the full-width bar insets its left edge past this
+     handle (see .mde-tabs.railcollapsed .mde-toolbar) so the handle stays clickable. */
   .mde-tab-reveal {
     position: absolute; top: 7px; left: 12px; z-index: 5; display: none;
     width: 38px; height: 38px; border: none; border-radius: 11px;
@@ -496,6 +572,10 @@
   .mde-toc-btn svg circle { fill: currentColor; stroke: none; }
   .mde-toc-btn:hover { color: var(--mde-green-deep); }
   .mde-toc-btn:active { box-shadow: var(--mde-clay-sink-sm); }
+  /* opts.toolbar:true — the headings button docks top-RIGHT of the document, just BELOW
+     the full-width toolbar bar (the top offset clears the bar; a host can retune it via
+     --mde-toc-below-top). Without the toolbar it keeps the default top-right corner. */
+  .mde-toc-btn.mde-toc-btn-below { top: var(--mde-toc-below-top, 62px); }
   .mde-toc-root.open .mde-toc-btn { opacity: 0; pointer-events: none; }
   /* While the tabs DRAWER is open (narrow mode), the floating TOC button would sit
      bright on top of the drawer's dark scrim and read as a glowing artifact. The
@@ -540,6 +620,176 @@
   .mde-toc-link.active { background: var(--mde-leaf); color: var(--mde-green-deep); box-shadow: inset 2px 0 0 var(--mde-green); }
   .mde-toc-children { margin: 1px 0 2px 10px; padding-left: 10px; border-left: 1px solid var(--mde-hairline); }
   .mde-toc-empty { padding: 18px 10px; font-size: 13px; color: var(--mde-ink-faint); text-align: center; }
+
+  /* ======================================================================
+     TOOLBAR (opts.toolbar) — a Docs-style formatting bar docked above the
+     surface, sticky at the top of the scrolling stage. OPAQUE (paints the
+     page paper) with a single hairline along its bottom: document text
+     scrolling up passes UNDER the bar and vanishes at the line, never
+     peeping through. --mde-tb-* themed (light/dark follow --mde-paper).
+     ====================================================================== */
+  .mde-toolbar {
+    position: sticky; top: var(--mde-tb-stick); z-index: 50;
+    display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none;
+    background: var(--mde-tb-bg); border-bottom: 1px solid var(--mde-tb-line);
+    padding: 5px 14px; margin: 0;
+    /* Paint the page paper UP past the bar's top edge to cover the stage's own top
+       padding — the strip a sticky child pins BELOW, where document text would otherwise
+       peep above the bar. --mde-sb-pad is that padding (published by JS). A box-shadow,
+       not a ::before, so the bar's own overflow-x:auto can never clip it. */
+    box-shadow: 0 calc(-1 * var(--mde-sb-pad, 0px)) 0 0 var(--mde-tb-bg);
+    font-family: var(--mde-sans); user-select: none; -webkit-user-select: none;
+    transition: margin-left .2s var(--mde-clay-ease);
+  }
+  /* Collapsed tab rail → its floating reveal handle owns the top-left corner (it's the
+     "tabs" control when the rail is hidden). Inset the bar so the handle stays clickable
+     beside it instead of being covered by the full-width bar. */
+  .mde-tabs.railcollapsed .mde-tab-stage .mde-toolbar { margin-left: 52px; }
+  .mde-toolbar::-webkit-scrollbar { display: none; }
+  .mde-toolbar svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; display: block; }
+  .mde-toolbar svg .fill { fill: currentColor; stroke: none; }
+
+  .mde-tb-btn {
+    appearance: none; border: 0; background: transparent; cursor: pointer; color: var(--mde-ink-soft);
+    height: 32px; min-width: 32px; padding: 0 7px; border-radius: 999px; display: grid; place-items: center;
+    font-family: var(--mde-sans); font-size: 14.5px; font-weight: 700; line-height: 1; flex: none;
+    transition: background .12s, color .12s;
+  }
+  .mde-tb-btn:hover, .mde-tb-btn.on { background: var(--mde-leaf); color: var(--mde-green-deep); }
+  .mde-tb-btn i { font-family: var(--mde-serif); }
+  .mde-tb-sep { width: 1px; height: 20px; background: var(--mde-hairline); margin: 0 5px; flex: none; }
+  .mde-tb-select {
+    appearance: none; -webkit-appearance: none; border: 0; background: transparent; cursor: pointer;
+    color: var(--mde-ink-soft); font: 600 12.5px var(--mde-sans); height: 30px; border-radius: 8px;
+    padding: 0 6px; flex: none; max-width: 120px; outline: none;
+  }
+  .mde-tb-select:hover, .mde-tb-select:focus { background: var(--mde-leaf); color: var(--mde-green-deep); }
+  /* dropdown wrapper — carries the little chevron (the native arrow is hidden) */
+  .mde-tb-dd { position: relative; display: inline-flex; align-items: center; flex: none; }
+  .mde-tb-dd .mde-tb-select { padding-right: 21px; }
+  .mde-tb-chev {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    display: grid; place-items: center; pointer-events: none; color: var(--mde-ink-faint); transition: color .12s;
+  }
+  .mde-tb-chev svg { width: 11px; height: 11px; stroke-width: 2.6; }
+  .mde-tb-dd:hover .mde-tb-chev, .mde-tb-dd:focus-within .mde-tb-chev { color: var(--mde-green-deep); }
+  .mde-tb-color { position: relative; }
+  .mde-tb-A { font-weight: 800; line-height: 1; transform: translateY(-2px); }
+  .mde-tb-color svg { transform: translateY(-2px); }
+  .mde-tb-cbar { position: absolute; left: 8px; right: 8px; bottom: 5px; height: 3px; border-radius: 2px; background: var(--mde-ink); pointer-events: none; }
+  .mde-tb-spring { flex: 1 1 auto; min-width: 6px; }
+  .mde-tb-theme { display: inline-flex; align-items: center; gap: 1px; background: var(--mde-paper); border-radius: 999px; padding: 2px; box-shadow: var(--mde-clay-sink-sm); flex: none; }
+  .mde-tb-theme .mde-tb-btn { height: 26px; min-width: 26px; padding: 0 5px; }
+  .mde-tb-theme .mde-tb-btn svg { width: 15px; height: 15px; }
+  .mde-tb-theme .mde-tb-btn.on { background: var(--mde-card); color: var(--mde-green-deep); box-shadow: var(--mde-clay-raise-sm); }
+
+  /* ======================================================================
+     Custom color picker (the PROse-design method: SV area + hue slider +
+     HEX / RGB / HSL fields, all visible at once) + the color popover and
+     the Document-styles dialog that host it.
+     ====================================================================== */
+  .mde-cp { background: var(--mde-paper); border: 1px solid var(--mde-hairline); border-radius: 10px; padding: 10px; }
+  .mde-cp-sv { position: relative; width: 100%; height: 110px; border-radius: 7px; cursor: crosshair; touch-action: none; }
+  .mde-cp-sv-dot { position: absolute; width: 13px; height: 13px; border-radius: 50%; border: 2px solid #fff;
+    box-shadow: 0 0 0 1px rgba(0,0,0,.4); transform: translate(-50%, -50%); pointer-events: none; }
+  .mde-cp-hue { position: relative; height: 12px; border-radius: 6px; margin-top: 10px; cursor: pointer; touch-action: none;
+    background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
+  .mde-cp-hue-thumb { position: absolute; top: 50%; width: 14px; height: 14px; border-radius: 50%;
+    background: #fff; border: 1px solid rgba(0,0,0,.3); box-shadow: 0 1px 2px rgba(0,0,0,.3);
+    transform: translate(-50%, -50%); pointer-events: none; }
+  .mde-cp-fields { display: flex; flex-direction: column; gap: 7px; margin-top: 11px; }
+  .mde-cp-row { display: flex; align-items: center; gap: 8px; }
+  .mde-cp-row > span { width: 30px; flex: none; font: 600 9.5px var(--mde-mono); letter-spacing: .06em; color: var(--mde-ink-faint); }
+  .mde-cp-tx { flex: 1; min-width: 0; font: 500 12px var(--mde-mono); text-transform: uppercase; color: var(--mde-ink);
+    background: var(--mde-card); border: 1px solid var(--mde-hairline); border-radius: 6px; padding: 6px 8px; outline: none; }
+  .mde-cp-triple { flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .mde-cp-num { width: 100%; box-sizing: border-box; font: 500 12px var(--mde-mono); color: var(--mde-ink);
+    background: var(--mde-card); border: 1px solid var(--mde-hairline); border-radius: 6px; padding: 6px 4px; outline: none;
+    text-align: center; -moz-appearance: textfield; appearance: textfield; }
+  .mde-cp-num::-webkit-outer-spin-button, .mde-cp-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .mde-cp-tx:focus, .mde-cp-num:focus { border-color: var(--mde-green-soft); }
+
+  .mde-colorpop {
+    position: fixed; z-index: 360; width: 252px; display: none;
+    background: var(--mde-clay-card); border: 1px solid var(--mde-hairline); border-radius: 14px;
+    padding: 10px; box-shadow: 0 18px 48px rgba(42,82,50,.20), 0 4px 12px rgba(0,0,0,.07);
+  }
+  .mde-colorpop.open { display: block; animation: atIn .12s var(--mde-clay-ease) both; }
+  .mde-colorpop-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 5px; margin-bottom: 10px; }
+  .mde-colorpop-sw { aspect-ratio: 1; border-radius: 6px; border: 0; cursor: pointer; padding: 0;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+  .mde-colorpop-sw.on { outline: 2px solid var(--mde-green); outline-offset: 1px; }
+  .mde-colorpop-foot { display: flex; align-items: center; gap: 4px; margin-top: 10px; }
+  .mde-colorpop-none { border: 0; background: transparent; color: var(--mde-green-deep); font: 600 12.5px var(--mde-sans);
+    cursor: pointer; padding: 7px 10px; border-radius: 999px; }
+  .mde-colorpop-none:hover { background: var(--mde-leaf); }
+  .mde-colorpop-spring { flex: 1; }
+  .mde-colorpop-ok { border: 0; background: var(--mde-green); color: var(--mde-on-green); font: 600 12.5px var(--mde-sans);
+    padding: 7px 16px; border-radius: 999px; cursor: pointer; box-shadow: var(--mde-clay-raise-sm); }
+  .mde-colorpop-ok:hover { background: var(--mde-green-deep); }
+  .mde-colorpop-ok:active { box-shadow: var(--mde-clay-sink-sm); }
+
+  .mde-ds-scrim {
+    position: fixed; inset: 0; z-index: 340; display: none;
+    align-items: center; justify-content: center; padding: 22px; background: rgba(20, 22, 18, .5);
+  }
+  .mde-ds-scrim.open { display: flex; animation: atIn .14s var(--mde-clay-ease) both; }
+  .mde-ds {
+    width: min(440px, 100%); max-height: min(660px, calc(100vh - 44px)); box-sizing: border-box;
+    display: flex; flex-direction: column; overflow: hidden;
+    background: var(--mde-card); color: var(--mde-ink); border: 1px solid var(--mde-hairline); border-radius: 16px;
+    box-shadow: 0 24px 64px rgba(0,0,0,.28), 0 6px 16px rgba(0,0,0,.12);
+    padding: 24px 0 16px; font-family: var(--mde-sans);
+  }
+  .mde-ds-title { font-size: 20px; font-weight: 600; letter-spacing: -.01em; padding: 0 26px; flex: none; }
+  /* the sections scroll in their own layer, inside the card's rounded corners —
+     the title and actions stay put and the scrollbar spans exactly this band */
+  .mde-ds-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 18px 4px 26px; margin-right: 6px; }
+  .mde-ds-body::-webkit-scrollbar { width: 10px; }
+  .mde-ds-body::-webkit-scrollbar-track { background: transparent; }
+  .mde-ds-body::-webkit-scrollbar-thumb {
+    background: var(--mde-hairline); border-radius: 8px;
+    border: 2px solid transparent; background-clip: padding-box;
+  }
+  .mde-ds-sub { font-size: 12px; font-weight: 500; color: var(--mde-ink-soft); margin-left: 9px; }
+  .mde-ds-h { font-size: 10.5px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--mde-ink-faint); margin: 16px 0 2px; }
+  .mde-ds-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 0; }
+  .mde-ds-row + .mde-ds-row { border-top: 1px solid color-mix(in srgb, var(--mde-hairline) 55%, transparent); }
+  .mde-ds-k { font-size: 14px; color: var(--mde-ink); }
+  .mde-ds-v { display: flex; align-items: center; gap: 8px; }
+  .mde-ds-well {
+    width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--mde-hairline);
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.05); cursor: pointer; padding: 0; position: relative;
+  }
+  .mde-ds-well.none::after { content: ""; position: absolute; inset: 3px;
+    background: linear-gradient(to top right, transparent 45%, #c0392b 47%, #c0392b 53%, transparent 55%); }
+  .mde-ds-select {
+    appearance: none; -webkit-appearance: none; border: 1px solid var(--mde-hairline); background: var(--mde-paper);
+    color: var(--mde-ink); font: 600 12.5px var(--mde-sans); height: 30px; border-radius: 8px; padding: 0 8px; cursor: pointer; outline: none;
+  }
+  .mde-ds-select:hover, .mde-ds-select:focus { border-color: var(--mde-green-soft); }
+  .mde-ds-num {
+    width: 62px; box-sizing: border-box; border: 1px solid var(--mde-hairline); background: var(--mde-paper);
+    color: var(--mde-ink); font: 600 12.5px var(--mde-sans); height: 30px; border-radius: 8px; padding: 0 8px; outline: none;
+  }
+  .mde-ds-num:focus { border-color: var(--mde-green-soft); }
+  .mde-ds-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; padding: 0 26px; flex: none; }
+  .mde-ds-reset { border: 0; background: transparent; color: var(--mde-ink-soft); font: 600 13px var(--mde-sans); cursor: pointer; padding: 8px 12px; border-radius: 999px; }
+  .mde-ds-reset:hover { background: var(--mde-leaf); color: var(--mde-green-deep); }
+  .mde-ds-ok { border: 0; background: var(--mde-green); color: var(--mde-on-green); font: 600 14px var(--mde-sans);
+    padding: 9px 24px; border-radius: 999px; cursor: pointer; box-shadow: var(--mde-clay-raise-sm); }
+  .mde-ds-ok:hover { background: var(--mde-green-deep); }
+  .mde-ds-ok:focus { outline: none; }
+  .mde-ds-ok:focus-visible { outline: 2px solid var(--mde-green-soft); outline-offset: 2px; }
+
+  /* ---------- print: just the document (toolbar/panels/grips never print) ---------- */
+  @media print {
+    .mde-toolbar, .mde-toc-root, .mde-wc-root, .mde-tabrail, .mde-tab-reveal, .mde-tab-scrim,
+    .mde-tab-toast, .mtable-tools, .mcol-grips, .mimg-tools, .mimg-grip, .at-menu, .grid-pop,
+    .mde-cmdpal, .mde-colorpop, .mde-ds-scrim, .mde-remote-layer { display: none !important; }
+    .md-surface { max-width: 100% !important; padding-bottom: 0 !important; }
+    .mde-tab-stage { overflow: visible !important; }
+  }
 
   /* ======================================================================
      STAGE-2 — remote-cursor overlay (opt-in collaboration). The layer is an
