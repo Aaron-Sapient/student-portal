@@ -10,12 +10,16 @@
  *   node scripts/backfillCheckinSummary.cjs --write    # upsert (live-safe)
  *
  * Source VERIFIED against app/api/developer/checkinCompliance/route.js and
- * app/api/validateBooking/route.js, plus a live cell probe — '✅ Check-Ins'!A:M:
+ * app/api/validateBooking/route.js, plus a live cell probe — '✅ Check-Ins'!A:O:
  *   A name · H(7) meetings used this month w/ Ryan · I(8) meetings allowed
  *   (blank = uncapped) · J(9) last Ryan meeting · K(10) upcoming Ryan meeting
- *   · L(11) last Aaron meeting · M(12) upcoming Aaron meeting.
+ *   · L(11) last Aaron meeting · M(12) upcoming Aaron meeting · N(13) meetings
+ *   used this week w/ Aaron · O(14) meetings allowed per week w/ Aaron.
  * J/K/L/M are Sheets date serials or the literal string "N/A" (verified live) —
  * normalized to an ISO instant at LA midnight; "N/A"/blank → NULL.
+ * N/O added 2026-07-14 (meetings_used_weekly_aaron/meetings_allowed_weekly_aaron —
+ * previously not mirrored at all; the GAS meeting-tracker direct-write also
+ * populates these, this is the reconcile backstop for the same columns).
  * Student link: name-match vs Master col A (normalized), sheet_id from Master
  * col G — same join style as backfillParentCheckins.cjs. Unmatched rows are
  * skipped+warned (meeting_cap_summary.student_sheet_id is a NOT NULL FK).
@@ -64,7 +68,7 @@ async function main() {
   const sb = createClient(get('SUPABASE_URL'), get('SUPABASE_SERVICE_ROLE_KEY'), { auth: { persistSession: false } });
 
   const [master, ci] = (await sheets.spreadsheets.values.batchGet({
-    spreadsheetId: MASTER_SHEET_ID, ranges: [`${MASTER_TAB}!A:G`, `${CHECKINS_TAB}!A:M`],
+    spreadsheetId: MASTER_SHEET_ID, ranges: [`${MASTER_TAB}!A:G`, `${CHECKINS_TAB}!A:O`],
     valueRenderOption: 'UNFORMATTED_VALUE',
   })).data.valueRanges.map((v) => v.values || []);
 
@@ -93,6 +97,8 @@ async function main() {
       upcoming_ryan_meeting: meetingDateOrNull(r?.[10]),
       last_aaron_meeting: meetingDateOrNull(r?.[11]),
       upcoming_aaron_meeting: meetingDateOrNull(r?.[12]),
+      meetings_used_weekly_aaron: intOrNull(r?.[13]),
+      meetings_allowed_weekly_aaron: intOrNull(r?.[14]),
     });
   });
 
