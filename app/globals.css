@@ -281,13 +281,122 @@ body {
 }
 /* The engine's OWN built-in toolbar (opts.toolbar:true) has a light/dark/system
    switch that's a MANUAL override, independent of the OS — it flips .mde-dark /
-   .mde-light on <html> (see setTheme in md-editor.js), leaving prefers-color-scheme
-   alone. Without this, only the toolbar (themed via --mde-* tokens) responded to
-   that switch while this page's own canvas stayed pinned to the OS setting. These
-   class selectors out-specificity the media query above, so a manual choice wins;
-   "auto" (no class) still falls through to the OS media query as before. */
-html.mde-dark .write-zen { background: #000000; }
-html.mde-light .write-zen { background: #ffffff; }
+   .mde-light on <html> (see setTheme in md-editor.js). Canonical's own default
+   dark palette is keyed off exactly those classes (md-editor.css's DOCS-6 block),
+   but student-portal's --color-* / --neu-* tokens (which --mde-* only aliases via
+   var()) fully shadow it — .portal-root's own dark values below are gated ONLY on
+   prefers-color-scheme, so a manual toggle recolored the toolbar (bar chrome reads
+   --mde-tb-bg etc. directly) while every actual TEXT/ink/shadow token stayed at
+   its light value: unreadable dark-on-near-black, not just an unflipped canvas.
+   Mirrors the same literal values as the .portal-root dark block above/below —
+   keep both in sync if that palette changes. Scoped to .write-zen, NOT the whole
+   .portal-root: .mde-dark/.mde-light persist on <html> across navigation (nothing
+   clears them when leaving /write), so re-theming the whole portal from here would
+   leak this page's manual choice into unrelated pages.
+
+   IMPORTANT: also re-declares every --mde-* alias (the exact var()-indirection
+   list from the .portal-root block above), not just the underlying --color-*
+   / --neu-* primitives. A custom property's var() reference resolves ONCE, at
+   whichever element it's declared on — --mde-ink: var(--color-ink) is declared
+   only on .portal-root, so its computed value is frozen there (from .portal-root's
+   OWN --color-ink) and just inherits down unchanged; overriding --color-ink on
+   the descendant .write-zen does NOT make --mde-ink re-resolve. Redeclaring the
+   same indirection here forces a fresh lookup against the overrides above. This
+   is exactly why the first attempt at this fix flipped the toolbar (which reads
+   --mde-tb-bg etc., also only declared once, but coincidentally already correct
+   for the light/dark split it needed) and the canvas background (a plain
+   property, not an indirection) but left every text color frozen at its light
+   value — confirmed live via computed-style inspection, not just a screenshot. */
+html.mde-dark .write-zen {
+  --color-cream: #19191b;
+  --color-cream-dim: #252528;
+  --color-sand: #37373c;
+  --color-ink: #ededec;
+  --color-ink-soft: #b4b3b2;
+  --color-ink-faint: #807f7e;
+  --color-clay-50: #2a211d;
+  --color-moss: #93a279;
+  --color-ochre: #cfa75e;
+  --color-terracotta: #d4734f;
+  --color-terracotta-deep: #e8926f;
+  --color-terracotta-soft: #b9613f;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+  --shadow-lift: 0 2px 6px rgba(0, 0, 0, 0.4), 0 22px 46px -16px rgba(0, 0, 0, 0.7);
+  --neu-bg: linear-gradient(145deg, #242428 0%, #1b1b1d 100%);
+  --neu-hi: rgba(255, 255, 255, 0.05);
+  --neu-lo: rgba(0, 0, 0, 0.55);
+  --neu-inset-bg: #1d1d20;
+  background: #000000;
+
+  --mde-green: var(--color-terracotta);
+  --mde-green-deep: var(--color-terracotta-deep);
+  --mde-green-soft: var(--color-terracotta-soft);
+  --mde-leaf: var(--color-clay-50);
+  --mde-leaf-line: var(--color-sand);
+  --mde-paper: var(--color-cream);
+  --mde-card: var(--color-cream-dim);
+  --mde-ink: var(--color-ink);
+  --mde-ink-soft: var(--color-ink-soft);
+  --mde-ink-faint: var(--color-ink-faint);
+  --mde-hairline: var(--color-sand);
+  --mde-amber: var(--color-ochre);
+  --mde-amber-soft: var(--color-clay-50);
+  --mde-clay-card: var(--neu-inset-bg);
+  --mde-clay-dark: var(--neu-lo);
+  --mde-clay-light: var(--neu-hi);
+  --mde-tab-bg: var(--color-cream-dim);
+  --mde-tab-fg: var(--color-ink-soft);
+  --mde-tab-active-bg: var(--color-terracotta);
+  --mde-tab-active-fg: var(--color-paper);
+  --mde-tab-shadow: 3px 3px 7px var(--neu-lo), -3px -3px 7px var(--neu-hi);
+  --mde-tab-active-shadow: var(--shadow-lift);
+  --mde-tab-add-fg: var(--color-terracotta);
+}
+html.mde-light .write-zen {
+  --color-cream: #faf9f4;
+  --color-cream-dim: #f3f1e8;
+  --color-sand: #ece6d8;
+  --color-ink: #2c2620;
+  --color-ink-soft: #6f665a;
+  --color-ink-faint: #a89e8f;
+  --color-clay-50: #fbf3ee;
+  --color-moss: #5e6b4f;
+  --color-ochre: #ab8136;
+  --color-terracotta: #c6613f;
+  --color-terracotta-deep: #a8492a;
+  --color-terracotta-soft: #e3a288;
+  --shadow-card: 0 1px 2px rgba(44, 38, 32, 0.04), 0 8px 24px -12px rgba(44, 38, 32, 0.18);
+  --shadow-lift: 0 2px 4px rgba(44, 38, 32, 0.06), 0 18px 40px -16px rgba(168, 73, 42, 0.28);
+  --neu-bg: linear-gradient(145deg, #fefdf9 0%, #f0ede1 100%);
+  --neu-hi: rgba(255, 255, 255, 0.9);
+  --neu-lo: rgba(63, 53, 41, 0.16);
+  --neu-inset-bg: #f2efe4;
+  background: #ffffff;
+
+  --mde-green: var(--color-terracotta);
+  --mde-green-deep: var(--color-terracotta-deep);
+  --mde-green-soft: var(--color-terracotta-soft);
+  --mde-leaf: var(--color-clay-50);
+  --mde-leaf-line: var(--color-sand);
+  --mde-paper: var(--color-cream);
+  --mde-card: var(--color-cream-dim);
+  --mde-ink: var(--color-ink);
+  --mde-ink-soft: var(--color-ink-soft);
+  --mde-ink-faint: var(--color-ink-faint);
+  --mde-hairline: var(--color-sand);
+  --mde-amber: var(--color-ochre);
+  --mde-amber-soft: var(--color-clay-50);
+  --mde-clay-card: var(--neu-inset-bg);
+  --mde-clay-dark: var(--neu-lo);
+  --mde-clay-light: var(--neu-hi);
+  --mde-tab-bg: var(--color-cream-dim);
+  --mde-tab-fg: var(--color-ink-soft);
+  --mde-tab-active-bg: var(--color-terracotta);
+  --mde-tab-active-fg: var(--color-paper);
+  --mde-tab-shadow: 3px 3px 7px var(--neu-lo), -3px -3px 7px var(--neu-hi);
+  --mde-tab-active-shadow: var(--shadow-lift);
+  --mde-tab-add-fg: var(--color-terracotta);
+}
 /* The editor element (== .mde-host) fills the flex column; its tab-stage owns
    the scroll. The surface fills the stage so tapping anywhere keeps writing,
    and (equal specificity, declared later) this wins over the 54vh rule above. */
