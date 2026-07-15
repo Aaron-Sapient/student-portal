@@ -15,8 +15,18 @@ import GlassSurface from '@/components/GlassSurface/GlassSurface';
 export function MIcon({ name, size, active }) {
   return (
     <span
-      className="material-symbols-rounded leading-none transition-colors duration-200"
+      className="material-symbols-rounded items-center justify-center overflow-hidden leading-none transition-colors duration-200"
       style={{
+        // Hard size×size box. Until the icon font arrives, each glyph is its
+        // ligature TEXT (e.g. "calendar_month") — that text must never be
+        // allowed to affect layout, because the dock lens is measured from
+        // these boxes and a later font-swap reflow would strand it. `display`
+        // sits in the inline style because Google's own .material-symbols-
+        // rounded class sets display:inline-block and, being unlayered, beats
+        // Tailwind's layered utilities.
+        display: 'inline-flex',
+        width: size,
+        height: size,
         fontSize: size,
         fontVariationSettings: `'opsz' ${size}, 'wght' ${active ? 600 : 350}, 'GRAD' 0, 'FILL' ${
           active ? 1 : 0
@@ -46,6 +56,10 @@ export default function TabDock({ tabs }) {
   // (animate the lens gliding over) from a first placement or a reflow (snap).
   const prevHrefRef = useRef(null);
   const activeHref = tabs.find((t) => isActive(pathname, t.href))?.href;
+  // Key the measure effect on the tab SET, not just its length — a same-length
+  // swap of gated tabs (Projects out, Colleges in) moves every column without
+  // resizing the nav, so nothing else would trigger a re-measure.
+  const tabsKey = tabs.map((t) => t.href).join('|');
 
   useLayoutEffect(() => {
     const nav = navRef.current;
@@ -55,36 +69,52 @@ export default function TabDock({ tabs }) {
       prevHrefRef.current = null;
       return;
     }
+    const last = { left: NaN, top: NaN, width: NaN, height: NaN };
     const measure = () => {
       const nr = nav.getBoundingClientRect();
       const er = el.getBoundingClientRect();
       // Inset a hair so the lens reads as a pill seated inside the dock.
       const pad = 4;
-      // Glide only when navigating between tabs. On first placement (fresh open
-      // straight into a tab) and on geometry reflow (resize, or the seniors-only
-      // Colleges tab popping in and shifting everything right) we snap, so the
-      // lens never streaks across the dock on load.
-      const animate = prevHrefRef.current != null && prevHrefRef.current !== activeHref;
-      setLens({
+      const next = {
         left: er.left - nr.left + pad,
         top: er.top - nr.top + pad,
         width: Math.max(0, er.width - pad * 2),
         height: Math.max(0, er.height - pad * 2),
-        animate,
-      });
+      };
+      // Unchanged geometry → skip. The ResizeObserver's initial delivery (and
+      // any no-op fire) must not rewrite `transition` to 'none' mid-glide.
+      if (
+        next.left === last.left &&
+        next.top === last.top &&
+        next.width === last.width &&
+        next.height === last.height
+      ) {
+        return;
+      }
+      Object.assign(last, next);
+      // Glide only when navigating between tabs. On first placement (fresh open
+      // straight into a tab) and on geometry reflow (resize, font arrival, or a
+      // gated tab popping in and shifting everything) we snap, so the lens
+      // never streaks across the dock on load.
+      const animate = prevHrefRef.current != null && prevHrefRef.current !== activeHref;
+      setLens({ ...next, animate });
       prevHrefRef.current = activeHref;
     };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(nav);
+    // Observe the tabs too, not just the nav: a webfont landing (icon glyphs
+    // especially) reflows the columns WITHOUT changing the nav's outer box —
+    // exactly the cold-load case that used to strand the lens mid-dock.
+    for (const link of Object.values(tabRefs.current)) {
+      if (link) ro.observe(link);
+    }
     window.addEventListener('resize', measure);
     return () => {
       ro.disconnect();
       window.removeEventListener('resize', measure);
     };
-    // tabs.length: adding/removing a gated tab (e.g. Colleges) reflows every tab
-    // without resizing the nav, so the ResizeObserver alone wouldn't re-measure.
-  }, [activeHref, tabs.length]);
+  }, [activeHref, tabsKey]);
 
   // iOS Safari's bottom URL bar overlays the layout viewport, clipping a
   // `bottom: 0` dock. Lift the dock by however much the visual viewport is
@@ -162,7 +192,8 @@ export default function TabDock({ tabs }) {
               <Link
                 key={href}
                 ref={(el) => {
-                  tabRefs.current[href] = el;
+                  if (el) tabRefs.current[href] = el;
+                  else delete tabRefs.current[href];
                 }}
                 href={href}
                 aria-current={active ? 'page' : undefined}

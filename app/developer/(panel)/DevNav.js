@@ -25,6 +25,7 @@ function DesktopRail({ tabs }) {
   const tabRefs = useRef({});
   const [lens, setLens] = useState(null);
   const activeHref = tabs.find((t) => isActive(pathname, t.href))?.href;
+  const tabsKey = tabs.map((t) => t.href).join('|');
 
   useLayoutEffect(() => {
     const nav = navRef.current;
@@ -33,26 +34,42 @@ function DesktopRail({ tabs }) {
       setLens(null);
       return;
     }
+    const last = { left: NaN, top: NaN, width: NaN, height: NaN };
     const measure = () => {
       const nr = nav.getBoundingClientRect();
       const er = el.getBoundingClientRect();
       const pad = 4;
-      setLens({
+      const next = {
         left: er.left - nr.left + pad,
         top: er.top - nr.top + pad,
         width: Math.max(0, er.width - pad * 2),
         height: Math.max(0, er.height - pad * 2),
-      });
+      };
+      if (
+        next.left === last.left &&
+        next.top === last.top &&
+        next.width === last.width &&
+        next.height === last.height
+      ) {
+        return;
+      }
+      Object.assign(last, next);
+      setLens(next);
     };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(nav);
+    // Observe the tabs too — a webfont landing can reflow rows without
+    // changing the nav's outer box (see components/portal/TabDock.js).
+    for (const link of Object.values(tabRefs.current)) {
+      if (link) ro.observe(link);
+    }
     window.addEventListener('resize', measure);
     return () => {
       ro.disconnect();
       window.removeEventListener('resize', measure);
     };
-  }, [activeHref]);
+  }, [activeHref, tabsKey]);
 
   return (
     <div className="pointer-events-none fixed left-4 top-1/2 z-30 hidden -translate-y-1/2 md:block">
@@ -95,7 +112,8 @@ function DesktopRail({ tabs }) {
               <Link
                 key={href}
                 ref={(el) => {
-                  tabRefs.current[href] = el;
+                  if (el) tabRefs.current[href] = el;
+                  else delete tabRefs.current[href];
                 }}
                 href={href}
                 aria-current={active ? 'page' : undefined}
