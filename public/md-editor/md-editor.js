@@ -25,8 +25,8 @@
      sync.sh, so a consumer's own copy always answers for itself. Workflow: bump BOTH of these
      AND add a dated entry to CHANGELOG.md as a normal part of shipping any user-visible change —
      see CHANGELOG.md's header. Do not let this drift; a stale stamp defeats the whole feature. */
-  const MDE_VERSION = "1.1.1";
-  const MDE_LAST_CHANGE = "toolbar:true now docks the tab-reveal handle + headings/TOC button stacked together on the left below the bar (Google-Docs-style), instead of opposite top corners.";
+  const MDE_VERSION = "1.1.2";
+  const MDE_LAST_CHANGE = "toolbar:true — corrected 1.1.1: the tab-reveal handle and headings/TOC button dock at the SAME height below the bar, opposite corners (left/right), not stacked on one side.";
 
   function makeEditor(surface, opts) {
     opts = opts || {};
@@ -2525,12 +2525,9 @@
     // false => panel+API only, host drives it. The floating button shows in BOTH toolbar and
     // non-toolbar modes: with the built-in toolbar on, it docks top-RIGHT just below the bar.
     const tocButtonEnabled = opts.tocButton !== false;
-    // toolbar:true → the headings button docks below the full-width toolbar bar, on the
-    // LEFT (see .mde-toc-btn-below in md-editor.css) — Google-Docs-style outline-toggle
-    // placement. opts.tabRail (set only by makeTabs) means a tab-reveal handle shares
-    // that same left column above it, so the button stacks further down (-below-tabs).
+    // toolbar:true → the headings button docks below the full-width toolbar bar, same
+    // height as the tab-reveal handle on the left (see .mde-toc-btn-below in md-editor.css).
     const tocWithToolbar = !!opts.toolbar;
-    const tocBelowTabs = tocWithToolbar && !!opts.tabRail;
     const TOC_ICON  = '<svg viewBox="0 0 24 24"><circle cx="5" cy="7" r="1.35"/><circle cx="5" cy="12" r="1.35"/><circle cx="5" cy="17" r="1.35"/><path d="M9.5 7h9.5M9.5 12h9.5M9.5 17h9.5"/></svg>';
     const TOC_CLOSE = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>';
     const TOC_TWIST = '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
@@ -2559,7 +2556,7 @@
       if (tocButtonEnabled) {
         tocBtn = document.createElement("button");
         tocBtn.type = "button";
-        tocBtn.className = "mde-toc-btn" + (tocWithToolbar ? " mde-toc-btn-below" : "") + (tocBelowTabs ? " mde-toc-btn-below-tabs" : "");
+        tocBtn.className = "mde-toc-btn" + (tocWithToolbar ? " mde-toc-btn-below" : "");
         tocBtn.title = "Contents";
         tocBtn.setAttribute("aria-label", "Table of contents"); tocBtn.innerHTML = TOC_ICON;
         tocBtn.addEventListener("click", e => { e.preventDefault(); toggleTOC(); });
@@ -3575,7 +3572,6 @@
       toc: opts.toc,
       tocButton: opts.tocButton,
       toolbar: opts.toolbar,                 // forward the Docs-style formatting bar
-      tabRail: true,                         // tells the TOC button a tab-reveal handle shares its left column (stack below it)
       imageUpload: opts.imageUpload,         // forward the image hooks
       resolveImageSrc: opts.resolveImageSrc,
       acceptMarkdown: opts.acceptMarkdown,   // forward the markdown-demotion toggle (else the editor reads its persisted per-user pref)

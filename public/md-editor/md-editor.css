@@ -362,11 +362,11 @@
   .mde-tab-label[contenteditable="true"] { cursor: text; min-width: 2ch; text-overflow: clip; }
   .mde-tab-empty { font-family: var(--mde-sans); font-size: 13px; color: var(--mde-ink-faint); padding: 8px 6px; }
   /* The floating reveal handle (shown when the rail is collapsed) mirrors the TOC button
-     (.mde-toc-btn) — same size/offset — and owns the top-LEFT corner. Without the built-in
-     toolbar, it and the TOC/headings button read as a matched pair on opposite corners
-     (unchanged legacy behavior for toolbar:false hosts). WITH opts.toolbar:true, both
-     dock below the bar stacked on the LEFT instead — see .mde-tab-reveal-below /
-     .mde-toc-btn-below — mirroring where Google Docs docks its own outline toggle. */
+     (.mde-toc-btn) — same size/offset — and owns the top-LEFT corner; the TOC/headings
+     button docks top-RIGHT, so the two read as a matched pair on opposite corners and
+     never collide. WITH opts.toolbar:true, both drop to the SAME height below the full-
+     width bar instead of the top edge (see .mde-tab-reveal-below / .mde-toc-btn-below)
+     — still opposite corners, just shifted down to clear the bar. */
   .mde-tab-reveal {
     position: absolute; top: 7px; left: 12px; z-index: 5; display: none;
     width: 38px; height: 38px; border: none; border-radius: 11px;
@@ -576,13 +576,12 @@
   .mde-toc-btn svg circle { fill: currentColor; stroke: none; }
   .mde-toc-btn:hover { color: var(--mde-green-deep); }
   .mde-toc-btn:active { box-shadow: var(--mde-clay-sink-sm); }
-  /* opts.toolbar:true — the headings button docks BELOW the full-width toolbar bar, on
-     the LEFT (the top offset clears the bar; a host can retune it via --mde-toc-below-top),
-     matching where Google Docs docks its own outline toggle — instead of the default
-     top-right corner it keeps without the toolbar. When a tab rail also shares that left
-     column (see .mde-tab-reveal-below), .mde-toc-btn-below-tabs stacks it underneath. */
-  .mde-toc-btn.mde-toc-btn-below { top: var(--mde-toc-below-top, 62px); left: 12px; right: auto; }
-  .mde-toc-btn.mde-toc-btn-below-tabs { top: calc(var(--mde-toc-below-top, 62px) + 46px); }
+  /* opts.toolbar:true — the headings button docks BELOW the full-width toolbar bar (the
+     top offset clears the bar; a host can retune it via --mde-toc-below-top), staying on
+     the right — same height as the tab-reveal handle on the left (.mde-tab-reveal-below),
+     so the two read as a matched pair at the same row instead of the default top-right
+     corner it keeps without the toolbar. */
+  .mde-toc-btn.mde-toc-btn-below { top: var(--mde-toc-below-top, 62px); }
   .mde-toc-root.open .mde-toc-btn { opacity: 0; pointer-events: none; }
   /* While the tabs DRAWER is open (narrow mode), the floating TOC button would sit
      bright on top of the drawer's dark scrim and read as a glowing artifact. The

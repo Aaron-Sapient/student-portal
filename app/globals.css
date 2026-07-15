@@ -279,6 +279,15 @@ body {
 @media (prefers-color-scheme: dark) {
   .write-zen { background: #000000; }
 }
+/* The engine's OWN built-in toolbar (opts.toolbar:true) has a light/dark/system
+   switch that's a MANUAL override, independent of the OS — it flips .mde-dark /
+   .mde-light on <html> (see setTheme in md-editor.js), leaving prefers-color-scheme
+   alone. Without this, only the toolbar (themed via --mde-* tokens) responded to
+   that switch while this page's own canvas stayed pinned to the OS setting. These
+   class selectors out-specificity the media query above, so a manual choice wins;
+   "auto" (no class) still falls through to the OS media query as before. */
+html.mde-dark .write-zen { background: #000000; }
+html.mde-light .write-zen { background: #ffffff; }
 /* The editor element (== .mde-host) fills the flex column; its tab-stage owns
    the scroll. The surface fills the stage so tapping anywhere keeps writing,
    and (equal specificity, declared later) this wins over the 54vh rule above. */
