@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
+import { getBookingToken } from '@/lib/bookingTokens';
 import { getSeniorByEmail, loadSeniorBookingState, seniorBookingPlan } from '@/lib/seniors';
 import { loadProjectPlanForBooking, loadProjectBookingsForPlan, buildProjectCard } from '@/lib/projectMeetings';
 
@@ -176,7 +177,7 @@ export async function GET(request) {
       if (!isART) {
         return Response.json({ allowed: false, reason: 'Not part of the Advanced Research Team.' });
       }
-      const bdValue = studentRow[COLUMN_INDEX.art] || '';
+      const bdValue = await getBookingToken(studentSheetId, 'art', studentRow[COLUMN_INDEX.art] || '');
       if (bdValue) {
         const bookingDate = DateTime.fromISO(String(bdValue)).setZone('America/Los_Angeles');
         if (bookingDate.isValid && bookingDate >= mostRecentSaturdayLA()) {
@@ -190,7 +191,7 @@ export async function GET(request) {
     }
 
     // Standard path (Ryan / Aaron): decision string drives gating.
-    const decision = studentRow[COLUMN_INDEX[instructor.slug]] || null;
+    const decision = (await getBookingToken(studentSheetId, instructor.slug, studentRow[COLUMN_INDEX[instructor.slug]] || '')) || null;
     const nonBookable = NON_BOOKABLE_VALUE[instructor.slug];
 
     // 'pending' = checked in, awaiting Ryan's approval. Not bookable until he
