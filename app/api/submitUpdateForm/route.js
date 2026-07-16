@@ -113,7 +113,26 @@ export async function POST(request) {
     // that unlocks their booking for the week (no Claude eval, no token, no Ryan
     // approval email, no report). We still write grades + the AY timestamp + the
     // CheckinForm row, then return early before the urgency-evaluation machinery.
-    const isSenior = body.senior === true;
+    // Determine senior-ness SERVER-SIDE — never trust the client's body.senior flag.
+    // A stale/confused client (Bella Huang, 2026-07-14) once sent body.senior=false and
+    // routed a senior down the NON-senior path, silently skipping the check-in grant that
+    // unlocks their booking. Key off the LIVE studentSheetId (Master col G) — the SAME key
+    // home-data uses to route the student to the senior UI and that getActiveGrant reads the
+    // grant back by — so routing, this authority, and the grant write can't disagree, and the
+    // grant always lands under the id every downstream read uses. body.senior is a fallback
+    // ONLY when the roster lookup itself errors (so a transient Supabase blip can't break an
+    // ordinary non-senior check-in, which needs no Supabase). NOTE: this does not touch the
+    // separate, pre-existing key mismatch where validateBooking/bookMeeting resolve seniors by
+    // EMAIL rather than sheetId — that's unchanged here and worth a follow-up.
+    let seniorRow = null;
+    let seniorLookupOk = true;
+    try {
+      seniorRow = studentSheetId ? await getSeniorBySheetId(studentSheetId) : null;
+    } catch (lookupErr) {
+      seniorLookupOk = false;
+      console.error('[checkin] senior roster lookup failed; falling back to client hint:', lookupErr?.message);
+    }
+    const isSenior = seniorLookupOk ? !!seniorRow : body.senior === true;
 
     const authClient = getServiceAuth();
     const sheets = google.sheets({ version: 'v4', auth: authClient });
@@ -204,10 +223,11 @@ export async function POST(request) {
     // supersedes the prior grant. See lib/seniors.js createCheckinGrant.
     if (isSenior) {
       try {
-        const senior = await getSeniorBySheetId(studentSheetId);
-        if (senior) {
-          await createCheckinGrant(senior, DateTime.now().setZone('America/Los_Angeles'));
-        }
+        // seniorRow is set in the common path (email lookup succeeded). If isSenior
+        // came from the client-hint fallback (lookup errored), resolve it by sheetId.
+        const senior = seniorRow || (await getSeniorBySheetId(studentSheetId));
+        if (!senior) throw new Error(`senior unresolved (email=${email}, sheetId=${studentSheetId})`);
+        await createCheckinGrant(senior, DateTime.now().setZone('America/Los_Angeles'));
       } catch (grantErr) {
         console.error('Failed to write senior check-in grant:', grantErr);
         return Response.json({ error: 'Check-in saved, but unlocking booking failed. Please retry.' }, { status: 500 });
