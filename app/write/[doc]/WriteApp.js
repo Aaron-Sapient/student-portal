@@ -250,6 +250,9 @@ export default function WriteApp() {
         tabs,
         activeId: initial,
         toolbar: !ro, // engine's own Docs-style bar; read-only viewers never get one
+        readOnly: ro, // engine-level render-only mode: no caret-reveal of %%…%% syntax, no
+        // mutating affordances (table cells/tools, checkboxes, image tools). The manual
+        // contentEditable flip below stays as a belt-and-suspenders for older engine copies.
         emptyLabel: ro ? 'Nothing written yet' : 'Add a tab to start',
         loadTab: (id) => bodiesRef.current[id] ?? '',
         onTabInput: (id) => {

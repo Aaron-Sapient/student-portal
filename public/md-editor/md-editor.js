@@ -15,6 +15,10 @@
                          NEVER rendered (Word feel: syntax is an input method, not UI);
                          formatting is toggled via ⌘B/I/U, the toolbar, or the palette.
                          off ⇒ raw marks stay visible (classic markdown). Default on; persisted.
+     opts.readOnly       bool — render-only viewer: no caret-reveal of %%…%% / link syntax
+                         (a viewer's stray selection must never expose raw source), and every
+                         mutating affordance is disabled (task checkboxes, table cells/tools/
+                         grips, image tools). makeTabs also sets the surface non-editable.
      ed.setText(v) / ed.getText() / ed.focus() / ed.caretToEnd() / ed.dismiss()
    See README.md for the %%comment%% syntax, tables, and Supabase wiring.
    ============================================================================ */
@@ -25,8 +29,8 @@
      sync.sh, so a consumer's own copy always answers for itself. Workflow: bump BOTH of these
      AND add a dated entry to CHANGELOG.md as a normal part of shipping any user-visible change —
      see CHANGELOG.md's header. Do not let this drift; a stale stamp defeats the whole feature. */
-  const MDE_VERSION = "1.1.2";
-  const MDE_LAST_CHANGE = "toolbar:true — corrected 1.1.1: the tab-reveal handle and headings/TOC button dock at the SAME height below the bar, opposite corners (left/right), not stacked on one side.";
+  const MDE_VERSION = "1.2.0";
+  const MDE_LAST_CHANGE = "formatting can no longer corrupt hidden %%ind:/%%doc:/comment lines (lineSegments skips them), and a first-class opts.readOnly makes viewers truly render-only (no caret-reveal, no mutating affordances).";
 
   function makeEditor(surface, opts) {
     opts = opts || {};
@@ -66,6 +70,9 @@
       ? opts.atCommands.filter(c => c && typeof c.name === "string" && c.name && typeof c.run === "function")
       : [];
     const scrollParent = opts.scrollParent || null;
+    // read-only surface (see header): never caret-reveals, and every mutating affordance
+    // (task checkboxes, table cells/tools/grips, image tools) is disabled. makeTabs forwards it.
+    const readOnly = !!opts.readOnly;
     // images: a host can route inserted files somewhere real (returns a src string/Promise)
     // and map relative srcs in the doc to fetchable URLs (e.g. the desktop app's file server).
     const imageUpload = opts.imageUpload || null;
@@ -281,6 +288,24 @@
       }
       return hidden;
     }
+    // Machine-managed whole-line directives (same family as %%cols:%%): the document-styles
+    // line and the per-paragraph first-line-indent line (Tab-key, Word-style; N counts
+    // 0.5in/3em tab-stops, 0–6). Declared HERE — not with the doc-styles machinery further
+    // down — so anything that runs during construction can call hiddenSourceLines() without
+    // hitting the consts' TDZ.
+    const DOC_LINE_RE = /^\s*%%doc:([^%]*)%%\s*$/;
+    const IND_LINE_RE = /^\s*%%ind:(\d+)%%\s*$/;
+    // The full set of source lines render() never paints: <!--…--> comment lines/blocks plus
+    // the machine-managed %%doc:…%% / %%ind:N%% directive lines. Shared by render() and
+    // lineSegments() so "invisible to the eye" and "untouchable by formatting" stay the SAME
+    // predicate — a styled/bolded directive line stops matching its whole-line regex, demotes
+    // to an ordinary paragraph, and leaks raw %%…%% syntax (the %%ind:/font corruption bug,
+    // fixed 2026-07-16).
+    function hiddenSourceLines(lines) {
+      const hidden = commentLines(lines);
+      for (let k = 0; k < lines.length; k++) if (DOC_LINE_RE.test(lines[k]) || IND_LINE_RE.test(lines[k])) hidden[k] = true;
+      return hidden;
+    }
 
     /* ----- DOM building ----- */
     function leafSpan(str, s, cls) {
@@ -447,10 +472,9 @@
       const lines = text.split("\n");
       applyDocVars(lines);   // document-level styles ride a hidden %%doc:…%% line
       const starts = []; { let o = 0; for (let k = 0; k < lines.length; k++) { starts.push(o); o += lines[k].length + 1; } }
-      const hidden = commentLines(lines);
-      // the %%doc:…%% styles line is machine-managed (the Document-styles dialog) —
-      // never render or peek it; it collapses like a <!--…--> block (atomic island)
-      for (let k = 0; k < lines.length; k++) if (DOC_LINE_RE.test(lines[k]) || IND_LINE_RE.test(lines[k])) hidden[k] = true;
+      // comment lines/blocks + the machine-managed %%doc:…%% / %%ind:N%% lines — never
+      // rendered or peeked; they collapse like a <!--…--> block (atomic island)
+      const hidden = hiddenSourceLines(lines);
       const listInfo = computeListMarkers(lines, hidden);
       let i = 0;
       while (i < lines.length) {
@@ -507,6 +531,7 @@
           const cb = document.createElement("button");
           cb.type = "button"; cb.className = "tcb"; cb.setAttribute("contenteditable", "false");
           cb.tabIndex = -1; cb.setAttribute("aria-label", b.checked ? "Mark incomplete" : "Mark complete");
+          if (readOnly) cb.disabled = true;   // viewers see state, can't flip it
           const bs = b.s, bm = b.mlen;
           cb.addEventListener("mousedown", ev => { ev.preventDefault(); ev.stopPropagation(); toggleTask(bs, bm); });
           div.appendChild(cb);
@@ -661,7 +686,7 @@
 
     function mkCell(tag, content, r, c) {
       const cell = document.createElement(tag); cell.className = "mcell";
-      cell.setAttribute("contenteditable", "true");   // rich (was plaintext-only): allows <br>, bold, italic
+      cell.setAttribute("contenteditable", readOnly ? "false" : "true");   // rich (was plaintext-only): allows <br>, bold, italic; read-only viewers get inert cells
       cell.dataset.r = r; cell.dataset.c = c; cell.innerHTML = cellMdToHtml(content);
       cell.addEventListener("input", e => { e.stopPropagation(); if (!composing) syncTable(cell); });
       cell.addEventListener("keydown", onCellKey);
@@ -692,9 +717,12 @@
       thead.appendChild(htr); table.appendChild(thead);
       const tbody = document.createElement("tbody");
       body.forEach((r, ri) => { const tr = document.createElement("tr"); for (let c = 0; c < cols; c++) tr.appendChild(mkCell("td", r[c] || "", ri + 1, c)); tbody.appendChild(tr); });
-      table.appendChild(tbody); wrap.appendChild(table); wrap.appendChild(tableTools(wrap));
-      wrap.addEventListener("pointerenter", () => layoutGrips(wrap));
-      requestAnimationFrame(() => layoutGrips(wrap));
+      table.appendChild(tbody); wrap.appendChild(table);
+      if (!readOnly) {   // viewers get the rendered table only — no tools row, no resize grips
+        wrap.appendChild(tableTools(wrap));
+        wrap.addEventListener("pointerenter", () => layoutGrips(wrap));
+        requestAnimationFrame(() => layoutGrips(wrap));
+      }
       leaves.push({ el: wrap, s, len: e - s, atomic: true });
       blocks.push({ el: wrap, s, e });
       return wrap;
@@ -907,6 +935,17 @@
       return tools;
     }
     function applyReveal() {
+      // Read-only surfaces never reveal: no active line, no comment/link peek — the load-time
+      // selA=selB=0 (which otherwise marks block 0 active forever, since a viewer's caret
+      // never moves) and any stray text selection must not expose raw %%…%% syntax. Attribute
+      // check rather than isContentEditable (false while detached) so a host that flips
+      // contenteditable itself — the pre-readOnly-option pattern — is covered too.
+      if (readOnly || surface.getAttribute("contenteditable") === "false") {
+        for (const b of blocks) b.el.classList.remove("active");
+        for (const t of toks) t.el.classList.toggle("on", isEmphTok(t.el) ? !acceptMd : false);
+        if (barRefresh) barRefresh();
+        return;
+      }
       const act = blocks.map(b => selA <= b.e && selB >= b.s);
       for (let i = 0; i < blocks.length; i++) {
         const el = blocks[i].el;
@@ -1039,19 +1078,28 @@
     }
     // Per-line editable segments of [a,b): emphasis is a per-line construct, so toggles
     // apply line by line — each segment excludes the block prefix and trims whitespace.
+    // Hidden/meta/hr lines yield NO segment: wrapping an invisible %%ind:/%%doc:/comment
+    // line (or a --- rule) in emphasis or a style span demotes it to a visible paragraph
+    // and leaks raw syntax (the %%ind:/font corruption bug, fixed 2026-07-16). Formatting
+    // must only ever touch lines the user can see.
     function lineSegments(a, b) {
       const segs = [];
+      const lines = text.split("\n");
+      const hidden = hiddenSourceLines(lines);   // the exact set render() never paints
       let ls = lineStart(a);
+      let k = 0; { let o = 0; while (o < ls) { o += lines[k].length + 1; k++; } }   // line index of ls
       while (ls <= b) {
-        let le = text.indexOf("\n", ls); if (le < 0) le = text.length;
-        const bl = classify(text.slice(ls, le), ls, le);
-        const cs = ls + (bl.mlen || 0);
-        let sa = Math.max(a, cs), sb = Math.min(b, le);
-        while (sa < sb && /\s/.test(text[sa])) sa++;
-        while (sb > sa && /\s/.test(text[sb - 1])) sb--;
-        if (sa < sb) segs.push([sa, sb]);
+        const le = ls + lines[k].length;
+        const bl = classify(lines[k], ls, le);
+        if (!hidden[k] && bl.type !== "meta" && bl.type !== "hr") {
+          const cs = ls + (bl.mlen || 0);
+          let sa = Math.max(a, cs), sb = Math.min(b, le);
+          while (sa < sb && /\s/.test(text[sa])) sa++;
+          while (sb > sa && /\s/.test(text[sb - 1])) sb--;
+          if (sa < sb) segs.push([sa, sb]);
+        }
         if (le >= b || le >= text.length) break;
-        ls = le + 1;
+        ls = le + 1; k++;
       }
       return segs;
     }
@@ -1171,10 +1219,11 @@
       let a = selA, b = selB;
       const out = { b: false, em: false, del: false, code: false, u: false, h: 0, li: false, ol: false, bq: false };
       const info = emphTokens();
+      const segs = a === b ? null : lineSegments(a, b);   // kind-independent — compute once
       for (const kind of ["b", "em", "del", "code"]) {
         const mine = info.filter(t => t.kind === kind);
         if (a === b) out[kind] = !!mine.find(t => t.s < a && a < t.e);
-        else out[kind] = lineSegments(a, b).length > 0 && lineSegments(a, b).every(sg => segCovered(mine, sg[0], sg[1]));
+        else out[kind] = segs.length > 0 && segs.every(sg => segCovered(mine, sg[0], sg[1]));
       }
       const sp = enclosingStyleSpan(a, b);
       if (sp && parseStyleSpec(text.slice(sp.s + 4, sp.openEnd - 1)).u === "1") out.u = true;
@@ -1247,6 +1296,7 @@
       if (nf) decorateImg(nf);
     }
     function decorateImg(fig) {
+      if (readOnly) return;   // no layout toolbar / resize grip for viewers
       if (imgSel === fig) return;
       undecorateImg();
       imgSel = fig;
@@ -1574,6 +1624,7 @@
 
     // checklist: flip the [ ]/[x] inside a task line's hidden marker
     function toggleTask(s, mlen) {
+      if (readOnly) return;   // belt-and-suspenders: the checkbox is also disabled at render
       const idx = text.indexOf("[", s);
       if (idx < 0 || idx >= s + mlen) return;
       const now = text[idx + 1];
@@ -2869,12 +2920,9 @@
          lh               line spacing (unitless multiplier, 1.0–3.0; default 1.7)
          ind              paragraph first-line indent (em, 0–6; default 0 = none)
        ====================================================================== */
-    const DOC_LINE_RE = /^\s*%%doc:([^%]*)%%\s*$/;
-    // Per-paragraph first-line indent (Tab-key, Word-style): a hidden %%ind:N%% line glued
-    // directly above ONE paragraph — same convention as %%doc:…%% but scoped to that paragraph
-    // instead of the whole document. N counts 0.5in/3em tab-stops (0–6). Fully machine-managed:
-    // never peeks, never shown raw (see the render()/hidden[] wiring below).
-    const IND_LINE_RE = /^\s*%%ind:(\d+)%%\s*$/;
+    // DOC_LINE_RE / IND_LINE_RE moved up next to hiddenSourceLines() (2026-07-16) so
+    // construction-time code can never hit their const TDZ; the %%ind:N%% semantics comment
+    // lives there too. indLevelOf stays here with the doc-styles machinery that uses it.
     function indLevelOf(ln) { const m = IND_LINE_RE.exec(ln || ""); return m ? Math.max(0, Math.min(6, parseInt(m[1], 10))) : 0; }
     const DOC_VARS = ["--mde-doc-font", "--mde-doc-size", "--mde-doc-ink", "--mde-doc-hfont",
       "--mde-doc-h1c", "--mde-doc-h2c", "--mde-doc-h3c", "--mde-doc-h1sz", "--mde-doc-h2sz", "--mde-doc-h3sz",
@@ -3552,9 +3600,9 @@
     const stage = document.createElement("div"); stage.className = "editor-stage mde-tab-stage";
     const surface = document.createElement("div"); surface.className = "md-surface";
     // makeEditor doesn't make its surface editable — the host owns that. The tabs
-    // wrapper creates the surface, so it sets it here (a host can flip it off for
-    // a read-only view).
-    surface.setAttribute("contenteditable", "true");
+    // wrapper creates the surface, so it sets it here. opts.readOnly makes the whole
+    // view render-only (non-editable surface + the editor's readOnly affordance gating).
+    surface.setAttribute("contenteditable", opts.readOnly ? "false" : "true");
     surface.setAttribute("spellcheck", "true");
     stage.appendChild(surface);
     container.appendChild(rail);
@@ -3575,6 +3623,7 @@
       imageUpload: opts.imageUpload,         // forward the image hooks
       resolveImageSrc: opts.resolveImageSrc,
       acceptMarkdown: opts.acceptMarkdown,   // forward the markdown-demotion toggle (else the editor reads its persisted per-user pref)
+      readOnly: opts.readOnly,               // render-only viewer: no caret-reveal, no mutating affordances
       scrollParent: stage,
       onInput: function () { if (!loading && opts.onTabInput) opts.onTabInput(activeId); },
       onSave:  function () { if (opts.onTabSave) opts.onTabSave(activeId); },
