@@ -261,8 +261,13 @@ body {
   --mde-tab-active-shadow: var(--shadow-lift);
   --mde-tab-add-fg: var(--color-terracotta);
 }
-/* The writing page itself: comfortable measure + room to write. */
-.portal-root .mde-host .md-surface { min-height: 54vh; font-size: 17px; }
+/* The writing page itself: comfortable measure + room to write. The base size
+   goes through the engine's --mde-doc-size token — NEVER a hard font-size pin,
+   which out-specifies canonical's `calc(size × --mde-zoom)` and silently kills
+   both zoom and per-doc %%doc:size directives (bug: zoom "did nothing" on the
+   portal from 6/15 → 7/16). Token default loses to the engine's inline per-doc
+   value, exactly as intended. */
+.portal-root .mde-host .md-surface { min-height: 54vh; --mde-doc-size: 17px; }
 
 /* ── Full-screen "zen" writing surface (/write/[doc]) ──────────────────────
    The document fills the viewport on a pure-white (day) / pure-black (night)
