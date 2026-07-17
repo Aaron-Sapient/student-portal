@@ -13,12 +13,12 @@
    ============================================================================ */
 
 :root {
-  --mde-green:       #386840;
-  --mde-green-deep:  #2a5232;
-  --mde-green-soft:  #5a9a6f;
-  --mde-on-green:    #ffffff;   /* readable ink ON a --mde-green fill (dark green here → white) */
-  --mde-leaf:        #F2FCE2;
-  --mde-leaf-line:   #dcedc8;
+  --mde-green:       #292929;   /* accent is monochrome now (was forest green) — sleek near-black */
+  --mde-green-deep:  #111111;   /* headings + hover-darker fill */
+  --mde-green-soft:  #737373;   /* mid-gray secondary accent */
+  --mde-on-green:    #ffffff;   /* readable ink ON a --mde-green fill (near-black here → white) */
+  --mde-leaf:        #f1f0ec;   /* neutral warm tint (was green) */
+  --mde-leaf-line:   #e3e1da;
   --mde-paper:       #fbfaf7;
   --mde-card:        #ffffff;
   --mde-ink:         #25291f;
@@ -827,10 +827,10 @@
      Tokens cascade to the body-mounted popovers (menu, grid, palette) too.
      ====================================================================== */
   :root.mde-dark, :root.mde-dark body {
-    --mde-green:       #6fbf86;
-    --mde-green-deep:  #8fd6a3;
-    --mde-green-soft:  #5a9a6f;
-    --mde-on-green:    #0c0c0c;   /* dark ink — the dark-mode green fill is LIGHT, so white text would be unreadable */
+    --mde-green:       #e8e8e8;   /* monochrome accent — light near-white fill in dark mode */
+    --mde-green-deep:  #ffffff;   /* brightest: headings + hover fill */
+    --mde-green-soft:  #7c7c82;   /* mid-gray secondary accent */
+    --mde-on-green:    #0c0c0c;   /* dark ink — the dark-mode accent fill is LIGHT, so white text would be unreadable */
     --mde-leaf:        #18181b;
     --mde-leaf-line:   #27272a;
     --mde-paper:       #000000;
@@ -847,10 +847,10 @@
   }
   @media (prefers-color-scheme: dark) {
     :root:not(.mde-light):not(.mde-dark), :root:not(.mde-light):not(.mde-dark) body {
-      --mde-green:       #6fbf86;
-      --mde-green-deep:  #8fd6a3;
-      --mde-green-soft:  #5a9a6f;
-      --mde-on-green:    #0c0c0c;   /* dark ink for the light dark-mode green fill (auto/system) */
+      --mde-green:       #e8e8e8;   /* monochrome accent — light near-white fill in dark mode */
+      --mde-green-deep:  #ffffff;   /* brightest: headings + hover fill */
+      --mde-green-soft:  #7c7c82;   /* mid-gray secondary accent */
+      --mde-on-green:    #0c0c0c;   /* dark ink for the light dark-mode accent fill (auto/system) */
       --mde-leaf:        #18181b;
       --mde-leaf-line:   #27272a;
       --mde-paper:       #000000;
