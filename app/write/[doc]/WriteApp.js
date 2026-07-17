@@ -71,6 +71,23 @@ function colorFor(s) {
   return `hsl(${h % 360} 58% 45%)`;
 }
 
+// A STABLE comment-authorship id — kept separate from the per-mount random presence uid (which
+// gives cursors distinct colors even for two anonymous link editors). Comment authorship must
+// survive reloads so the creator can always delete their own: signed-in actors key on their
+// email; an anonymous link visitor gets one persisted browser-local id (all link editors on the
+// same doc still SHARE the "Student (via link)" identity by design — possessing the URL is the
+// capability, and any editor can delete any comment anyway).
+function commentUid(actor) {
+  if (actor?.email && actor.email !== 'link@portal') return actor.email;
+  try {
+    let v = localStorage.getItem('portal-cmt-uid');
+    if (!v) { v = 'anon-' + Math.random().toString(36).slice(2, 10); localStorage.setItem('portal-cmt-uid', v); }
+    return v;
+  } catch {
+    return 'anon-local';
+  }
+}
+
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
 export default function WriteApp() {
@@ -243,7 +260,15 @@ export default function WriteApp() {
     let alive = true;
     loadMde().then((MakeTabs) => {
       if (!alive || !MakeTabs || !mountRef.current || tabsRef.current) return;
-      const tabs = dataRef.current.tabs || [];
+      const rawTabs = dataRef.current.tabs || [];
+      const actor = dataRef.current?.actor || {};
+      // side-comment authorship identity (stable across reloads — see commentUid). Comments are
+      // ON for everyone; the engine's readOnly gates authoring, so parents / share-link viewers
+      // see the highlights + rail but no pill/composer/resolve.
+      const commentUser = { id: commentUid(actor), name: actor.name || 'You', color: colorFor(commentUid(actor)) };
+      // seed each tab's open-comment badge count from its already-loaded body
+      const countOf = (id) => window.MarkdownEditor?.countComments?.(bodiesRef.current[id] ?? '') || 0;
+      const tabs = rawTabs.map((t) => ({ ...t, comments: countOf(t.id) }));
       const initial = tabs.find((t) => t.id === wantTab)?.id || tabs[0]?.id || null;
 
       const opts = {
@@ -253,6 +278,8 @@ export default function WriteApp() {
         readOnly: ro, // engine-level render-only mode: no caret-reveal of %%…%% syntax, no
         // mutating affordances (table cells/tools, checkboxes, image tools). The manual
         // contentEditable flip below stays as a belt-and-suspenders for older engine copies.
+        comments: true, // side comments + emoji reactions (stored in body_md — no new tables)
+        user: commentUser,
         emptyLabel: ro ? 'Nothing written yet' : 'Add a tab to start',
         loadTab: (id) => bodiesRef.current[id] ?? '',
         onTabInput: (id) => {

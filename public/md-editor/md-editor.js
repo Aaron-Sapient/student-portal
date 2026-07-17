@@ -29,8 +29,138 @@
      sync.sh, so a consumer's own copy always answers for itself. Workflow: bump BOTH of these
      AND add a dated entry to CHANGELOG.md as a normal part of shipping any user-visible change —
      see CHANGELOG.md's header. Do not let this drift; a stale stamp defeats the whole feature. */
-  const MDE_VERSION = "1.2.0";
-  const MDE_LAST_CHANGE = "formatting can no longer corrupt hidden %%ind:/%%doc:/comment lines (lineSegments skips them), and a first-class opts.readOnly makes viewers truly render-only (no caret-reveal, no mutating affordances).";
+  const MDE_VERSION = "1.3.0";
+  const MDE_LAST_CHANGE = "Google-Docs-style side comments + emoji reactions (opts.comments; stored in-document, no backend), and MarkdownTabs now nests each tab's outline under it in one left rail (the right-docked TOC panel is off in that mode; opts.outline:false keeps it).";
+
+  /* ============================================================================
+     Side comments + emoji reactions — the in-document data model (MODULE scope, so
+     the static MarkdownEditor.countComments/stripComments AND every editor instance
+     share ONE parser). Storage lives in the markdown itself:
+       anchor  : @{c:ID}…@{/c:ID}   inline atomic markers (overlap-safe; one pair PER
+                 LINE for a multi-line selection, all pairs sharing the same ID).
+       comment : %%mdc:ID|state|authorId|authorName|ISO|body%%   (state o=open r=resolved)
+       reaction: %%mdr:ID|emoji|authorId,authorName,ISO;authorId2,…%%  (one line per anchor+emoji)
+     escMeta escapes so NO literal % / | / newline (and , ; inside mdr entries) survives in
+     any field — the whole-line [^%]* regex then matches ANY body ("scored 50%"), and | / , / ;
+     delimit fields unambiguously. The IDs use only [a-z0-9], so the marker regex is delimiter-safe.
+     ============================================================================ */
+  const MDC_LINE_RE = /^\s*%%mdc:([^%]*)%%\s*$/;
+  const MDR_LINE_RE = /^\s*%%mdr:([^%]*)%%\s*$/;
+  const CMARK_G_RE  = /@\{(\/?)c:([a-z0-9]{4,})\}/g;   // inline anchor markers (open: group1 empty; close: "/")
+  function escMeta(s) {
+    return String(s == null ? "" : s)
+      .replace(/\\/g, "\\\\").replace(/%/g, "\\p").replace(/\|/g, "\\|")
+      .replace(/\n/g, "\\n").replace(/,/g, "\\c").replace(/;/g, "\\s");
+  }
+  function unescMeta(s) {
+    let out = "", i = 0; const str = String(s == null ? "" : s);
+    while (i < str.length) {
+      const c = str[i];
+      if (c === "\\" && i + 1 < str.length) {
+        const n = str[i + 1];
+        out += n === "p" ? "%" : n === "n" ? "\n" : n === "c" ? "," : n === "s" ? ";" : n === "\\" ? "\\" : n === "|" ? "|" : n;
+        i += 2; continue;
+      }
+      out += c; i++;
+    }
+    return out;
+  }
+  // split `str` on unescaped `delim` (a backslash escapes the next char, so "\|" never splits)
+  function splitMeta(str, delim) {
+    const out = []; let cur = "", i = 0; str = String(str == null ? "" : str);
+    while (i < str.length) {
+      const c = str[i];
+      if (c === "\\" && i + 1 < str.length) { cur += c + str[i + 1]; i += 2; continue; }
+      if (c === delim) { out.push(cur); cur = ""; i++; continue; }
+      cur += c; i++;
+    }
+    out.push(cur); return out;
+  }
+  // Comments/reactions NEVER travel on copy/paste (Docs behavior) — and stripping on the way in
+  // guarantees the one-ID-per-doc invariant (no duplicated anchor IDs re-entering from another
+  // tab/doc). Removes inline anchor markers + whole %%mdc/%%mdr metadata lines.
+  function stripCmtSyntax(md) {
+    return String(md == null ? "" : md)
+      .replace(/@\{\/?c:[a-z0-9]{4,}\}/g, "")
+      .split("\n").filter(ln => !MDC_LINE_RE.test(ln) && !MDR_LINE_RE.test(ln)).join("\n");
+  }
+  // "11:11 PM Today" for same-day, else "11:11 PM Jul 12".
+  function fmtCmtTime(iso) {
+    const d = new Date(iso); if (isNaN(d.getTime())) return "";
+    const now = new Date();
+    const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+    return sameDay ? time + " Today" : time + " " + d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  }
+  // Parse a markdown string into the comment/reaction model. Anchors are paired by ID in
+  // document order (FIFO stack per ID), so multi-line (multiple pairs / ID) and even overlap
+  // resolve sanely; an unpaired close is ignored. Returns {anchors:Map<id,[{a,b}]>, comments, reactions}.
+  //   a = inner start (open-marker END offset); b = inner end (close-marker START offset).
+  function scanCmtModel(src) {
+    src = String(src == null ? "" : src);
+    const openStack = new Map(), anchors = new Map();
+    let m; CMARK_G_RE.lastIndex = 0;
+    while ((m = CMARK_G_RE.exec(src))) {
+      const id = m[2], start = m.index, end = m.index + m[0].length;
+      if (m[1] !== "/") { (openStack.get(id) || openStack.set(id, []).get(id)).push(end); }
+      else { const st = openStack.get(id); if (st && st.length) { const a = st.pop(); (anchors.get(id) || anchors.set(id, []).get(id)).push({ a, b: start }); } }
+    }
+    for (const arr of anchors.values()) arr.sort((x, y) => x.a - y.a);
+    const comments = [], reactions = [];
+    for (const ln of src.split("\n")) {
+      let mm;
+      if ((mm = MDC_LINE_RE.exec(ln))) {
+        const p = splitMeta(mm[1], "|"); const id = unescMeta(p[0] || "");
+        if (id) comments.push({ id, state: (p[1] === "r" ? "r" : "o"), authorId: unescMeta(p[2] || ""), authorName: unescMeta(p[3] || ""), ts: unescMeta(p[4] || ""), body: unescMeta(p.slice(5).join("|")) });
+      } else if ((mm = MDR_LINE_RE.exec(ln))) {
+        const p = splitMeta(mm[1], "|"); const id = unescMeta(p[0] || ""), emoji = unescMeta(p[1] || "");
+        const users = []; const raw = p.slice(2).join("|");
+        if (raw) for (const ent of splitMeta(raw, ";")) { if (!ent) continue; const f = splitMeta(ent, ","); users.push({ id: unescMeta(f[0] || ""), name: unescMeta(f[1] || ""), ts: unescMeta(f[2] || "") }); }
+        if (id && emoji) reactions.push({ id, emoji, users });
+      }
+    }
+    return { anchors, comments, reactions };
+  }
+  // an open comment/reaction that still has a live anchor is "visible"; count open comments for badges.
+  function countOpenComments(src) {
+    const m = scanCmtModel(src); let n = 0;
+    for (const c of m.comments) if (c.state === "o" && m.anchors.has(c.id) && m.anchors.get(c.id).length) n++;
+    return n;
+  }
+  // Reaction emoji palette (a compact, reaction-flavored set distinct from the tab-icon picker).
+  const REACT_EMOJIS = ["👍","❤️","😀","🎉","🔥","👏","😮","😢","🙏","💯","✅","👀","🚀","💡","❓","😂"];
+  // A small body-mounted emoji picker (keeps the .mde-emoji-pop class so it themes + so a host's
+  // popover-aware Escape/scroll handling still recognizes it). Reused for reactions; makeTabs keeps
+  // its own instance for tab icons. onPick(emoji) fires with "" when the (optional) remove row is used.
+  function makeEmojiPicker(emojis) {
+    const pop = document.createElement("div"); pop.className = "mde-emoji-pop"; pop.setAttribute("contenteditable", "false");
+    document.body.appendChild(pop);
+    function place(anchor) {
+      pop.style.visibility = "hidden"; pop.style.left = "0"; pop.style.top = "0";
+      const r = anchor.getBoundingClientRect(), pr = pop.getBoundingClientRect(), M = 8;
+      let left = r.right - pr.width, top = r.bottom + 4;
+      if (left + pr.width > window.innerWidth - M) left = window.innerWidth - M - pr.width;
+      if (left < M) left = M;
+      if (top + pr.height > window.innerHeight - M) top = r.top - pr.height - 4;
+      if (top < M) top = M;
+      pop.style.left = left + "px"; pop.style.top = top + "px"; pop.style.visibility = "";
+    }
+    function close() { pop.classList.remove("open"); }
+    function open(anchor, onPick, opts) {
+      opts = opts || {}; pop.innerHTML = "";
+      const grid = document.createElement("div"); grid.className = "mde-emoji-grid";
+      (opts.emojis || emojis || REACT_EMOJIS).forEach(e => {
+        const c = document.createElement("button"); c.type = "button"; c.className = "mde-emoji-cell"; c.textContent = e;
+        c.addEventListener("mousedown", ev => ev.preventDefault());
+        c.addEventListener("click", ev => { ev.stopPropagation(); onPick(e); close(); });
+        grid.appendChild(c);
+      });
+      pop.appendChild(grid);
+      if (opts.showRemove) { const none = document.createElement("button"); none.type = "button"; none.className = "mde-emoji-none"; none.textContent = opts.removeLabel || "Remove"; none.addEventListener("click", ev => { ev.stopPropagation(); onPick(""); close(); }); pop.appendChild(none); }
+      pop.classList.add("open"); place(anchor);
+    }
+    return { open, close, el: pop, isOpen: () => pop.classList.contains("open") };
+  }
 
   function makeEditor(surface, opts) {
     opts = opts || {};
@@ -137,6 +267,8 @@
     let undo = [], redo = [], lastType = null, lastAt = 0;
     let tocRefresh = null;   // DOCS-TOC: set by the table-of-contents feature; called after every render
     let wcRefresh = null;    // DOCS-WC:  set by the word-count feature; called after every render
+    let cmtRefresh = null;   // COMMENTS: set by the side-comments feature; called after every render (paint + reposition + notify)
+    let outlineRefresh = null; // OUTLINE: set when an outline listener is registered; recomputes headings + notifies
     let wcCaretRefresh = null; // DOCS-WC: called on local selection change so the pill switches between the full-doc count and the highlighted-portion count
     let barRefresh = null;     // TOOLBAR: set when opts.toolbar is on; re-reads caretFormats() after caret/selection changes
     // Markdown demotion: when acceptMd is on, emphasis marks (**, *, `, ~~) render but NEVER
@@ -188,6 +320,15 @@
                              openEnd: base + cl + 1, closeStart: base + close, inner: content.slice(cl + 1, close) });
                   i = close + 5; ts = i; continue;
                 }
+              }
+              // side-comment anchor markers: @{c:ID} (open) / @{/c:ID} (close). Standalone
+              // atomic invisible leaves (NOT paired containers) — the highlight over the
+              // anchored text is a post-render paint pass, so ranges may freely overlap.
+              // A malformed id falls through to plain text (mid-typing safety).
+              if ((ctype === "c" || ctype === "/c") && /^[a-z0-9]{4,}$/.test(cval)) {
+                pushText(i);
+                out.push({ kind: "cmark", close: ctype === "/c", id: cval, s: base + i, e: base + cl + 1 });
+                i = cl + 1; ts = i; continue;
               }
             }
           }
@@ -295,15 +436,18 @@
     // hitting the consts' TDZ.
     const DOC_LINE_RE = /^\s*%%doc:([^%]*)%%\s*$/;
     const IND_LINE_RE = /^\s*%%ind:(\d+)%%\s*$/;
+    // MDC_LINE_RE / MDR_LINE_RE (anchored side-comments + reactions) are declared at MODULE
+    // scope above (shared with the statics); they're in scope here via the closure chain.
     // The full set of source lines render() never paints: <!--…--> comment lines/blocks plus
-    // the machine-managed %%doc:…%% / %%ind:N%% directive lines. Shared by render() and
-    // lineSegments() so "invisible to the eye" and "untouchable by formatting" stay the SAME
-    // predicate — a styled/bolded directive line stops matching its whole-line regex, demotes
-    // to an ordinary paragraph, and leaks raw %%…%% syntax (the %%ind:/font corruption bug,
-    // fixed 2026-07-16).
+    // the machine-managed %%doc:…%% / %%ind:N%% / %%mdc:…%% / %%mdr:…%% directive lines. Shared
+    // by render() and lineSegments() so "invisible to the eye" and "untouchable by formatting"
+    // stay the SAME predicate — a styled/bolded directive line stops matching its whole-line
+    // regex, demotes to an ordinary paragraph, and leaks raw %%…%% syntax (the %%ind:/font
+    // corruption bug, fixed 2026-07-16).
     function hiddenSourceLines(lines) {
       const hidden = commentLines(lines);
-      for (let k = 0; k < lines.length; k++) if (DOC_LINE_RE.test(lines[k]) || IND_LINE_RE.test(lines[k])) hidden[k] = true;
+      for (let k = 0; k < lines.length; k++)
+        if (DOC_LINE_RE.test(lines[k]) || IND_LINE_RE.test(lines[k]) || MDC_LINE_RE.test(lines[k]) || MDR_LINE_RE.test(lines[k])) hidden[k] = true;
       return hidden;
     }
 
@@ -338,6 +482,18 @@
       leaves.push({ el: sp, s, len: str.length, atomic: true });
       return sp;
     }
+    // a side-comment anchor marker (@{c:ID} / @{/c:ID}): one atomic, contenteditable-false,
+    // display:none, NEVER-revealed leaf — like styleMarkerLeaf, but it carries no visual weight
+    // at all (the yellow highlight over the anchored text is painted by paintCmtHl). NOT pushed
+    // to `toks`, so unlike %% it never peeks open as raw syntax; caret skips it (atomic).
+    function cmarkLeaf(str, s) {
+      const sp = document.createElement("span");
+      sp.className = "cmk"; sp.dataset.s = s; sp.dataset.len = str.length;
+      sp.setAttribute("contenteditable", "false");
+      sp.appendChild(document.createTextNode(str));
+      leaves.push({ el: sp, s, len: str.length, atomic: true });
+      return sp;
+    }
     function appendInline(parent, content, base) {
       for (const t of parseInline(content, base)) {
         if (t.kind === "text") { parent.appendChild(leafSpan(t.text, t.s, "seg")); continue; }
@@ -359,6 +515,9 @@
           appendInline(tok, t.inner, t.openEnd);
           tok.appendChild(styleMarkerLeaf("@{/s}", t.closeStart));
           parent.appendChild(tok); continue;   // intentionally NOT added to `toks` (never reveals)
+        }
+        if (t.kind === "cmark") {
+          parent.appendChild(cmarkLeaf((t.close ? "@{/c:" : "@{c:") + t.id + "}", t.s)); continue;
         }
         if (t.kind === "comment") {
           // three leaves (open + inner + close) keep the leaf-coverage invariant; CSS hides it.
@@ -576,6 +735,8 @@
       }
       applyReveal();
       suppress = false;
+      if (cmtRefresh) cmtRefresh();
+      if (outlineRefresh) outlineRefresh();
       if (tocRefresh) tocRefresh();
       if (wcRefresh) wcRefresh();
       if (remoteCarets.length) positionRemoteCarets();   // additive: re-pin overlays after each rebuild
@@ -625,7 +786,9 @@
       }
       return out;
     }
-    function cellMdToHtml(md) { return String(md == null ? "" : md).split("<br>").map(cellInlineToHtml).join("<br>"); }
+    // Defensive: comment ops never anchor inside a table run, but if an anchor marker ever lands
+    // in a cell (paste, hand-edit) the cell mini-parser would show it raw — strip it here.
+    function cellMdToHtml(md) { return String(md == null ? "" : md).replace(/@\{\/?c:[a-z0-9]{4,}\}/g, "").split("<br>").map(cellInlineToHtml).join("<br>"); }
     function cellToMd(cell) {   // walk the rich-contenteditable cell DOM back into markdown
       const runs = [];
       (function walk(node, b, i, c) {
@@ -1076,6 +1239,35 @@
       if (removed) render();
       return car;
     }
+    // GC orphaned comment/reaction syntax after a text delete (never at render, never on remote
+    // apply). An id is KEPT iff it has BOTH a live anchor pair AND live metadata (an open/resolved
+    // comment, or a reaction with ≥1 user). Anything else is swept in ONE pass: metadata lines with
+    // no anchor (commented text fully deleted) or an empty reaction line; and every anchor marker —
+    // paired OR stray-unpaired — whose id lost its metadata. Part of the caller's undo (no snapshot).
+    function sweepOrphanCmt(car) {
+      const m = scanCmtModel(text);
+      const liveMeta = new Set();
+      for (const c of m.comments) liveMeta.add(c.id);
+      for (const r of m.reactions) if (r.users.length) liveMeta.add(r.id);
+      const keep = new Set();
+      for (const id of m.anchors.keys()) if (liveMeta.has(id)) keep.add(id);
+      const splices = [];
+      let off = 0;
+      for (const ln of text.split("\n")) {
+        const le = off + ln.length; let mm, drop = false;
+        if ((mm = MDC_LINE_RE.exec(ln))) { if (!keep.has(unescMeta(splitMeta(mm[1], "|")[0] || ""))) drop = true; }
+        else if ((mm = MDR_LINE_RE.exec(ln))) { const p = splitMeta(mm[1], "|"); const id = unescMeta(p[0] || ""); const empty = !splitMeta(p.slice(2).join("|"), ";").some(x => x); if (!keep.has(id) || empty) drop = true; }
+        if (drop) splices.push(wholeLineDel(off, le));
+        off = le + 1;
+      }
+      let mk; CMARK_G_RE.lastIndex = 0;
+      while ((mk = CMARK_G_RE.exec(text))) if (!keep.has(mk[2])) splices.push({ at: mk.index, del: mk[0].length });
+      if (!splices.length) return car;
+      splices.sort((x, y) => y.at - x.at);
+      for (const s of splices) { text = text.slice(0, s.at) + text.slice(s.at + s.del); if (car > s.at + s.del) car -= s.del; else if (car > s.at) car = s.at; }
+      render();
+      return car;
+    }
     // Per-line editable segments of [a,b): emphasis is a per-line construct, so toggles
     // apply line by line — each segment excludes the block prefix and trims whitespace.
     // Hidden/meta/hr lines yield NO segment: wrapping an invisible %%ind:/%%doc:/comment
@@ -1481,6 +1673,7 @@
       render();
       let car = (caret == null ? a + ins.length : caret) - removedBefore;
       if ((type === "del" || type === "cut") && !ins) car = sweepEmptyEmph(car);
+      if ((type === "del" || type === "cut") && !ins && commentsEnabled) car = sweepOrphanCmt(car);
       setCaret(Math.max(0, Math.min(car, text.length)));
       onInput();
       syncMenu();
@@ -1726,6 +1919,76 @@
       return true;
     }
 
+    /* ----- delete hardening around hidden lines + invisible comment anchors -----
+       Three hazards, all fixed here (see the 1.2.0 hidden-line corruption class):
+       (1) a collapsed backspace/forward-delete must HOP an invisible @{c:ID}/@{/c:ID}
+           anchor marker (atomic leaf) and act on the char the user SEES — never delete
+           the marker itself (that would silently kill a comment + orphan its partner);
+       (2) a collapsed delete that crosses a line boundary into a hidden %%…%% line must
+           JOIN the two nearest VISIBLE lines, floating the intact hidden line(s) below —
+           merging a hidden line into visible text leaks/corrupts raw %% syntax;
+       (3) a word-delete range must never partially cut a hidden line (its body has spaces
+           wordLeft/Right happily stop inside), so clamp the range at hidden-line edges. */
+    function isCmk(lf) { return lf && lf.el && lf.el.classList && lf.el.classList.contains("cmk"); }
+    function skipCmtLeft(p)  { let moved = true; while (moved) { moved = false; for (const lf of leaves) if (isCmk(lf) && lf.s + lf.len === p) { p = lf.s; moved = true; break; } } return p; }
+    function skipCmtRight(p) { let moved = true; while (moved) { moved = false; for (const lf of leaves) if (isCmk(lf) && lf.s === p) { p = lf.s + lf.len; moved = true; break; } } return p; }
+    // hop past BOTH hidden emphasis markers (acceptMd) and comment anchors, until stable
+    function hopHiddenLeft(p)  { let prev; do { prev = p; p = skipMarksLeft(p); p = skipCmtLeft(p); } while (p !== prev); return p; }
+    function hopHiddenRight(p) { let prev; do { prev = p; p = skipMarksRight(p); p = skipCmtRight(p); } while (p !== prev); return p; }
+    function lineTable(lines) {
+      const starts = []; { let o = 0; for (let k = 0; k < lines.length; k++) { starts.push(o); o += lines[k].length + 1; } }
+      return { starts, at: pos => { let k = 0; while (k + 1 < starts.length && starts[k + 1] <= pos) k++; return k; } };
+    }
+    // dir<0 backspace at a visible line START, dir>0 forward-delete at a visible line END:
+    // merge the two nearest VISIBLE lines, keeping any hidden line(s) between them intact.
+    function joinAcrossHidden(p, dir) {
+      const lines = text.split("\n"); const hidden = hiddenSourceLines(lines);
+      const { starts, at } = lineTable(lines);
+      if (dir < 0) {
+        const L = at(p); if (starts[L] !== p || L === 0 || !hidden[L - 1]) return null;
+        let P = L - 1; while (P >= 0 && hidden[P]) P--;
+        if (P < 0) return null;
+        const out = lines.slice(0, P).concat([lines[P] + lines[L]], lines.slice(P + 1, L), lines.slice(L + 1));
+        return { text: out.join("\n"), caret: starts[P] + lines[P].length };
+      } else {
+        const L = at(p); const le = starts[L] + lines[L].length;
+        if (p !== le || L >= lines.length - 1 || !hidden[L + 1]) return null;
+        let N = L + 1; while (N < lines.length && hidden[N]) N++;
+        if (N >= lines.length) return null;
+        const out = lines.slice(0, L).concat([lines[L] + lines[N]], lines.slice(L + 1, N), lines.slice(N + 1));
+        return { text: out.join("\n"), caret: starts[L] + lines[L].length };
+      }
+    }
+    function applyJoin(res) { snapshot("del"); text = res.text; render(); setCaret(res.caret); onInput(); }
+    // clamp a word-delete so it never crosses INTO a hidden line (whose body has spaces)
+    function safeWordLeft(a) {
+      let p = wordLeft(a); const lines = text.split("\n"); const hidden = hiddenSourceLines(lines);
+      let off = 0; for (let k = 0; k < lines.length; k++) { const hs = off, he = off + lines[k].length; if (hidden[k] && he >= p && hs <= a) p = Math.max(p, Math.min(a, he + 1)); off = he + 1; }
+      return p;
+    }
+    function safeWordRight(b) {
+      let x = wordRight(b); const lines = text.split("\n"); const hidden = hiddenSourceLines(lines);
+      let off = 0; for (let k = 0; k < lines.length; k++) { const hs = off, he = off + lines[k].length; if (hidden[k] && he >= b && hs <= x) x = Math.min(x, Math.max(b, hs > 0 ? hs - 1 : 0)); off = he + 1; }
+      return x;
+    }
+    function delBackward(a, mode) {
+      if (mode === "line") { const ls = lineStart(a); if (ls < a) edit(ls, a, "", ls, "del"); return; }
+      const sk = hopHiddenLeft(a);
+      if (sk <= 0) return;
+      if (text[sk - 1] === "\n") { const jn = joinAcrossHidden(sk, -1); if (jn) { applyJoin(jn); return; } }
+      if (mode === "word") { let p = safeWordLeft(sk); if (p >= sk) p = prevG(sk); edit(p, sk, "", p, "del"); return; }
+      const ch = atomicBefore(sk);
+      if (ch) edit(ch.s, sk, "", ch.s, "del"); else { const p = prevG(sk); edit(p, sk, "", p, "del"); }
+    }
+    function delForward(b, mode) {
+      const sk = hopHiddenRight(b);
+      if (sk >= text.length) return;
+      if (text[sk] === "\n") { const jn = joinAcrossHidden(sk, 1); if (jn) { applyJoin(jn); return; } }
+      if (mode === "word") { let x = safeWordRight(sk); if (x <= sk) x = nextG(sk); edit(sk, x, "", sk, "del"); return; }
+      const ch = atomicAfter(sk);
+      if (ch) edit(sk, ch.s + ch.len, "", sk, "del"); else { const x = nextG(sk); edit(sk, x, "", sk, "del"); }
+    }
+
     /* ----- input handling (everything goes through here) ----- */
     surface.addEventListener("beforeinput", e => {
       if (cellOf(e.target)) return;   // table cells edit natively, then reserialize
@@ -1743,11 +2006,11 @@
         if (a === b) { const p = skipMarksRight(a); if (!smartListEnter(p)) edit(p, p, "\n", p + 1, "nl"); }
         else edit(a, b, "\n", a + 1, "nl");
       }
-      else if (t === "deleteContentBackward") { e.preventDefault(); if (a !== b) edit(a, b, "", a, "del"); else { const sk = skipMarksLeft(a); if (sk > 0) { const ch = atomicBefore(sk); if (ch) edit(ch.s, sk, "", ch.s, "del"); else { const p = prevG(sk); edit(p, sk, "", p, "del"); } } } }
-      else if (t === "deleteContentForward")  { e.preventDefault(); if (a !== b) edit(a, b, "", a, "del"); else { const sk = skipMarksRight(b); if (sk < text.length) { const ch = atomicAfter(sk); if (ch) edit(sk, ch.s + ch.len, "", a, "del"); else { const x = nextG(sk); edit(sk, x, "", a, "del"); } } } }
-      else if (t === "deleteWordBackward")    { e.preventDefault(); if (a !== b) edit(a, b, "", a, "del"); else { const p = wordLeft(a); edit(p, a, "", p, "del"); } }
-      else if (t === "deleteWordForward")     { e.preventDefault(); if (a !== b) edit(a, b, "", a, "del"); else { const x = wordRight(b); edit(b, x, "", a, "del"); } }
-      else if (t === "deleteSoftLineBackward" || t === "deleteHardLineBackward") { e.preventDefault(); if (a !== b) edit(a, b, "", a, "del"); else { const ls = lineStart(a); edit(ls, a, "", ls, "del"); } }
+      else if (t === "deleteContentBackward") { e.preventDefault(); if (a !== b) edit(a, b, "", a, "del"); else delBackward(a, "char"); }
+      else if (t === "deleteContentForward")  { e.preventDefault(); if (a !== b) edit(a, b, "", a, "del"); else delForward(b, "char"); }
+      else if (t === "deleteWordBackward")    { e.preventDefault(); if (a !== b) edit(a, b, "", a, "del"); else delBackward(a, "word"); }
+      else if (t === "deleteWordForward")     { e.preventDefault(); if (a !== b) edit(a, b, "", a, "del"); else delForward(b, "word"); }
+      else if (t === "deleteSoftLineBackward" || t === "deleteHardLineBackward") { e.preventDefault(); if (a !== b) edit(a, b, "", a, "del"); else delBackward(a, "line"); }
       else if (t === "historyUndo") { e.preventDefault(); doUndo(); }
       else if (t === "historyRedo") { e.preventDefault(); doRedo(); }
       else { e.preventDefault(); } // paste/cut/drop handled by their own events; ignore the rest
@@ -1760,12 +2023,14 @@
        text. A private MIME carries the raw markdown so copy↔paste *inside* the editor
        still round-trips losslessly. */
     const MD_MIME = "application/x-mde-markdown";
+    // stripCmtSyntax (comments never travel on copy/paste) is a module-scope pure function above.
     function inlineToPlain(content) {
       let out = "";
       for (const t of parseInline(content, 0)) {
         if (t.kind === "text") out += t.text;
         else if (t.kind === "chip") out += (t.ctype === "date" ? fmtDateLabel(t.cval) : t.cval);
         else if (t.kind === "comment") { /* drop */ }
+        else if (t.kind === "cmark") { /* drop — anchor markers carry no text */ }
         else if (t.kind === "img") { /* images aren't text — drop from plain export/counts */ }
         else if (t.kind === "code") out += t.inner;
         else if (t.kind === "link") out += t.ltext;
@@ -1780,6 +2045,7 @@
         if (t.kind === "text") out += esc(t.text);
         else if (t.kind === "chip") out += esc(t.ctype === "date" ? fmtDateLabel(t.cval) : t.cval);
         else if (t.kind === "comment") { /* drop */ }
+        else if (t.kind === "cmark") { /* drop — anchor markers carry no text */ }
         else if (t.kind === "img") {
           const src = safeImgSrc(t.url), o = parseImgSpec(t.spec);
           if (src) out += '<img src="' + esc(src) + '" alt="' + esc(t.alt || "") + '"' + (o.w != null ? ' style="width:' + o.w + '%"' : "") + ">";
@@ -1879,7 +2145,7 @@
       const md = text.slice(a, b);
       e.clipboardData.setData("text/plain", rangeToPlain(md));
       try { e.clipboardData.setData("text/html", rangeToHtml(md)); } catch (_) {}
-      try { e.clipboardData.setData(MD_MIME, md); } catch (_) {}   // internal round-trip
+      try { e.clipboardData.setData(MD_MIME, stripCmtSyntax(md)); } catch (_) {}   // internal round-trip (comments don't travel)
     }
 
     surface.addEventListener("paste", e => {
@@ -1890,6 +2156,7 @@
       if (!d) d = (cd.getData("text/plain") || "");  // from elsewhere → as typed
       if (!d && cd.files && cd.files.length && /^image\//.test(cd.files[0].type || "")) { insertImageFile(cd.files[0]); return; }   // pasted image (screenshot etc.)
       d = d.replace(/\r\n?/g, "\n");
+      d = stripCmtSyntax(d);   // comments never paste in (no duplicate IDs, no stray metadata lines)
       const cur = readSel() || [selA, selB];
       edit(cur[0], cur[1], d, null, "paste");
     });
@@ -2224,7 +2491,7 @@
         rafPending = false;
         if (selInCell()) { closeMenu(); return; }
         const cur = readSel(); if (!cur) return;
-        selA = cur[0]; selB = cur[1]; applyReveal(); syncMenu(); notifyCaret(); if (wcCaretRefresh) wcCaretRefresh();
+        selA = cur[0]; selB = cur[1]; applyReveal(); syncMenu(); notifyCaret(); if (wcCaretRefresh) wcCaretRefresh(); if (cmtRefresh) cmtSelRefresh();
       });
     });
 
@@ -2566,6 +2833,491 @@
     function dismiss() { closeMenu(); closeGrid(); closePalette(); }
 
     /* ======================================================================
+       Side comments + emoji reactions. Storage is in-document (module-scope model
+       above). This section holds: config, the cached model, change-notification, the
+       read API (Step-2), the mutation ops (Step-3), and the right-hand rail UI (Step-4).
+       ALL gated by opts.comments — with it off (default) the parser still hides the
+       syntax everywhere, but there is no UI, no highlight, and zero cost beyond an
+       empty-listener check.  ================================================= */
+    const commentsEnabled = !!opts.comments;
+    const resolveAvatar = typeof opts.resolveAvatar === "function" ? opts.resolveAvatar : null;
+    function normCmtUser(u) {
+      u = u || {};
+      const id = (u.id != null && String(u.id)) ? String(u.id) : "local";
+      const name = (u.name != null && String(u.name)) ? String(u.name) : "Me";
+      return { id, name, color: u.color || null };
+    }
+    let cmtUser = normCmtUser(opts.user);
+    const commentListeners = [];
+    let cmtModel = null, cmtModelKey = null, cmtSig = "";
+    // model is cached on `text` (the change key): recompute only when the source actually changes
+    function getCmtModel() { if (cmtModelKey !== text) { cmtModel = scanCmtModel(text); cmtModelKey = text; } return cmtModel; }
+    function cmtSignature(m) {
+      let s = "";
+      for (const c of m.comments) s += c.id + c.state + (m.anchors.has(c.id) ? "1" : "0") + "\x01";
+      s += "\x02";
+      for (const r of m.reactions) s += r.id + "\x03" + r.emoji + "\x03" + r.users.length + "\x01";
+      return s;
+    }
+    // render-tail hook: repaint highlights on the fresh leaves, keep the rail in sync (rebuild on
+    // a model change, otherwise just reposition as offsets shift), and fire onCommentsChange.
+    function onCmtRender() {
+      if (!commentsEnabled && !commentListeners.length) return;
+      const sig = cmtSignature(getCmtModel());
+      if (commentsEnabled) {
+        paintCmtHl();
+        if (sig !== cmtSig) renderCmtRail(); else positionCmtRail();
+      }
+      if (sig !== cmtSig) { cmtSig = sig; for (let i = 0; i < commentListeners.length; i++) { try { commentListeners[i](); } catch (_) {} } }
+    }
+    cmtRefresh = onCmtRender;
+    // read API — offsets (from/to) are volatile across edits (documented on ed.getComments)
+    function apiGetComments() {
+      const m = getCmtModel();
+      const first = id => { const a = m.anchors.get(id); return (a && a.length) ? a[0] : null; };
+      const quote = id => { const r = first(id); return r ? inlineToPlain(text.slice(r.a, r.b)) : ""; };
+      return {
+        comments: m.comments.map(c => { const r = first(c.id); return { id: c.id, state: c.state, authorId: c.authorId, authorName: c.authorName, ts: c.ts, body: c.body, from: r ? r.a : null, to: r ? r.b : null, quote: quote(c.id) }; }),
+        reactions: m.reactions.map(rc => { const r = first(rc.id); return { id: rc.id, emoji: rc.emoji, users: rc.users.map(u => ({ id: u.id, name: u.name, ts: u.ts })), from: r ? r.a : null, to: r ? r.b : null }; }),
+      };
+    }
+
+    /* ----- mutation ops. Each op is a SINGLE snapshot + text mutation + render (one undo),
+       built from splices applied highest-offset-first. Metadata lines are placed ADJACENT to
+       the anchor's line so a collab binding's single-range diff stays local (never doc-spanning).
+       lastType is reset so a following keystroke never coalesces into the op's undo. A binding
+       may register onBeforeDiscreteOp → undoManager.stopCapturing() to keep quick ops separate. */
+    const discreteOpListeners = [];
+    function fireBeforeDiscreteOp() { for (let i = 0; i < discreteOpListeners.length; i++) { try { discreteOpListeners[i](); } catch (_) {} } }
+    let cmtIdSeed = 0;
+    function mintId() {
+      const B = "0123456789abcdefghijklmnopqrstuvwxyz";
+      const rand = () => { let r = ""; for (let i = 0; i < 4; i++) r += B[Math.floor(Math.random() * 36)]; return r; };
+      const t = Date.now().toString(36); let id = t + rand();
+      const m = getCmtModel();
+      const taken = x => m.anchors.has(x) || m.comments.some(c => c.id === x) || m.reactions.some(r => r.id === x);
+      while (taken(id)) id = t + ((cmtIdSeed = (cmtIdSeed + 1) & 0xffff).toString(36)) + rand();
+      return id;
+    }
+    function cmtMutate(splices, type, caretFn) {
+      fireBeforeDiscreteOp();
+      snapshot(type);
+      // highest offset first; at an equal offset, a higher `ord` is applied first (ends up further
+      // RIGHT) so an appended metadata line always lands OUTSIDE the close marker, never inside it.
+      splices.sort((x, y) => y.at - x.at || (y.ord || 0) - (x.ord || 0));
+      for (const s of splices) text = text.slice(0, s.at) + (s.ins || "") + text.slice(s.at + (s.del || 0));
+      render();
+      const car = caretFn ? caretFn() : null;
+      if (car != null) setCaret(car[0], car[1] == null ? car[0] : car[1]);
+      else setCaret(Math.min(selA, text.length), Math.min(selB, text.length));
+      lastType = null;   // a discrete op never coalesces with following typing
+      onInput();
+    }
+    const mdcLine = (id, state, u, ts, body) => "%%mdc:" + escMeta(id) + "|" + state + "|" + escMeta(u.id) + "|" + escMeta(u.name) + "|" + escMeta(ts) + "|" + escMeta(body) + "%%";
+    const mdrLine = (id, emoji, users) => "%%mdr:" + escMeta(id) + "|" + escMeta(emoji) + "|" + users.map(u => escMeta(u.id) + "," + escMeta(u.name) + "," + escMeta(u.ts)).join(";") + "%%";
+    // a splice removing a whole logical line [off, le] PLUS one adjacent newline — the trailing
+    // one normally, but the PRECEDING one for the last line (so an appended metadata line leaves
+    // no stray blank line behind).
+    function wholeLineDel(off, le) {
+      if (le < text.length) return { at: off, del: le + 1 - off };
+      if (off > 0) return { at: off - 1, del: le - (off - 1) };
+      return { at: off, del: le - off };
+    }
+    // push splices that remove the whole metadata line(s) matching `pred`
+    function metaLineSplices(pred) {
+      const out = []; let off = 0;
+      for (const ln of text.split("\n")) { const le = off + ln.length; if (pred(ln)) out.push(wholeLineDel(off, le)); off = le + 1; }
+      return out;
+    }
+    // push splices that strip every anchor marker (both of each pair) for `id`
+    function anchorSplices(id, m) {
+      const out = []; const pairs = (m || getCmtModel()).anchors.get(id) || [];
+      const oL = id.length + 5, cL = id.length + 6;   // "@{c:"+id+"}" / "@{/c:"+id+"}"
+      for (const p of pairs) { out.push({ at: p.b, del: cL }); out.push({ at: p.a - oL, del: oL }); }
+      return out;
+    }
+    // snap a comment endpoint out of an inline `code` span (the code inner is one literal leaf)
+    function snapOutOfCode(a, b) {
+      let off = 0;
+      for (const ln of text.split("\n")) {
+        for (const t of parseInline(ln, off)) if (t.kind === "code") {
+          if (a > t.s && a < t.e) a = (a - t.s <= t.e - a) ? t.s : t.e;
+          if (b > t.s && b < t.e) b = (b - t.s <= t.e - b) ? t.s : t.e;
+        }
+        off += ln.length + 1;
+      }
+      return [a, b];
+    }
+    // per-line anchor segments of [lo,hi): reuse lineSegments (hidden/meta/hr excluded, block
+    // prefix trimmed), then drop any line inside a table run and snap out of emphasis/code.
+    function cmtSegments(lo, hi) {
+      const base = lineSegments(lo, hi); if (!base.length) return [];
+      const lines = text.split("\n"); const { starts, at } = lineTable(lines);
+      const inTable = new Array(lines.length).fill(false);
+      for (let i = 0; i < lines.length;) { const tr = tableRunEnd(lines, i); if (tr) { for (let k = i; k < tr[1]; k++) inTable[k] = true; i = tr[1]; } else i++; }
+      const out = [];
+      for (let seg of base) {
+        if (inTable[at(seg[0])]) continue;
+        let [sa, sb] = snapMarks(seg[0], seg[1]);
+        const c = snapOutOfCode(sa, sb); sa = c[0]; sb = c[1];
+        if (sa < sb) out.push([sa, sb]);
+      }
+      return out;
+    }
+    function anchorInsertSplices(id, segs) {
+      const splices = [];
+      for (const [sa, sb] of segs) { splices.push({ at: sb, ins: "@{/c:" + id + "}" }); splices.push({ at: sa, ins: "@{c:" + id + "}" }); }
+      return splices;
+    }
+    // where to drop a metadata line: right after the line containing `pos` (adjacency keeps
+    // the collab diff local). Returns a splice inserting `line`.
+    function metaInsertSplice(pos, line) {
+      const nl = text.indexOf("\n", pos);
+      // ord:1 → at the doc-end append case (same offset as the close marker) the metadata sorts
+      // OUTSIDE the marker, never between the text and its close marker.
+      return nl < 0 ? { at: text.length, ins: "\n" + line, ord: 1 } : { at: nl + 1, ins: line + "\n" };
+    }
+    function addCommentOp(a, b, body) {
+      if (readOnly || !commentsEnabled) return null;
+      const c = (a == null) ? [selA, selB] : [a, b];
+      let lo = Math.min(c[0], c[1]), hi = Math.max(c[0], c[1]);
+      if (lo === hi) { const w = wordRangeAt(lo); lo = w[0]; hi = w[1]; }
+      const segs = cmtSegments(lo, hi); if (!segs.length) return null;
+      const id = mintId(), ts = new Date().toISOString();
+      const splices = anchorInsertSplices(id, segs);
+      splices.push(metaInsertSplice(segs[segs.length - 1][1], mdcLine(id, "o", cmtUser, ts, body || "")));
+      cmtMutate(splices, "cmt", () => { const pr = getCmtModel().anchors.get(id); return pr && pr.length ? [pr[0].a] : null; });
+      return id;
+    }
+    function setCommentState(id, state) {
+      if (readOnly || !commentsEnabled) return false;
+      const c = getCmtModel().comments.find(x => x.id === id); if (!c) return false;
+      const splices = []; let off = 0, done = false;
+      for (const ln of text.split("\n")) {
+        const le = off + ln.length; const mm = MDC_LINE_RE.exec(ln);
+        if (mm && unescMeta(splitMeta(mm[1], "|")[0] || "") === id) { splices.push({ at: off, del: le - off, ins: mdcLine(id, state, { id: c.authorId, name: c.authorName }, c.ts, c.body) }); done = true; break; }
+        off = le + 1;
+      }
+      if (!done) return false;
+      cmtMutate(splices, "cmt"); return true;
+    }
+    function deleteCommentOp(id) {
+      if (readOnly || !commentsEnabled) return false;
+      const m = getCmtModel(); if (!m.comments.some(c => c.id === id)) return false;
+      const splices = metaLineSplices(ln => { const mm = MDC_LINE_RE.exec(ln); return !!(mm && unescMeta(splitMeta(mm[1], "|")[0] || "") === id); });
+      // keep the anchors only if a reaction still references this id; else strip them
+      if (!m.reactions.some(r => r.id === id && r.users.length)) for (const s of anchorSplices(id, m)) splices.push(s);
+      cmtMutate(splices, "cmt"); return true;
+    }
+    function replaceOrRemoveMdrLine(splices, id, emoji, users) {
+      let off = 0;
+      for (const ln of text.split("\n")) {
+        const le = off + ln.length; const mm = MDR_LINE_RE.exec(ln);
+        if (mm) { const p = splitMeta(mm[1], "|"); if (unescMeta(p[0] || "") === id && unescMeta(p[1] || "") === emoji) {
+          if (users.length) splices.push({ at: off, del: le - off, ins: mdrLine(id, emoji, users) });
+          else splices.push(wholeLineDel(off, le));
+          return;
+        } }
+        off = le + 1;
+      }
+    }
+    function toggleReactionOnId(id, emoji, m) {
+      const ts = new Date().toISOString(); const splices = [];
+      const react = m.reactions.find(r => r.id === id && r.emoji === emoji);
+      if (react) {
+        const has = react.users.some(u => u.id === cmtUser.id);
+        const users = has ? react.users.filter(u => u.id !== cmtUser.id) : react.users.concat([{ id: cmtUser.id, name: cmtUser.name, ts }]);
+        replaceOrRemoveMdrLine(splices, id, emoji, users);
+        if (!users.length && !m.comments.some(c => c.id === id) && !m.reactions.some(r => r.id === id && r.emoji !== emoji && r.users.length)) for (const s of anchorSplices(id, m)) splices.push(s);
+      } else {
+        const pairs = m.anchors.get(id) || []; if (!pairs.length) return null;
+        splices.push(metaInsertSplice(pairs[pairs.length - 1].b, mdrLine(id, emoji, [{ id: cmtUser.id, name: cmtUser.name, ts }])));
+      }
+      cmtMutate(splices, "cmt"); return id;
+    }
+    function toggleReactionOp(a, b, emoji) {
+      if (readOnly || !commentsEnabled || !emoji) return null;
+      const m = getCmtModel();
+      if (typeof a === "string") { return m.anchors.has(a) ? toggleReactionOnId(a, emoji, m) : null; }
+      let lo = Math.min(a, b), hi = Math.max(a, b);
+      if (lo === hi) { const w = wordRangeAt(lo); lo = w[0]; hi = w[1]; }
+      const segs = cmtSegments(lo, hi); if (!segs.length) return null;
+      const id = mintId(), ts = new Date().toISOString();
+      const splices = anchorInsertSplices(id, segs);
+      splices.push(metaInsertSplice(segs[segs.length - 1][1], mdrLine(id, emoji, [{ id: cmtUser.id, name: cmtUser.name, ts }])));
+      cmtMutate(splices, "cmt", () => { const pr = getCmtModel().anchors.get(id); return pr && pr.length ? [pr[0].a] : null; });
+      return id;
+    }
+
+    /* ----- comments UI: highlight paint + selection pill + composer + the right rail ----- */
+    const CMT_ICON_COMMENT = '<svg viewBox="0 0 24 24"><path d="M20 15.5a2 2 0 0 1-2 2H8l-4 3.5V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"/><path d="M9 9.5h7M9 12.5h4"/></svg>';
+    const CMT_ICON_SMILE   = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.7 14.3a4 4 0 0 0 6.6 0M9 9.8h.01M15 9.8h.01"/></svg>';
+    const CMT_ICON_CHECK   = '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+    const CMT_ICON_TRASH   = '<svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M6.6 7l.8 12.4a1.5 1.5 0 0 0 1.5 1.4h6.2a1.5 1.5 0 0 0 1.5-1.4L17.4 7"/></svg>';
+    const CMT_ICON_CHEVRON = '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
+    const reactionPicker = commentsEnabled ? makeEmojiPicker(REACT_EMOJIS) : null;
+    let cmtRoot = null, cmtRailEl = null, cmtStripEl = null, cmtPill = null, cmtComposer = null;
+    let cmtFocusId = null, cmtRaf = 0, cmtNarrow = false, pillSel = [0, 0];
+    let cmtCollapsed = (function () { try { return localStorage.getItem("mde-cmt-collapsed") === "1"; } catch (_) { return false; } })();
+
+    function iconBtn(svg, title, onClick) {
+      const b = document.createElement("button"); b.type = "button"; b.title = title; b.setAttribute("aria-label", title); b.innerHTML = svg;
+      b.addEventListener("mousedown", e => e.preventDefault());
+      b.addEventListener("click", onClick);
+      return b;
+    }
+    function avatarColor(key) { let h = 0; const s = String(key || ""); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return "hsl(" + (h % 360) + " 48% 52%)"; }
+    function buildAvatar(name, id) {
+      const av = document.createElement("span"); av.className = "mde-cmt-avatar";
+      const url = resolveAvatar ? resolveAvatar({ id: id, name: name }) : null;
+      if (url) { const img = document.createElement("img"); img.src = url; img.alt = ""; av.appendChild(img); }
+      else { av.textContent = initials(name || "?") || "?"; av.style.background = avatarColor(id || name); }
+      return av;
+    }
+    function commentBodyHtml(body) { return String(body || "").split("\n").map(inlineToHtml).join("<br>"); }
+
+    // paint the Docs-yellow highlight on every leaf inside a LIVE anchor (open comment or a
+    // reaction with ≥1 user). Runs each render on the fresh leaves; the focused id reads deeper.
+    function paintCmtHl() {
+      const m = getCmtModel();
+      const live = new Set();
+      for (const c of m.comments) if (c.state === "o") live.add(c.id);
+      for (const r of m.reactions) if (r.users.length) live.add(r.id);
+      for (const [id, pairs] of m.anchors) {
+        if (!live.has(id)) continue;
+        const focus = id === cmtFocusId;
+        for (const p of pairs) for (const lf of leaves) {
+          if (lf.atomic || lf.len === 0) continue;
+          if (lf.s >= p.a && lf.s + lf.len <= p.b) {
+            lf.el.classList.add("mde-cmt-hl");
+            if (focus) lf.el.classList.add("mde-cmt-hl-focus");
+            const cur = lf.el.dataset.cmt ? lf.el.dataset.cmt.split(" ") : [];
+            if (cur.indexOf(id) < 0) { cur.push(id); lf.el.dataset.cmt = cur.join(" "); }
+          }
+        }
+      }
+    }
+
+    function ensureCmtRoot() {
+      if (cmtRoot || !commentsEnabled) return cmtRoot;
+      cmtRoot = document.createElement("div"); cmtRoot.className = "mde-cmt-root"; cmtRoot.setAttribute("contenteditable", "false"); cmtRoot.setAttribute("aria-hidden", "false");
+      // the collapse/expand chevron is a DIRECT child of the (fixed) root so its right-anchored
+      // position resolves against the whole rail, not a left-anchored wrapper.
+      const collapse = iconBtn(CMT_ICON_CHEVRON, "Toggle comments", e => { e.preventDefault(); e.stopPropagation(); setCommentsCollapsed(!cmtCollapsed); });
+      collapse.className = "mde-cmt-collapse";
+      cmtRailEl = document.createElement("div"); cmtRailEl.className = "mde-cmt-rail";
+      cmtStripEl = document.createElement("div"); cmtStripEl.className = "mde-cmt-strip";
+      cmtRoot.appendChild(collapse); cmtRoot.appendChild(cmtRailEl); cmtRoot.appendChild(cmtStripEl);
+      document.body.appendChild(cmtRoot);
+      window.addEventListener("scroll", onCmtReflow, true);
+      window.addEventListener("resize", onCmtReflow);
+      placeCmtRoot();
+      return cmtRoot;
+    }
+    function onCmtReflow() { if (cmtRaf) return; cmtRaf = requestAnimationFrame(() => { cmtRaf = 0; positionCmtRail(); }); }
+    function placeCmtRoot() {
+      if (!cmtRoot || !stage) return;
+      const r = stage.getBoundingClientRect();
+      const top = Math.max(0, r.top), bottom = Math.min(window.innerHeight, r.bottom);
+      cmtRoot.style.left = r.left + "px"; cmtRoot.style.width = r.width + "px";
+      cmtRoot.style.top = top + "px"; cmtRoot.style.height = Math.max(0, bottom - top) + "px";
+      // "narrow" (phone-width stage) only restyles the expanded rail as a sheet — it does NOT force
+      // collapse. The user's toggle is the SOLE collapse driver, so the rail is always expandable
+      // (it overlays the right margin) and can stay open alongside the left tab rail.
+      cmtNarrow = r.width <= 600;
+      cmtRoot.classList.toggle("narrow", cmtNarrow);
+      cmtRoot.classList.toggle("collapsed", cmtCollapsed);
+    }
+    function buildChipRow(id) {
+      const m = getCmtModel();
+      const rs = m.reactions.filter(r => r.id === id && r.users.length);
+      const row = document.createElement("div"); row.className = "mde-cmt-chiprow" + (rs.length ? "" : " empty");
+      for (const r of rs) {
+        const chip = document.createElement("button"); chip.type = "button"; chip.className = "mde-cmt-chip" + (r.users.some(u => u.id === cmtUser.id) ? " mine" : "");
+        chip.innerHTML = "<span class='mde-cmt-chip-e'>" + esc(r.emoji) + "</span><span class='mde-cmt-chip-n'>" + r.users.length + "</span>";
+        chip.title = r.users.map(u => u.name).join(", ");
+        if (!readOnly) { chip.addEventListener("mousedown", e => e.preventDefault()); chip.addEventListener("click", e => { e.stopPropagation(); toggleReactionOp(id, null, r.emoji); }); }
+        row.appendChild(chip);
+      }
+      if (!readOnly) { const add = iconBtn(CMT_ICON_SMILE, "Add reaction", e => { e.stopPropagation(); reactionPicker.open(add, emoji => { if (emoji) toggleReactionOp(id, null, emoji); }); }); add.className = "mde-cmt-chip-add"; row.appendChild(add); }
+      return row;
+    }
+    function buildCard(c) {
+      const card = document.createElement("div"); card.className = "mde-cmt-card"; card.dataset.cid = c.id;
+      card.addEventListener("click", () => focusComment(c.id));
+      const head = document.createElement("div"); head.className = "mde-cmt-head";
+      head.appendChild(buildAvatar(c.authorName, c.authorId));
+      const meta = document.createElement("div"); meta.className = "mde-cmt-meta";
+      const nm = document.createElement("div"); nm.className = "mde-cmt-author"; nm.textContent = c.authorName || "Someone";
+      const tm = document.createElement("div"); tm.className = "mde-cmt-time"; tm.textContent = fmtCmtTime(c.ts);
+      meta.appendChild(nm); meta.appendChild(tm); head.appendChild(meta);
+      if (!readOnly) {
+        const actions = document.createElement("div"); actions.className = "mde-cmt-actions";
+        const resolve = iconBtn(CMT_ICON_CHECK, "Resolve", e => { e.stopPropagation(); setCommentState(c.id, "r"); }); resolve.className = "mde-cmt-act";
+        const del = iconBtn(CMT_ICON_TRASH, "Delete", e => { e.stopPropagation(); deleteCommentOp(c.id); }); del.className = "mde-cmt-act danger";
+        actions.appendChild(resolve); actions.appendChild(del); head.appendChild(actions);
+      }
+      card.appendChild(head);
+      const body = document.createElement("div"); body.className = "mde-cmt-body"; body.innerHTML = commentBodyHtml(c.body);
+      card.appendChild(body);
+      const rs = getCmtModel().reactions.filter(r => r.id === c.id && r.users.length);
+      if (rs.length || !readOnly) card.appendChild(buildChipRow(c.id));
+      return card;
+    }
+    function buildChipCard(id) {
+      const card = document.createElement("div"); card.className = "mde-cmt-card mde-cmt-card-react"; card.dataset.cid = id;
+      card.addEventListener("click", () => focusComment(id));
+      card.appendChild(buildChipRow(id));
+      return card;
+    }
+    function buildBubble(id, kind, data) {
+      const b = document.createElement("button"); b.type = "button"; b.className = "mde-cmt-bubble"; b.dataset.cid = id;
+      if (kind === "comment") b.appendChild(buildAvatar(data.authorName, data.authorId));
+      else { const e = document.createElement("span"); e.className = "mde-cmt-bubble-e"; e.textContent = data; b.appendChild(e); }
+      b.addEventListener("click", () => { setCommentsCollapsed(false); focusComment(id); });
+      return b;
+    }
+    function renderCmtRail() {
+      ensureCmtRoot(); if (!cmtRoot) return;
+      const m = getCmtModel();
+      cmtRailEl.innerHTML = ""; cmtStripEl.innerHTML = "";
+      const openComments = m.comments.filter(c => c.state === "o" && m.anchors.has(c.id));
+      const commentIds = new Set(openComments.map(c => c.id));
+      for (const c of openComments) { cmtRailEl.appendChild(buildCard(c)); cmtStripEl.appendChild(buildBubble(c.id, "comment", c)); }
+      const seen = new Set();
+      for (const r of m.reactions) {
+        if (!r.users.length || !m.anchors.has(r.id) || commentIds.has(r.id) || seen.has(r.id)) continue;
+        seen.add(r.id);
+        cmtRailEl.appendChild(buildChipCard(r.id));
+        cmtStripEl.appendChild(buildBubble(r.id, "react", r.emoji));
+      }
+      cmtRoot.classList.toggle("empty", !cmtRailEl.children.length);
+      positionCmtRail();
+    }
+    function positionCmtRail() {
+      if (!cmtRoot) return;
+      placeCmtRoot();
+      const m = getCmtModel();
+      const rootTop = cmtRoot.getBoundingClientRect().top;
+      const yOf = id => { const a = m.anchors.get(id); if (!a || !a.length) return null; const r = rectForOffset(a[0].a); return r ? r.top : null; };
+      const stack = (container, gap, minH) => {
+        const items = Array.prototype.map.call(container.children, el => ({ el, y: yOf(el.dataset.cid) })).filter(x => x.y != null);
+        items.sort((a, b) => a.y - b.y);
+        let prev = 6;
+        for (const it of items) { const top = Math.max(it.y - rootTop, prev); it.el.style.top = top + "px"; prev = top + (it.el.offsetHeight || minH) + gap; }
+      };
+      stack(cmtRailEl, 10, 44);
+      stack(cmtStripEl, 6, 28);
+    }
+    function repaintFocus() {
+      for (const lf of leaves) if (lf.el.classList && lf.el.classList.contains("mde-cmt-hl")) {
+        const ids = (lf.el.dataset.cmt || "").split(" ");
+        lf.el.classList.toggle("mde-cmt-hl-focus", cmtFocusId != null && ids.indexOf(cmtFocusId) >= 0);
+      }
+    }
+    function focusComment(id) {
+      cmtFocusId = id;
+      if (cmtCollapsed) setCommentsCollapsed(false);
+      const m = getCmtModel(); const a = m.anchors.get(id);
+      if (a && a.length) { const blk = blocks.find(b => a[0].a >= b.s && a[0].a <= b.e); if (blk && blk.el.scrollIntoView) blk.el.scrollIntoView({ behavior: "smooth", block: "center" }); }
+      if (cmtRailEl) for (const el of cmtRailEl.children) el.classList.toggle("focused", el.dataset.cid === id);
+      repaintFocus();
+      return true;
+    }
+    function setCommentsCollapsed(v) {
+      cmtCollapsed = !!v;
+      try { localStorage.setItem("mde-cmt-collapsed", cmtCollapsed ? "1" : "0"); } catch (_) {}
+      if (cmtRoot) { cmtRoot.classList.toggle("collapsed", cmtCollapsed); positionCmtRail(); }
+    }
+    // the root is pointer-events:none (so clicks pass through the gutter), which means CSS :hover
+    // never fires on it — track the cursor and light up the divider + chevron whenever it's right
+    // of the rail's inner edge (in the rail's vertical band).
+    let cmtHoverRaf = 0;
+    function cmtHoverAt(x, y) {
+      if (!cmtRoot || cmtRoot.classList.contains("empty")) return;
+      const rr = cmtRoot.getBoundingClientRect();
+      const active = cmtRoot.classList.contains("collapsed") ? cmtStripEl : cmtRailEl;
+      if (!active) return;
+      const ar = active.getBoundingClientRect();
+      const on = y >= rr.top && y <= rr.bottom && x >= ar.left - 6 && x <= rr.right + 8;
+      cmtRoot.classList.toggle("hovering", on);
+    }
+
+    // ---- selection pill (add comment / add reaction) ----
+    function ensurePill() {
+      if (cmtPill) return cmtPill;
+      cmtPill = document.createElement("div"); cmtPill.className = "mde-cmt-pill"; cmtPill.setAttribute("contenteditable", "false");
+      const cb = iconBtn(CMT_ICON_COMMENT, "Add comment", e => { e.preventDefault(); e.stopPropagation(); openComposer(); });
+      const rb = iconBtn(CMT_ICON_SMILE, "Add reaction", e => { e.preventDefault(); e.stopPropagation(); const sel = pillSel.slice(); hidePill(); reactionPicker.open(rb, emoji => { if (emoji) { const id = toggleReactionOp(sel[0], sel[1], emoji); if (id) cmtFocusId = id; } }); });
+      cmtPill.appendChild(cb); cmtPill.appendChild(rb);
+      cmtPill.addEventListener("mousedown", e => e.preventDefault());
+      document.body.appendChild(cmtPill);
+      return cmtPill;
+    }
+    function hidePill() { if (cmtPill) cmtPill.classList.remove("open"); }
+    function cmtSelRefresh() {
+      if (!commentsEnabled || readOnly) { hidePill(); return; }
+      if (selB <= selA || selInCell()) { hidePill(); return; }
+      const rect = rectForOffset(selB); if (!rect) { hidePill(); return; }
+      pillSel = [selA, selB];
+      const p = ensurePill(); p.classList.add("open");
+      const pr = p.getBoundingClientRect(), M = 6;
+      // Google-Docs style: dock in the right margin, vertically centered on the selection —
+      // out of the reading column, where the comment will land. Fall back beside the selection
+      // if there's no room (a narrow host).
+      const sr = stage ? stage.getBoundingClientRect() : { right: window.innerWidth };
+      const surfR = surface.getBoundingClientRect();
+      let left = sr.right - pr.width - 14;
+      if (left < surfR.right + 6) left = Math.min(rect.right + 8, window.innerWidth - pr.width - M);
+      left = Math.max(M, left);
+      let top = Math.max(M, Math.min((rect.top + rect.bottom) / 2 - pr.height / 2, window.innerHeight - pr.height - M));
+      p.style.left = left + "px"; p.style.top = top + "px";
+    }
+    function positionFloating(el, rect) {
+      if (!rect) { el.style.left = "50%"; el.style.top = "20%"; return; }
+      const pr = el.getBoundingClientRect(), M = 8;
+      let left = rect.right + 10; if (left + pr.width > window.innerWidth - M) left = Math.max(M, rect.left - pr.width - 10);
+      let top = Math.max(M, Math.min(rect.top - 4, window.innerHeight - pr.height - M));
+      el.style.left = left + "px"; el.style.top = top + "px";
+    }
+    function closeComposer() { if (cmtComposer) cmtComposer.classList.remove("open"); }
+    function openComposer() {
+      hidePill(); const sel = pillSel.slice();
+      if (!cmtComposer) { cmtComposer = document.createElement("div"); cmtComposer.className = "mde-cmt-composer"; cmtComposer.setAttribute("contenteditable", "false"); cmtComposer.addEventListener("mousedown", e => e.stopPropagation()); document.body.appendChild(cmtComposer); }
+      cmtComposer.innerHTML = "";
+      const head = document.createElement("div"); head.className = "mde-cmt-head";
+      head.appendChild(buildAvatar(cmtUser.name, cmtUser.id));
+      const nm = document.createElement("div"); nm.className = "mde-cmt-author"; nm.textContent = cmtUser.name; head.appendChild(nm);
+      cmtComposer.appendChild(head);
+      const ta = document.createElement("textarea"); ta.className = "mde-cmt-input"; ta.rows = 2; ta.placeholder = "Add a comment…"; ta.spellcheck = true;
+      cmtComposer.appendChild(ta);
+      const acts = document.createElement("div"); acts.className = "mde-cmt-composer-acts";
+      const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "mde-cmt-btn-ghost"; cancel.textContent = "Cancel"; cancel.addEventListener("click", closeComposer);
+      const submit = document.createElement("button"); submit.type = "button"; submit.className = "mde-cmt-btn"; submit.textContent = "Comment";
+      const commit = () => { const body = ta.value.trim(); closeComposer(); if (!body) return; const id = addCommentOp(sel[0], sel[1], body); if (id) cmtFocusId = id; };
+      submit.addEventListener("click", commit);
+      ta.addEventListener("keydown", e => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); commit(); } else if (e.key === "Escape") { e.preventDefault(); closeComposer(); } });
+      acts.appendChild(cancel); acts.appendChild(submit); cmtComposer.appendChild(acts);
+      cmtComposer.classList.add("open");
+      positionFloating(cmtComposer, rectForOffset(sel[1]) || rectForOffset(sel[0]));
+      ta.focus();
+    }
+    if (commentsEnabled) {
+      surface.addEventListener("click", e => {
+        const hl = e.target && e.target.closest && e.target.closest("[data-cmt]");
+        if (hl) { const id = (hl.dataset.cmt || "").split(" ")[0]; if (id) focusComment(id); }
+      });
+      document.addEventListener("mousedown", e => {
+        if (cmtPill && cmtPill.classList.contains("open") && !cmtPill.contains(e.target) && !surface.contains(e.target)) hidePill();
+        if (cmtComposer && cmtComposer.classList.contains("open") && !cmtComposer.contains(e.target) && !surface.contains(e.target)) closeComposer();
+        if (reactionPicker && reactionPicker.isOpen() && !reactionPicker.el.contains(e.target)) reactionPicker.close();
+      }, true);
+      document.addEventListener("keydown", e => { if (e.key === "Escape") { hidePill(); closeComposer(); if (reactionPicker) reactionPicker.close(); } });
+      if (stage) stage.addEventListener("scroll", hidePill);
+      document.addEventListener("mousemove", e => { if (!cmtRoot || cmtHoverRaf) return; const x = e.clientX, y = e.clientY; cmtHoverRaf = requestAnimationFrame(() => { cmtHoverRaf = 0; cmtHoverAt(x, y); }); }, { passive: true });
+    }
+
+    /* ======================================================================
        DOCS-TOC — table of contents. A right-docked panel listing the doc's
        H1/H2 headings (nested), with live search, scroll-spy active-tracking,
        click-to-scroll, and collapsible H1 groups. Self-contained: a floating
@@ -2586,6 +3338,33 @@
     let tocRoot = null, tocBtn = null, tocPanel = null, tocList = null, tocSearch = null;
     let tocOpen = false, headings = [], tocActive = -1, tocRaf = 0, tocLock = 0;
     const tocCollapsed = new Set();   // keyed by H1 title — survives re-renders
+    // Outline listeners power the merged Tabs+Headings rail (makeTabs): they let a host render the
+    // active tab's outline + scroll-spy WITHOUT the right-docked TOC panel. The scroll/resize spy is
+    // wired independently of buildTocDom (which only runs when the panel is on), so forwarding
+    // toc:false never leaves the spy dead or gotoHeading indexing a stale list.
+    const outlineListeners = [], activeHeadingListeners = [];
+    let outlineHash = "", headingReflowWired = false, hlRaf = 0;
+    function setActiveHeading(idx) {
+      if (idx === tocActive) return;
+      tocActive = idx; markTocActive(idx);
+      for (let i = 0; i < activeHeadingListeners.length; i++) { try { activeHeadingListeners[i](idx); } catch (_) {} }
+    }
+    function wireHeadingReflow() {
+      if (headingReflowWired) return; headingReflowWired = true;
+      const h = () => { if (hlRaf) return; hlRaf = requestAnimationFrame(() => { hlRaf = 0; updateTocActive(); }); };
+      window.addEventListener("scroll", h, true);
+      window.addEventListener("resize", h);
+    }
+    // render-tail hook: recompute headings, notify outline listeners on a structural change, refresh
+    // the active heading. Inert (early return) until an outline/active-heading listener registers.
+    function notifyOutline() {
+      if (!outlineListeners.length && !activeHeadingListeners.length) return;
+      headings = collectHeadings();
+      const h = headings.map(x => x.level + ":" + x.title).join("\n");
+      if (h !== outlineHash) { outlineHash = h; for (let i = 0; i < outlineListeners.length; i++) { try { outlineListeners[i](); } catch (_) {} } }
+      updateTocActive();
+    }
+    outlineRefresh = notifyOutline;
 
     // Pull H1/H2 headings (in document order) straight from the rendered blocks;
     // each carries its live block element as the scroll target + clean title text.
@@ -2708,7 +3487,7 @@
       h.el.scrollIntoView({ behavior: "smooth", block: "start" });
       // a click wins over scroll-spy until the smooth scroll settles (a heading
       // near the doc end can't reach the top, so the fold would mis-highlight it)
-      tocLock = performance.now() + 700; tocActive = idx; markTocActive(idx);
+      tocLock = performance.now() + 700; tocActive = -1; setActiveHeading(idx);
     }
     function markTocActive(idx) {
       if (!tocList) return;
@@ -2717,7 +3496,10 @@
     // is the active scroller (window or the internal stage) at its bottom?
     function tocAtBottom() {
       const d = document.documentElement;
-      if (window.innerHeight + window.scrollY >= d.scrollHeight - 4) return true;
+      // only "at bottom" if the surface is ACTUALLY scrollable and scrolled to the end — a short
+      // doc that fits without scrolling is at the TOP, not the bottom (else the outline would
+      // spuriously mark the LAST heading active on load; the stage branch already guards this way).
+      if (d.scrollHeight - window.innerHeight > 4 && window.innerHeight + window.scrollY >= d.scrollHeight - 4) return true;
       if (stage && stage.scrollHeight - stage.clientHeight > 4 && stage.scrollTop + stage.clientHeight >= stage.scrollHeight - 4) return true;
       return false;
     }
@@ -2725,14 +3507,14 @@
     // at the very bottom the last heading wins (it may never reach the top), and a
     // recent click holds its target.
     function updateTocActive() {
-      if (!tocOpen || !headings.length || !stage || performance.now() < tocLock) return;
+      if ((!tocOpen && !activeHeadingListeners.length) || !headings.length || !stage || performance.now() < tocLock) return;
       const top = stage.getBoundingClientRect().top + 64;
       let act = 0;
       for (let i = 0; i < headings.length; i++) {
         if (headings[i].el.getBoundingClientRect().top <= top) act = i; else break;
       }
       if (tocAtBottom()) act = headings.length - 1;
-      if (act !== tocActive) { tocActive = act; markTocActive(act); }
+      setActiveHeading(act);
     }
     function refreshTOC() { headings = collectHeadings(); renderTocList(); updateTocActive(); }
 
@@ -3464,6 +4246,13 @@
       // DOCS-TOC — table of contents (H1/H2). Hide the built-in button with opts.tocButton:false
       // and drive it from a host toolbar via these.
       toggleTOC, openTOC, closeTOC, isTOCOpen, refreshTOC,
+      /* ---- outline (H1/H2) for a host-rendered sidebar, e.g. the merged Tabs+Headings rail ----
+         getOutline() → [{level,title}] · onOutlineChange(cb)/onActiveHeadingChange(cb) → unsubscribe
+         · gotoHeading(idx) scroll-to. Works with the TOC panel off (opts.toc:false). */
+      getOutline() { headings = collectHeadings(); return headings.map(h => ({ level: h.level, title: h.title })); },
+      onOutlineChange(cb) { if (typeof cb !== "function") return function () {}; outlineListeners.push(cb); wireHeadingReflow(); headings = collectHeadings(); outlineHash = ""; return function () { const i = outlineListeners.indexOf(cb); if (i >= 0) outlineListeners.splice(i, 1); }; },
+      onActiveHeadingChange(cb) { if (typeof cb !== "function") return function () {}; activeHeadingListeners.push(cb); wireHeadingReflow(); return function () { const i = activeHeadingListeners.indexOf(cb); if (i >= 0) activeHeadingListeners.splice(i, 1); }; },
+      gotoHeading(idx) { gotoHeading(idx | 0); },
       // Fade the floating TOC button + word-count pill out of the way (e.g. while a host
       // overlay/drawer covers the editor) — they live on body-mounted roots the host can't reach.
       setTocButtonHidden(b) { if (tocRoot) tocRoot.classList.toggle("rail-open", !!b); if (wcRoot) wcRoot.classList.toggle("rail-open", !!b); },
@@ -3506,6 +4295,25 @@
       setSelection(a, b) { setCaret(Math.max(0, Math.min(a | 0, text.length)), b == null ? null : Math.max(0, Math.min(b | 0, text.length))); },
       // formats active at the caret/selection: {b, em, del, code, u, h, li, ol, task, bq}
       getFormats() { return caretFormats(); },
+      /* ---- side comments + emoji reactions (opts.comments) ----
+         getComments() → { comments:[{id,state,authorId,authorName,ts,body,from,to,quote}],
+                           reactions:[{id,emoji,users:[{id,name,ts}],from,to}] } (offsets volatile)
+         addComment(a,b,body) · resolveComment(id) · reopenComment(id) · deleteComment(id)
+         toggleReaction(a,b,emoji) — a,b a source range OR (id,null,emoji) an existing anchor
+         focusComment(id) · setCommentsCollapsed(v) · onCommentsChange(cb) → unsubscribe
+         setUser({id,name,color}) — update the authoring identity after construction */
+      getComments: apiGetComments,
+      addComment(a, b, body) { return addCommentOp(a, b, body); },
+      resolveComment(id) { return setCommentState(id, "r"); },
+      reopenComment(id) { return setCommentState(id, "o"); },
+      deleteComment(id) { return deleteCommentOp(id); },
+      toggleReaction(a, b, emoji) { return toggleReactionOp(a, b, emoji); },
+      focusComment(id) { return commentsEnabled ? focusComment(id) : false; },
+      setCommentsCollapsed(v) { if (commentsEnabled) setCommentsCollapsed(v); },
+      onCommentsChange(cb) { if (typeof cb !== "function") return function () {}; commentListeners.push(cb); return function () { const i = commentListeners.indexOf(cb); if (i >= 0) commentListeners.splice(i, 1); }; },
+      // a collab binding maps this to Y.UndoManager.stopCapturing() so quick discrete comment ops stay separate undos
+      onBeforeDiscreteOp(cb) { if (typeof cb !== "function") return function () {}; discreteOpListeners.push(cb); return function () { const i = discreteOpListeners.indexOf(cb); if (i >= 0) discreteOpListeners.splice(i, 1); }; },
+      setUser(u) { cmtUser = normCmtUser(u); },
     };
   }
 
@@ -3552,6 +4360,11 @@
     const tabsState = [];       // [{ id, title, emoji, dim }] — id is the host's stable slug
     let activeId = null, loading = false, renaming = null;
     const tabMenuEnabled = opts.tabMenu !== false;
+    // Merged Tabs+Headings rail: the active tab's outline nests under it, and the editor's
+    // right-docked TOC panel is turned OFF (its logic is reused via ed.onOutlineChange). Opt out
+    // with outline:false to keep the legacy floating TOC panel (bare-editor hosts are unaffected).
+    const outlineEnabled = opts.outline !== false;
+    const OUTLINE_TWIST = '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
 
     const TABS_PANEL_ICON = '<svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/></svg>';
     const TABS_PLUS_ICON  = '<svg viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"/></svg>';
@@ -3605,29 +4418,51 @@
     surface.setAttribute("contenteditable", opts.readOnly ? "false" : "true");
     surface.setAttribute("spellcheck", "true");
     stage.appendChild(surface);
-    container.appendChild(rail);
-    container.appendChild(reveal);
-    container.appendChild(stage);
     // mobile overlay-drawer backdrop — inert/hidden on desktop, shown via the @container rule
     const scrim = document.createElement("div"); scrim.className = "mde-tab-scrim";
     scrim.addEventListener("click", () => setCollapsed(true));
-    container.appendChild(scrim);
+    // When the engine paints its own formatting toolbar (opts.toolbar), the rail + stage live in an
+    // inner ROW and the toolbar is hoisted to span the FULL width ABOVE it (done after makeEditor
+    // builds the bar) — so toggling the left rail never shifts the toolbar (no moving clickable UI),
+    // and the drawer/scrim cover only the doc area below the bar. Hosts without the engine toolbar
+    // (e.g. Helthy paints its own) keep the plain flat row — zero layout change for them.
+    const usesTopbar = !!opts.toolbar;
+    const rowHost = usesTopbar ? document.createElement("div") : container;
+    if (usesTopbar) { rowHost.className = "mde-tab-row"; container.classList.add("mde-has-topbar"); }
+    rowHost.appendChild(rail);
+    rowHost.appendChild(reveal);
+    rowHost.appendChild(stage);
+    rowHost.appendChild(scrim);
+    if (usesTopbar) container.appendChild(rowHost);
     container.classList.toggle("railcollapsed", collapsed);
 
     const ed = makeEditor(surface, {
       people: opts.people || [],
       atCommands: opts.atCommands,           // forward host @ commands (easter-egg entries)
-      toc: opts.toc,
-      tocButton: opts.tocButton,
+      // With the merged outline on (default), the right-docked TOC panel is off — headings live in
+      // the LEFT rail instead. outline:false restores the host-passed TOC forwarding (legacy).
+      toc: outlineEnabled ? false : opts.toc,
+      tocButton: outlineEnabled ? false : opts.tocButton,
       toolbar: opts.toolbar,                 // forward the Docs-style formatting bar
       imageUpload: opts.imageUpload,         // forward the image hooks
       resolveImageSrc: opts.resolveImageSrc,
       acceptMarkdown: opts.acceptMarkdown,   // forward the markdown-demotion toggle (else the editor reads its persisted per-user pref)
       readOnly: opts.readOnly,               // render-only viewer: no caret-reveal, no mutating affordances
+      comments: opts.comments,               // forward side comments + reactions
+      user: opts.user,                       // authoring identity for comments/reactions
+      resolveAvatar: opts.resolveAvatar,
       scrollParent: stage,
       onInput: function () { if (!loading && opts.onTabInput) opts.onTabInput(activeId); },
       onSave:  function () { if (opts.onTabSave) opts.onTabSave(activeId); },
     });
+
+    // Hoist the just-built formatting bar to span the full container width, ABOVE the rail+stage row.
+    if (usesTopbar) { const bar = stage.querySelector(":scope > .mde-toolbar"); if (bar) container.insertBefore(bar, rowHost); }
+
+    // Merged-rail wiring: outline redraws only its own sub-DOM (not the whole rail), scroll-spy is
+    // a class toggle, and the active tab's comment badge tracks the live editor.
+    if (outlineEnabled) { ed.onOutlineChange(renderOutline); ed.onActiveHeadingChange(markActiveHeading); }
+    if (opts.comments) ed.onCommentsChange(updateActiveBadge);
 
     // collapsing/expanding changes the stage width — nudge any body-mounted
     // overlays (the TOC panel tracks the stage rect) to reposition.
@@ -3676,6 +4511,14 @@
         label.textContent = t.title || "Untitled";
         el.appendChild(label);
 
+        // open-comment count badge (hidden at 0). The active tab self-updates live via
+        // ed.onCommentsChange; inactive tabs are the host's job (tabs.setCommentCount).
+        const badge = document.createElement("span");
+        badge.className = "mde-tab-badge";
+        const n = (t.id === activeId && outlineEnabled) ? activeCommentCount() : (t.comments || 0);
+        if (n > 0) badge.textContent = n; else badge.style.display = "none";
+        el.appendChild(badge);
+
         if (tabMenuEnabled) {
           const kebab = document.createElement("button");
           kebab.type = "button"; kebab.className = "mde-tab-kebab";
@@ -3694,6 +4537,14 @@
           el.addEventListener("dblclick", function (e) { e.preventDefault(); beginRename(t, label); });
         if (opts.onReorder) wireDrag(el, t);
         railList.appendChild(el);
+
+        // the active tab's outline nests directly beneath its row (separately-owned sub-DOM,
+        // so heading/scroll updates never trigger a full renderRail — which would close menus)
+        if (outlineEnabled && t.id === activeId) {
+          const outline = document.createElement("div"); outline.className = "mde-tab-outline";
+          railList.appendChild(outline);
+          renderOutline();
+        }
       }
       if (!tabsState.length) {
         const empty = document.createElement("div");
@@ -3701,6 +4552,36 @@
         empty.textContent = opts.emptyLabel || "No documents yet";
         railList.appendChild(empty);
       }
+    }
+    function activeCommentCount() { try { return MarkdownEditor.countComments(ed.getText()); } catch (_) { return 0; } }
+    // fill the active tab's .mde-tab-outline from the editor's live outline (H2 nested under H1)
+    function renderOutline() {
+      if (!outlineEnabled) return;
+      const box = railList.querySelector(".mde-tab-outline"); if (!box) return;
+      box.innerHTML = "";
+      const hs = ed.getOutline();
+      let curKids = null;
+      hs.forEach((h, i) => {
+        const link = document.createElement("button");
+        link.type = "button"; link.className = "mde-tab-hlink lvl" + h.level; link.dataset.idx = i;
+        link.textContent = h.title;
+        link.addEventListener("click", e => { e.preventDefault(); ed.gotoHeading(i); });
+        if (h.level === 1) { box.appendChild(link); curKids = null; }
+        else box.appendChild(link);
+      });
+      markActiveHeading(lastActiveHeading);
+    }
+    let lastActiveHeading = -1;
+    function markActiveHeading(idx) {
+      lastActiveHeading = idx;
+      const box = railList.querySelector(".mde-tab-outline"); if (!box) return;
+      box.querySelectorAll(".mde-tab-hlink").forEach(el => el.classList.toggle("active", +el.dataset.idx === idx));
+    }
+    function updateActiveBadge() {
+      const n = activeCommentCount();
+      const t = tabsState.find(x => x.id === activeId); if (t) t.comments = n;   // keep the model fresh so a switch-away preserves the count
+      const row = railList.querySelector(".mde-tab.active .mde-tab-badge"); if (!row) return;
+      if (n > 0) { row.textContent = n; row.style.display = ""; } else row.style.display = "none";
     }
 
     async function selectTab(id) {
@@ -3922,17 +4803,19 @@
     const api = {
       setTabs(list, selectId) {
         tabsState.length = 0;
-        for (const t of (list || [])) tabsState.push({ id: t.id, title: t.title || "Untitled", emoji: t.emoji || "", dim: !!t.dim, deletable: t.deletable !== false });
+        for (const t of (list || [])) tabsState.push({ id: t.id, title: t.title || "Untitled", emoji: t.emoji || "", dim: !!t.dim, deletable: t.deletable !== false, comments: t.comments || 0 });
         activeId = null;
         renderRail();
         const first = selectId || (tabsState[0] && tabsState[0].id);
         if (first) selectTab(first); else { loading = true; ed.setText(""); loading = false; }
       },
       addTab(t, select) {
-        tabsState.push({ id: t.id, title: t.title || "Untitled", emoji: t.emoji || "", dim: !!t.dim, deletable: t.deletable !== false });
+        tabsState.push({ id: t.id, title: t.title || "Untitled", emoji: t.emoji || "", dim: !!t.dim, deletable: t.deletable !== false, comments: t.comments || 0 });
         renderRail();
         if (select !== false) selectTab(t.id);
       },
+      // per-tab open-comment count badge (host-driven for INACTIVE tabs; the active tab self-updates)
+      setCommentCount(id, n) { const t = tabsState.find(x => x.id === id); if (!t) return; t.comments = n | 0; if (id === activeId) updateActiveBadge(); else { const row = rowFor(id); const b = row && row.querySelector(".mde-tab-badge"); if (b) { if (t.comments > 0) { b.textContent = t.comments; b.style.display = ""; } else b.style.display = "none"; } } },
       renameTab(id, title) { const t = tabsState.find(x => x.id === id); if (t) { t.title = title; renderRail(); } },
       setEmoji(id, emoji) { const t = tabsState.find(x => x.id === id); if (t) { t.emoji = emoji || ""; renderRail(); } },
       getTabs() { return tabsState.map(t => ({ id: t.id, title: t.title, emoji: t.emoji, dim: t.dim, deletable: t.deletable })); },
@@ -3965,6 +4848,10 @@
     if (opts.tabs) api.setTabs(opts.tabs, opts.activeId);
     return api;
   }
+
+  /* Static helpers for hosts (e.g. per-tab comment badges without mounting an editor). */
+  makeEditor.countComments = function (src) { return countOpenComments(src); };   // open comments with a live anchor
+  makeEditor.stripComments = function (src) { return stripCmtSyntax(src); };       // remove all comment/reaction syntax
 
   /* Expose for "files" consumers that load this as a standalone <script>.
      Harmless when inline-injected into a host IIFE (just sets a global). */
