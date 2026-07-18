@@ -40,8 +40,8 @@ export default function PortalDataProvider({ children }) {
     }
   }, []);
 
-  // After a senior check-in, re-pull home-data so `data.senior.checkedIn` (the
-  // grant-ledger-backed flag) reflects the new grant immediately, instead of
+  // After a senior check-in, re-pull home-data so `data.senior.checkedInThisWeek`
+  // (and the fresh grant) reflect the new submission immediately, instead of
   // waiting for the next full layout mount.
   const refreshHome = useCallback(async () => {
     try {

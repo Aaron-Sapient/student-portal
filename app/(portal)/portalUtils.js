@@ -62,7 +62,10 @@ export function hasBookingAvailable(data) {
 // True when this week's check-in is still outstanding.
 export function hasCheckinDue(data) {
   if (!data) return false;
-  // Seniors have a single weekly check-in (recorded in AY → data.lastCheckin).
-  if (data.senior) return !data.senior.checkedIn;
+  // Seniors have a single weekly check-in. Nudge on the WEEKLY signal
+  // (checkedInThisWeek, the current Saturday-week), NOT hasGrant — a grant carried
+  // from last week must not suppress this week's nudge (which is what let the badge
+  // go quiet while the weekly reminder still emailed). See home-data seniorContext.
+  if (data.senior) return !data.senior.checkedInThisWeek;
   return !checkedInThisWeek(data.lastCheckin) || !checkedInThisWeek(data.aaronLastCheckin);
 }

@@ -107,7 +107,7 @@ export default function CheckInsPage() {
             icon={GraduationCap}
             name="Weekly check-in"
             role="Unlocks this week’s meetings"
-            done={data?.senior?.checkedIn}
+            done={data?.senior?.checkedInThisWeek}
             loading={loading}
             delay={80}
           />

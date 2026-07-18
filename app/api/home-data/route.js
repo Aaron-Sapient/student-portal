@@ -9,6 +9,7 @@ import {
   getSeniorBySheetId,
   loadSeniorBookingState,
   seniorBookingPlan,
+  checkedInThisWeek,
 } from '@/lib/seniors'
 import { projectMeetingCards } from '@/lib/projectMeetings'
 import { getSessionLog } from '@/lib/meetings'
@@ -281,15 +282,30 @@ if (isART) {
       crossOwed: plan.crossOwed,
       crossDone: plan.crossDone,
       remaining: plan.remaining,
-      // Whether the senior has anything unlocked to book, per the Supabase grant
-      // ledger (the actual booking authority) — NOT the Sheets AY timestamp
-      // compared against the literal current week. A grant is spendable across
-      // the current OR next Saturday-week (see seniorsCore.js), so a senior who
-      // checked in last week can still have a live grant (and an owed phase-week
-      // cross-meeting) this week without having re-submitted the form today; the
-      // old AY-based check read that as "not checked in" and walled off the
-      // meeting cards behind a false "check in to unlock" gate.
-      checkedIn: plan.hasGrant,
+      // TWO distinct signals — do NOT re-conflate them (they answer different
+      // questions and diverge by design):
+      //   hasGrant          = "is booking unlocked?" — the Supabase grant ledger,
+      //                       the actual booking authority. A grant is spendable
+      //                       across the current OR next Saturday-week
+      //                       (seniorsCore.js grantWindow), so a senior who
+      //                       checked in last week still has a live grant (and any
+      //                       owed phase-week cross-meeting) this week. The
+      //                       meetings page gates its bookable cards on THIS, so a
+      //                       carried grant isn't walled behind "check in to unlock".
+      //   checkedInThisWeek = "do you still owe THIS Saturday-week's check-in?" —
+      //                       the raw AY timestamp vs the current Saturday-week,
+      //                       LA-pinned (timezone-safe). The check-in FORM gate,
+      //                       the /check-ins card, and the dock nudge read THIS, so
+      //                       a carried 2-week grant does NOT suppress next week's
+      //                       check-in. (Collapsing both into hasGrant — the 7/8
+      //                       ecabc3a/a90179f fix — let a Saturday check-in's grant
+      //                       block the following week's check-in while the weekly
+      //                       reminder still nagged: same signal, opposite answers.)
+      //                       The reminder GAS uses a rolling-7-day window (not this
+      //                       Saturday-week); they agree in the common case incl.
+      //                       that bug, and late-week boundary diffs are benign.
+      hasGrant: plan.hasGrant,
+      checkedInThisWeek: checkedInThisWeek(studentRow[50], nowLA),
     }
   }
 

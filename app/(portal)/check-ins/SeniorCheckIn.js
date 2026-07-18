@@ -100,13 +100,16 @@ export default function SeniorCheckIn() {
 
   useEffect(() => {
     if (portalLoading) return;
-    // Same grant-ledger-backed flag the Meetings page and the /check-ins card
-    // trust (see app/api/home-data's seniorContext.checkedIn) — NOT a second,
-    // looser re-derivation from the raw Sheet AY timestamp. A grant is
-    // spendable across the current OR next Saturday-week, so this can be
-    // true even when today isn't in the same calendar week as the last
-    // submission.
-    if (portalData?.senior?.checkedIn) {
+    // "Have you checked in THIS Saturday-week?" — the weekly signal (raw AY vs the
+    // current Saturday-week, LA-pinned server-side in home-data). NOT hasGrant: a
+    // check-in grant is spendable across the current OR next Saturday-week, so keying
+    // the form gate on the grant let a Saturday check-in block the FOLLOWING week's
+    // check-in — even while the weekly reminder correctly nagged for it (Vaibhav
+    // Gaddam, 7/17). Booking-unlock stays grant-based on the Meetings page
+    // (senior.hasGrant); this gate is purely "do you owe this week's form". (The
+    // reminder GAS uses a rolling-7-day window, not this Saturday-week — they agree
+    // in the common case incl. this bug; late-week boundary diffs are benign.)
+    if (portalData?.senior?.checkedInThisWeek) {
       setStatus('done');
       return;
     }

@@ -329,9 +329,12 @@ function SeniorBookSection({ data, loading }) {
   const s = data.senior;
   const oneoffs = s.oneoffs || [];
 
-  // Gate 1 — the weekly check-in must be in before the weekly meetings are bookable.
-  // A one-off grant is a SEPARATE track, so it still shows here even with no check-in.
-  if (!s.checkedIn) {
+  // Gate 1 — booking is unlocked by a live grant (which carries across the current
+  // OR next Saturday-week by design), NOT by "did you check in THIS week". Read
+  // hasGrant so a carried grant keeps its bookable cards visible; s.checkedInThisWeek
+  // (weekly) drives the check-in FORM/card/nudge instead. A one-off grant is a
+  // SEPARATE track, so it still shows here even with no active weekly grant.
+  if (!s.hasGrant) {
     return (
       <div className="space-y-7">
         <SeniorBanner s={s} />
