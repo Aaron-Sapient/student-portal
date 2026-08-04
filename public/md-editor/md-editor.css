@@ -59,6 +59,16 @@
   /* the editing surface — base font/size/color honor the per-document %%doc:…%% styles
      (--mde-doc-*) and the per-user zoom (--mde-zoom), both set by JS on the surface. */
   .md-surface {
+    /* border-box is REQUIRED, not tidiness, and it is stated here because the hosts disagree:
+       Helthy HQ and AP-Counseling ship `* { box-sizing: border-box }`, student-portal inherits it
+       from Tailwind's preflight, but app/editor.html and demo.html have no reset at all — so the
+       surface was content-box in exactly the two places the ruler is used most. Under content-box,
+       side padding does not narrow the text column, it WIDENS the element past the stage: measured
+       at a 1400px stage with max-width 860px and 10% side padding, the border box grew to 1140px
+       and the measure stayed 860px, with a horizontal scrollbar to show for it. Safe to set: the
+       other three hosts are already border-box, and neither app/editor.html nor demo.html puts any
+       horizontal padding on the surface, so with no side padding the two models agree exactly. */
+    box-sizing: border-box;
     outline: none; font-family: var(--mde-doc-font, var(--mde-sans));
     font-size: calc(var(--mde-doc-size, 16.5px) * var(--mde-zoom, 1)); line-height: var(--mde-doc-lh, 1.7);
     color: var(--mde-doc-ink, var(--mde-ink)); caret-color: var(--mde-green); -webkit-font-smoothing: antialiased;
@@ -95,7 +105,7 @@
     left: calc(var(--li-depth, 0) * 1.5em); width: 1.35em; text-align: right;
     color: var(--mde-green-soft); font-weight: 700;
   }
-  .md-surface .ln.ol::before { font-family: var(--mde-mono); font-size: .9em; font-weight: 600; }
+  .md-surface .ln.ol::before { font-family: var(--mde-mono); font-weight: 600; }
 
   /* checklist items — "- [ ] " renders as a real clickable checkbox (source stays hidden) */
   .md-surface .ln.task::before { content: none; }
@@ -253,6 +263,10 @@
   .at-lab { font-size: 14px; font-weight: 500; color: var(--mde-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .at-sub { font-size: 12px; color: var(--mde-ink-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .at-empty { padding: 14px 12px; font-size: 13px; color: var(--mde-ink-faint); text-align: center; }
+  /* "@ver" readout — a single wide card whose change-note wraps instead of truncating */
+  .at-menu.ver { width: 340px; max-width: calc(100vw - 24px); }
+  .at-menu.ver .at-lab { white-space: normal; }
+  .at-menu.ver .at-sub { white-space: normal; overflow: visible; text-overflow: clip; margin-top: 3px; line-height: 1.4; }
 
   /* ---------- table grid picker ---------- */
   .grid-pop {
@@ -264,6 +278,27 @@
   .grid-cell { width: 17px; height: 17px; border-radius: 4px; background: var(--mde-paper); box-shadow: var(--mde-clay-sink-sm); transition: background .08s, box-shadow .08s; }
   .grid-cell.on { background: var(--mde-green-soft); box-shadow: none; }
   .grid-label { text-align: center; margin-top: 12px; font-size: 13px; color: var(--mde-ink-soft); font-family: var(--mde-mono); }
+
+  /* ---------- right-click context menu (replaces the native menu inside the editor) ---------- */
+  .mde-ctx {
+    position: fixed; z-index: 320; min-width: 208px; max-width: 300px; display: none;
+    background: var(--mde-clay-card); border: 1px solid var(--mde-hairline); border-radius: 13px;
+    box-shadow: 0 16px 42px rgba(42,82,50,.20); padding: 6px; font-family: var(--mde-sans);
+    user-select: none; -webkit-user-select: none;
+  }
+  .mde-ctx.open { display: block; animation: atIn .12s var(--mde-clay-ease) both; }
+  .mde-ctx-group { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--mde-ink-faint); padding: 8px 10px 3px; }
+  .mde-ctx-sep { height: 1px; background: var(--mde-hairline); margin: 5px 6px; }
+  .mde-ctx-item { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 8px; font-size: 13.5px; color: var(--mde-ink); cursor: pointer; }
+  .mde-ctx-item.sel { background: var(--mde-leaf); color: var(--mde-green-deep); }
+  .mde-ctx-item.danger { color: var(--mde-amber); }
+  .mde-ctx-item.danger.sel { background: color-mix(in srgb, var(--mde-amber) 14%, transparent); }
+  .mde-ctx-ico { width: 18px; height: 18px; flex: none; display: grid; place-items: center; color: currentColor; font-size: 13px; font-weight: 700; }
+  .mde-ctx-ico svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .mde-ctx-ico b, .mde-ctx-ico i, .mde-ctx-ico u, .mde-ctx-ico s { font-size: 14px; }
+  .mde-ctx-t { flex: 1; min-width: 0; white-space: nowrap; }
+  .mde-ctx-chk { width: 16px; flex: none; color: var(--mde-green); display: grid; place-items: center; }
+  .mde-ctx-chk svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 
   /* ---------- tables (house style) ---------- */
   .md-surface .mtable-wrap { position: relative; margin: .7em 0; }
@@ -278,7 +313,7 @@
   .md-surface .mtable th:last-child, .md-surface .mtable td:last-child { border-right: none; }
   .md-surface .mtable tbody tr:last-child td { border-bottom: none; }
   .md-surface .mtable thead th {
-    background: var(--mde-doc-thbg, var(--mde-green)); color: var(--mde-doc-thc, #fff); font-weight: 600; font-family: var(--mde-sans);
+    background: var(--mde-doc-thbg, var(--mde-green)); color: var(--mde-doc-thc, var(--mde-paper)); font-weight: 600; font-family: var(--mde-sans);
     border-bottom: none; border-right-color: rgba(255,255,255,.2);
   }
   .md-surface .mtable tbody tr:nth-child(even) td { background: var(--mde-doc-tband, color-mix(in srgb, var(--mde-leaf) 55%, var(--mde-card))); }
@@ -288,20 +323,7 @@
   .md-surface .mcell code { font-family: var(--mde-mono); font-size: .88em; background: var(--mde-leaf);
     border: 1px solid var(--mde-leaf-line); border-radius: 4px; padding: .03em .3em; }
   .md-surface .mtable thead th code { background: rgba(255,255,255,.18); border-color: rgba(255,255,255,.25); color: #fff; }
-  .md-surface .mtable-tools {
-    position: absolute; top: -13px; right: 4px; display: flex; gap: 5px; opacity: 0;
-    transition: opacity .15s; pointer-events: none;
-  }
-  .md-surface .mtable-wrap:hover .mtable-tools, .md-surface .mtable-wrap:focus-within .mtable-tools { opacity: 1; pointer-events: auto; }
-  .md-surface .mtt {
-    appearance: none; cursor: pointer; border: 0; font-family: var(--mde-sans); font-size: 11px; font-weight: 600;
-    color: var(--mde-green-deep); background: var(--mde-clay-card); border-radius: 999px; padding: 4px 10px;
-    box-shadow: var(--mde-clay-raise-sm); display: inline-flex; align-items: center; gap: 4px;
-  }
-  .md-surface .mtt:hover { color: var(--mde-green); }
-  .md-surface .mtt:active { box-shadow: var(--mde-clay-sink-sm); }
-  .md-surface .mtt.danger { color: var(--mde-amber); }
-  .md-surface .mtt svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  /* (the .mtable-tools / .mtt pill styles were removed — Row/Col/delete ops moved to the right-click menu, bug 5) */
   /* fixed layout (when columns have explicit widths) wraps long content instead of blowing out */
   .md-surface .mtable[style*="fixed"] th, .md-surface .mtable[style*="fixed"] td { overflow-wrap: anywhere; }
   /* ---------- column resize grips (overlay the column boundaries) ---------- */
@@ -315,6 +337,13 @@
   .md-surface .mwidth-grip::before { content: ""; position: absolute; left: 50%; top: 50%; height: 34px; width: 3px; transform: translate(-50%, -50%); background: transparent; border-radius: 3px; transition: background .12s; }
   .md-surface .mtable-wrap:hover .mwidth-grip::before { background: color-mix(in srgb, var(--mde-green-soft) 55%, transparent); }
   .md-surface .mwidth-grip:hover::before, .md-surface .mwidth-grip.dragging::before { background: var(--mde-green); height: 100%; }
+  /* whole-table horizontal align within the doc (visible once the table is narrower than full width) */
+  .md-surface .mtable-wrap[data-align="c"] .mtable { margin-left: auto; margin-right: auto; }
+  .md-surface .mtable-wrap[data-align="r"] .mtable { margin-left: auto; margin-right: 0; }
+  .md-surface .mtable-wrap[data-align="l"] .mtable { margin-left: 0; margin-right: auto; }
+  /* all-cells vertical align (default is top, set on .mtable th/td above) */
+  .md-surface .mtable-wrap[data-va="m"] .mtable th, .md-surface .mtable-wrap[data-va="m"] .mtable td { vertical-align: middle; }
+  .md-surface .mtable-wrap[data-va="b"] .mtable th, .md-surface .mtable-wrap[data-va="b"] .mtable td { vertical-align: bottom; }
 
   /* ---------- document tabs (MarkdownTabs wrapper) — LEFT rail, collapsible ----------
      A vertical sidebar separated from the editor by a single hairline (no shadow);
@@ -407,6 +436,48 @@
      can retune via --mde-toc-below-top, shared with the TOC button below it). */
   .mde-tab-reveal.mde-tab-reveal-below { top: var(--mde-toc-below-top, 62px); }
   .mde-tab-stage { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; }
+
+  /* ======================================================================
+     The ruler (New requests #1) — Google-Docs-style drag triangles setting
+     the document's left/right margins. Only exists in the DOM when the
+     pref turns it on, and never in a read-only view (see buildRuler).
+     z-index 52 is deliberate: .mde-toolbar is 50 (51 with a topbar), and
+     the floating TOC button is a position:fixed z-index 280 element sized
+     to the STAGE at top:7px/right:12px — i.e. exactly where the right
+     triangle sits. The bar can't be allowed to slide over the ruler on
+     scroll, and JS publishes the ruler's height into --mde-toc-below-top
+     so the TOC button and the tab-reveal handle dock BELOW it instead of
+     on top of the triangles. `top` is set inline by syncRuler (the bar's
+     measured height) because a sticky element after a sticky sibling has
+     to know that sibling's height, and the bar's is content-dependent.
+     ====================================================================== */
+  .mde-ruler { display: none; position: sticky; z-index: 52; padding: 5px 0 6px;
+    background: var(--mde-tb-bg); border-bottom: 1px solid var(--mde-tb-line); }
+  .mde-ruler.on { display: block; }
+  /* The track is the whole page box and reads as the MARGIN zone; the fill is the text column.
+     Both carry a hairline outline: the fill is paper-coloured and the page behind it is too, so
+     without an edge the strip renders as two disconnected grey stubs instead of one ruler
+     (screenshotted on demo.html before this was added). The tick marks along the bottom of the
+     fill are what make it read as a ruler rather than a progress bar. */
+  .mde-ruler-track { position: relative; height: 13px; border-radius: 3px;
+    background: color-mix(in srgb, var(--mde-ink-faint) 32%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mde-ink-faint) 50%, transparent); }
+  .mde-ruler-fill { position: absolute; top: 0; bottom: 0; left: var(--r-l, 0px); right: var(--r-r, 0px);
+    border-radius: 2px;
+    background-color: var(--mde-paper);
+    background-image: repeating-linear-gradient(to right,
+      color-mix(in srgb, var(--mde-ink-faint) 70%, transparent) 0 1px, transparent 1px 48px);
+    background-repeat: repeat-x; background-size: 48px 4px; background-position: left bottom;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mde-ink-faint) 50%, transparent); }
+  /* the Docs affordance: a downward triangle straddling the margin boundary. The paper-coloured
+     outline keeps it legible against BOTH zones, which are deliberately close in value. */
+  .mde-ruler-tri { position: absolute; top: 0; width: 15px; height: 13px; padding: 0; border: none;
+    background: var(--mde-green); cursor: ew-resize; touch-action: none;
+    clip-path: polygon(50% 100%, 0 0, 100% 0);
+    filter: drop-shadow(0 0 1px var(--mde-paper)); }
+  .mde-ruler-tri-l { left: calc(var(--r-l, 0px) - 7px); }
+  .mde-ruler-tri-r { right: calc(var(--r-r, 0px) - 7px); }
+  .mde-ruler-tri:hover, .mde-ruler-tri.dragging { background: var(--mde-green-deep); }
 
   /* per-tab kebab (⋮) — appears on hover/active, opens the options menu */
   .mde-tab-kebab {
@@ -677,7 +748,7 @@
   .mde-cmt-root.hovering .mde-cmt-rail::before, .mde-cmt-root.hovering .mde-cmt-strip::before { opacity: 1; }
 
   .mde-cmt-card {
-    position: absolute; right: 14px; width: calc(var(--mde-cmt-rail-w) - 26px); pointer-events: auto;
+    position: absolute; box-sizing: border-box; right: 14px; width: calc(var(--mde-cmt-rail-w) - 38px); pointer-events: auto;   /* border-box + reduced width: the card fits inside the rail with left clearance so the collapse chevron on the divider never overlaps it (tweak 3) */
     background: var(--mde-cmt-card-bg); border: 1px solid var(--mde-hairline); border-radius: 13px;
     box-shadow: 0 3px 12px rgba(0,0,0,.06); padding: 11px 12px 10px; cursor: default;
     transition: box-shadow .15s, border-color .15s;
@@ -699,6 +770,17 @@
   .mde-cmt-body { font-size: 13.5px; line-height: 1.5; color: var(--mde-ink); margin: 7px 0 0; word-wrap: break-word; overflow-wrap: anywhere; }
   .mde-cmt-body code { font-family: var(--mde-mono); font-size: .92em; background: var(--mde-leaf); padding: 0 .3em; border-radius: 4px; }
   .mde-cmt-body a { color: var(--mde-amber); }
+  /* inline author edit (Edit action → editable box + Save/Cancel) */
+  .mde-cmt-editwrap { margin-top: 7px; }
+  .mde-cmt-editbox { min-height: 2.2em; padding: 7px 9px; border-radius: 9px; border: 1px solid var(--mde-hairline);
+    background: var(--mde-paper); color: var(--mde-ink); font-size: 13.5px; line-height: 1.45; outline: none; word-wrap: break-word; overflow-wrap: anywhere; }
+  .mde-cmt-editbox:focus { border-color: var(--mde-green-soft); box-shadow: 0 0 0 3px color-mix(in srgb, var(--mde-green-soft) 22%, transparent); }
+  .mde-cmt-editbar { display: flex; justify-content: flex-end; gap: 6px; margin-top: 7px; }
+  .mde-cmt-editsave, .mde-cmt-editcancel { font: 600 12px var(--mde-sans); border-radius: 7px; padding: 4px 12px; cursor: pointer; border: 1px solid transparent; }
+  .mde-cmt-editcancel { background: transparent; color: var(--mde-ink-soft); border-color: var(--mde-hairline); }
+  .mde-cmt-editcancel:hover { background: var(--mde-leaf); }
+  .mde-cmt-editsave { background: var(--mde-green); color: #fff; }
+  .mde-cmt-editsave:hover { background: var(--mde-green-deep); }
 
   .mde-cmt-chiprow { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 9px; }
   .mde-cmt-card-react .mde-cmt-chiprow { margin-top: 0; }
@@ -778,8 +860,22 @@
      ====================================================================== */
   .mde-toolbar {
     position: sticky; top: var(--mde-tb-stick); z-index: 50;
-    display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none;
+    display: flex; align-items: center; justify-content: safe center; gap: 2px; overflow-x: auto; scrollbar-width: none;
     background: var(--mde-tb-bg); border-bottom: 1px solid var(--mde-tb-line);
+    /* REQUIRED, not tidiness — same trap as .md-surface above (see the box-sizing note at the top
+       of this file), and it bites in exactly the hosts .md-surface's fix was written for.
+       The mechanism is the EXPLICIT width at line 367, not flex stretch (stretch resolves the
+       border box correctly and would have been harmless): `.mde-tabs.mde-has-topbar > .mde-toolbar`
+       sets `flex: none; width: 100%`, and under content-box `width:100%` is 100% of the parent's
+       CONTENT box with this bar's own 14px side padding added on top — a border box 28px wider
+       than its container. That made the whole PAGE horizontally scrollable by 28px: a dead strip
+       to the right of the stage's vertical scrollbar. Measured in the real desktop app at a 1400px
+       viewport: toolbar width 1428 (computed `width` 1400px), documentElement.scrollWidth 1428,
+       viewport 1400; with this line, 1400/1400/0. Consumers (Helthy HQ, AP-Counseling,
+       student-portal) all ship `* { box-sizing: border-box }`, so there this is already true and
+       the line is a no-op — which is exactly why the bug only ever appeared in app/editor.html and
+       demo.html, the two hosts with no reset. Canary: test/engine/test-toolbar-box.mjs. */
+    box-sizing: border-box;
     padding: 5px 14px; margin: 0;
     /* Paint the page paper UP past the bar's top edge to cover the stage's own top
        padding — the strip a sticky child pins BELOW, where document text would otherwise
@@ -929,12 +1025,46 @@
   /* ---------- print: just the document (toolbar/panels/grips never print) ---------- */
   @media print {
     .mde-toolbar, .mde-toc-root, .mde-wc-root, .mde-tabrail, .mde-tab-reveal, .mde-tab-scrim,
-    .mde-tab-toast, .mtable-tools, .mcol-grips, .mimg-tools, .mimg-grip, .at-menu, .grid-pop,
+    .mde-tab-toast, .mcol-grips, .mimg-tools, .mimg-grip, .at-menu, .grid-pop, .mde-ctx,
     .mde-cmdpal, .mde-colorpop, .mde-ds-scrim, .mde-remote-layer,
     .mde-cmt-root, .mde-cmt-pill, .mde-cmt-composer { display: none !important; }
     .md-surface .mde-cmt-hl { background: transparent !important; }
     .md-surface { max-width: 100% !important; padding-bottom: 0 !important; }
-    .mde-tab-stage { overflow: visible !important; }
+    /* padding-right is set INLINE by the comments layer to reserve the side rail's width
+       (see cmtLayout's stage.style.paddingRight). The rail itself is display:none above, so
+       without this the print/PDF output keeps a dead band the width of the rail down the right
+       of EVERY page and the text column collapses to ~57% — on any doc with a comment. An
+       author !important beats the inline style; a plain rule would not. padding-bottom goes
+       too: it's editing-only slack (the host reserves ~120px) that can spawn a blank page.
+       BOTH side paddings go, not just the right one: a host typically sets them symmetrically
+       (the desktop app uses 28px), so zeroing only the right leaves the page visibly lopsided —
+       measured at 0.82in left vs 0.48in right before this. The page margin is owned by the
+       print context (the browser's own, or the PDF pipeline's injected body padding), so the
+       stage contributes none. */
+    .mde-tab-stage, .editor-stage { overflow: visible !important; padding-left: 0 !important; padding-right: 0 !important; padding-bottom: 0 !important; }
+    /* the exact element carrying the comments layer's inline reservation, whatever a host calls
+       it — set by updateCmtReserve, because `stage` is host-supplied and may match no class */
+    .mde-cmt-reserved { padding-right: 0 !important; }
+    /* The ruler is editing chrome: never printed. */
+    .mde-ruler { display: none !important; }
+    /* Document margins (%%doc:ml/mr%%) are HONOURED in print, unlike the max-width above — and the
+       distinction is the point, not an inconsistency. An 860px max-width is an incidental
+       screen-reading affordance, so print releases it. A margin the author set with the ruler is a
+       stated page margin, and Features #1's promise is "export to PDF (respecting the render)". The
+       first draft of this released the margins too, which was measured to make a
+       `w=920; ml=20; mr=20` document produce a PDF laid out IDENTICALLY to one that never touched
+       the ruler — the feature would have been invisible in the only artifact anyone is sent. It
+       also created an asymmetry: in AP-Counseling a doc with margins would print at 0 side padding
+       while its neighbour printed at 32px. So: nothing to zero here. The PDF pipeline drops its own
+       injected body side-padding when the surface carries [data-mde-doc-margins]
+       (app/server.mjs), so the document's margins ARE the page margins instead of stacking. */
+    /* pagination: keep a row's cells from being sliced across a page break, and don't let a
+       heading be orphaned at a page bottom. Deliberately NOT `.mtable-wrap { break-inside:
+       avoid }` — the engine emits a real <thead>, so Chrome repeats the header row on the
+       continuation page by itself, and forcing the whole table to stay together defeats that
+       (verified: a 14-row table splits 6/8 across pages with the header correctly repeated). */
+    .mtable tr { break-inside: avoid; }
+    .ln.h1, .ln.h2, .ln.h3 { break-after: avoid; }
   }
 
   /* ======================================================================

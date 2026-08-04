@@ -29,8 +29,8 @@
      sync.sh, so a consumer's own copy always answers for itself. Workflow: bump BOTH of these
      AND add a dated entry to CHANGELOG.md as a normal part of shipping any user-visible change —
      see CHANGELOG.md's header. Do not let this drift; a stale stamp defeats the whole feature. */
-  const MDE_VERSION = "1.3.0";
-  const MDE_LAST_CHANGE = "Google-Docs-style side comments + emoji reactions (opts.comments; stored in-document, no backend), and MarkdownTabs now nests each tab's outline under it in one left rail (the right-docked TOC panel is off in that mode; opts.outline:false keeps it).";
+  const MDE_VERSION = "1.5.0";
+  const MDE_LAST_CHANGE = "Pending (\"sticky\") inline format on an empty caret: Cmd+B / Cmd+I / Shift+Cmd+X on a blank line now arms the format instead of no-opping, and the next character you type is written already wrapped in real markdown, caret inside, so you keep typing in-format. Formats stack (Cmd+B then Cmd+I -> ***s***) and disarm on Escape, re-pressing the shortcut, any edit, or moving the caret. Plus: Version history moved into the toolbar as a host-gated button (new opts.onHistory, Lucide history icon) — it renders only where a host actually persists snapshots, so the inline web builds don't ship a dead control. And the Option+/ palette finally covers the table ops (insert/delete row & column, Align table, Cell text position — previously right-click-only and therefore unsearchable), shown contextually only while the caret is in a table, alongside new Table of contents, Word count, Save and Add comment entries. Table cells also gained real list support: Cmd+Shift+8 bulleted and Cmd+Shift+7 numbered, on the right-click menu too, with ordinals renumbering themselves as you type, paste or delete. Plus: the font controls opened up to ANY installed macOS font. The 8-key FONT_STACKS table was the sanitizer, not just a short list, so an arbitrary family could not pass through @{s:f=...} at all; a family name is now validated by charset instead of by membership, which matters because the exported-HTML path builds a raw unescaped style attribute. The picker itself is host-gated behind the new opts.fontList (same opt-in shape as opts.onHistory) since only the desktop app can enumerate installed fonts, while the sanitizer stays open everywhere so a doc authored in the Mac app keeps its font when opened in a web build. Also fixed along the way: FONT_STACKS was a bare object literal, so f=constructor and friends read back truthy off Object.prototype and pushed a Function as the CSS value. Plus: Export to PDF. A new host-gated opts.onExportPdf adds an Export to PDF entry to the palette Export group, and the desktop app answers it by driving the full Chrome for Testing over CDP against its own editor page and printing — so the PDF is the REAL render (doc styles, installed fonts, theme tokens) rather than a hand-rebuilt approximation. Most of the work landed in the print stylesheet, which browser Cmd+P benefits from too: the comments rail no longer leaves a dead band down the right of every page, side paddings stay symmetric, table rows are not sliced across a page break, and headings are not orphaned at a page bottom. PDFs are forced light (a dark OS appearance on the print machine otherwise produced a solid black page), and an export now refuses rather than printing stale content if the document could not be saved first. Plus: Enter is formatting-aware. Pressing Enter at the beginning of a heading used to move the TEXT down as body text and leave the heading stranded on an empty line, and a bold first word lost its ** the same way; every marker is display:none, so the caret at the visual start of \"# **Bold**\" is source offset 4 and a raw newline spliced between a marker and the text it formats. Now the block moves down whole with a plain line left above it, a mid-line split keeps the formatting on BOTH halves (two headings, two quote lines, two bold runs) instead of stranding unbalanced ** that renders as literal asterisks, and end-of-line is unchanged. Plus: the document column is yours to set. A new ruler with Google-Docs-style drag triangles sets the left/right margins, and a Column width entry sets the measure in px or fits it to the window. Both ride in the document's hidden %%doc: line, both are absent by default so every host keeps the layout it has today, and margins are stored as a percentage but resolved to pixels against the real box so a minimum text column is a guarantee rather than a hope. The ruler is off by default, never built in a read-only view, and PDFs honour the margins you set. Plus: sync.mjs can no longer report success into a directory it invented.";
 
   /* ============================================================================
      Side comments + emoji reactions — the in-document data model (MODULE scope, so
@@ -207,6 +207,14 @@
     // and map relative srcs in the doc to fetchable URLs (e.g. the desktop app's file server).
     const imageUpload = opts.imageUpload || null;
     const resolveImg = opts.resolveImageSrc || (s => s);
+    /* HOST-GATED font picker (same opt-in shape as opts.onHistory): enumerating installed
+       families needs an endpoint only the desktop app has, so the inline web builds must not
+       get a dropdown they can't populate. Array or (async) function; absent => the 8 built-ins,
+       i.e. exactly today's behavior. The list only ever feeds the PICKERS — safeFamily() never
+       consults it, so a doc's font still renders where the list is empty. */
+    const fontListOpt = opts.fontList || null;
+    let installedFams = [];          // resolved, filtered, deduped — read live by every picker
+    let fontPickerRefresh = null;    // set by buildToolbar(); repopulates the select on resolve
     // self-contained HTML escape (no host dependency)
     const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g,
       c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -214,7 +222,13 @@
     /* ----- DOCS-8 invisible styling: parse + SANITIZE a @{s:…} spec -----
        A spec is "key=val;key=val". Every value is whitelisted before it ever
        reaches the DOM/clipboard, so the in-band syntax can never inject CSS. */
+    // __proto__:null is load-bearing, not decoration. On a bare object literal every
+    // Object.prototype key reads back TRUTHY, so `@{s:f=constructor}` used to sail past the
+    // `FONT_STACKS[m.f]` guard and push a *Function* as the CSS value ("font-family:function
+    // Object() { [native code] }"). Null-prototyping the table closes that for every consumer
+    // at once (styleDecls, both doc-style vars, and the toolbar's reflect-back).
     const FONT_STACKS = {
+      __proto__: null,
       sans:    'var(--mde-sans)',
       serif:   'var(--mde-serif)',
       mono:    'var(--mde-mono)',
@@ -224,6 +238,33 @@
       arial:   'Arial, Helvetica, sans-serif',
       courier: '"Courier New", ui-monospace, monospace',
     };
+    /* A font value is EITHER a FONT_STACKS key (the 8 built-ins) or a raw installed family
+       name. Raw names are validated by CHARSET, never against the host's installed list, so a
+       doc authored in the desktop app still carries its font when opened in a web build — the
+       browser just falls back. (List-gating the render path would silently DROP the font, which
+       is the worse failure.) Only the PICKER is host-gated, via opts.fontList.
+
+       The charset is the whole security argument. styleSpecToCss() feeds inlineToHtml(), which
+       builds a RAW single-quoted style attribute with no escaping, so the class below must
+       structurally exclude every terminator: \p{L}/\p{M}/\p{N} admit no quote, semicolon,
+       backslash, angle bracket, brace, or any Unicode space/format control. Verified against all
+       188 families installed on this Mac — zero rejects. NFC-normalized first because \p{M} is
+       allowed but decomposed names would otherwise depend on how the OS handed them over. */
+    const FAMILY_RE = /^[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N} ._-]{0,63}$/u;
+    // A LITERAL fallback, deliberately not var(--mde-sans): exported/copied HTML is read outside
+    // this stylesheet, where an --mde-* var is undefined and would invalidate the whole
+    // declaration and drop the font on the way into Gmail/Docs.
+    const FAMILY_FB       = '-apple-system, "Helvetica Neue", sans-serif';
+    const FAMILY_FB_SERIF = 'Georgia, "Times New Roman", serif';
+    // Parking value for the pickers' hidden "shows a font this machine doesn't list" option.
+    // Contains NUL so FAMILY_RE can never admit it and no real family can collide with it.
+    const FONT_CUSTOM_SENTINEL = " custom";
+    function safeFamily(v, fb) {
+      v = String(v == null ? "" : v).trim().normalize("NFC");
+      if (FONT_STACKS[v]) return FONT_STACKS[v];      // built-in key, unchanged
+      if (!FAMILY_RE.test(v)) return null;
+      return '"' + v + '", ' + (fb || FAMILY_FB);
+    }
     function safeColor(v) {
       v = String(v == null ? "" : v).trim();
       if (/^#[0-9a-fA-F]{3,8}$/.test(v)) return v;        // #abc / #aabbcc / #aabbccdd
@@ -246,7 +287,7 @@
       let c;
       if (m.c  && (c = safeColor(m.c)))  d.push(["color", c]);
       if (m.bg && (c = safeColor(m.bg))) d.push(["background-color", c]);
-      if (m.f  && FONT_STACKS[m.f])      d.push(["font-family", FONT_STACKS[m.f]]);
+      if (m.f  && (c = safeFamily(m.f)))  d.push(["font-family", c]);
       if (m.sz && (c = safeNum(m.sz, 0.5, 4))) d.push(["font-size", c + "em"]);
       if (m.u === "1") d.push(["text-decoration", "underline"]);
       return d;
@@ -271,6 +312,17 @@
     let outlineRefresh = null; // OUTLINE: set when an outline listener is registered; recomputes headings + notifies
     let wcCaretRefresh = null; // DOCS-WC: called on local selection change so the pill switches between the full-doc count and the highlighted-portion count
     let barRefresh = null;     // TOOLBAR: set when opts.toolbar is on; re-reads caretFormats() after caret/selection changes
+    // Cmd+B/I/S fired at a caret with no word (e.g. a blank line) has nothing to wrap YET — an
+    // empty `****` pair has no inner content, so the parser can't recognize or hide it. Rather
+    // than no-op, ARM the format here and write real markdown markers around the next typed
+    // character (pendConsume). Nothing touches `text` until there is content to wrap.
+    //   { at: <source offset the arm is valid at>, kinds: ["b","em","del","code"] }
+    let pendInline = null;
+    // Last table cell the caret sat in. The ⌥/ palette focuses its own input (mounted on
+    // document.body), so by the time rootCommands() runs the DOM selection is no longer in the
+    // cell and selInCell() reads false — this survives that, letting the palette offer the same
+    // row/column ops the right-click menu does. Cleared whenever the caret lands outside a cell.
+    let lastCellEl = null;
     // Markdown demotion: when acceptMd is on, emphasis marks (**, *, `, ~~) render but NEVER
     // show — not on caret entry, not on creation (Word/Docs feel: the syntax is an input
     // method, never a visible artifact). Formatting is added/removed via toggles (Cmd-B/I/U,
@@ -598,29 +650,36 @@
     }
     // → array indexed by line: { depth, marker } for each list line, else null. Ordered
     // counters reset on a shallower line, a type switch, or any non-list non-blank line.
-    // Task 2 (restart numbering): an ordered item's SOURCE digit is markdown-native
-    // signal, not just decoration — normally it's ignored (numbers auto-renumber
-    // sequentially by position, like bullets do), but when a line's source digit
-    // doesn't match the expected next value at its depth (most commonly a "1." typed
-    // after a higher-numbered run), that digit is honored as an explicit RESTART: the
-    // count jumps to it instead of continuing. Consecutive lists (where each source
-    // digit already matches its expected position — the normal case, since Enter-to-
-    // continue writes the correct next digit) render exactly as before.
+    // Numbering is POSITION-BASED (1,2,3 / a,b,c / i,ii,iii, like bullets); the source digit
+    // is consulted only to honor an explicit RESTART. Per ordered line at its depth:
+    //   • FIRST item at a freshly-(re)entered depth → always starts at 1/a/i, ignoring the
+    //     source digit. This is what makes a sublist under item "5." render "a" (not "f") even
+    //     though its source reads "6." — the "f-instead-of-a" fix (2026-07-17).
+    //   • source digit == previous-source + 1 → a consecutive run: keep counting by position
+    //     (so a hand-numbered 6,7,8,9 sublist renders a,b,c,d).
+    //   • otherwise (broken run, e.g. a "1." typed after a higher number) → honor the typed
+    //     digit as an explicit restart. This is the prior "restart numbering" feature, now
+    //     scoped so it can't fire on the first item of a sublist (which was the bug).
+    // srcSeen[depth] holds the previous SOURCE digit at each depth (to tell a consecutive run
+    // from a deliberate restart); it resets in lockstep with counts.
     function computeListMarkers(lines, hidden) {
-      const out = new Array(lines.length).fill(null), counts = [];
+      const out = new Array(lines.length).fill(null), counts = [], srcSeen = [];
       for (let k = 0; k < lines.length; k++) {
         if (hidden[k]) continue;            // no-render comment block — leave counters as-is
         const ln = lines[k]; let mm, type = null, depth = 0;
         if ((mm = ln.match(/^( *)([-*+])\s+/)))      { type = "ul"; depth = Math.floor(mm[1].length / LIST_INDENT); }
         else if ((mm = ln.match(/^( *)(\d+)\.\s+/))) { type = "ol"; depth = Math.floor(mm[1].length / LIST_INDENT); }
-        if (!type) { if (ln.trim() !== "") counts.length = 0; continue; }   // blanks keep the list alive
-        counts.length = depth + 1;          // drop deeper counters (restart on re-descent)
+        if (!type) { if (ln.trim() !== "") { counts.length = 0; srcSeen.length = 0; } continue; }   // blanks keep the list alive
+        counts.length = depth + 1; srcSeen.length = depth + 1;   // drop deeper counters (restart on re-descent)
         if (type === "ol") {
-          const expected = (counts[depth] || 0) + 1, srcNum = parseInt(mm[2], 10);
-          counts[depth] = (srcNum === expected) ? expected : srcNum;   // mismatch ⇒ explicit restart
-          out[k] = { depth, marker: listMarker("ol", counts[depth], depth) };
+          const srcNum = parseInt(mm[2], 10), prevCount = counts[depth], prevSrc = srcSeen[depth];
+          const val = prevCount === undefined ? 1              // fresh depth → start the sequence at 1/a/i
+                    : srcNum === prevSrc + 1   ? prevCount + 1  // consecutive source digits → continue by position
+                    : srcNum;                                   // broken run → explicit restart to the typed digit
+          counts[depth] = val; srcSeen[depth] = srcNum;
+          out[k] = { depth, marker: listMarker("ol", val, depth) };
         }
-        else { counts[depth] = 0; out[k] = { depth, marker: listMarker("ul", 0, depth) }; }   // a bullet breaks the ordered run at its depth
+        else { counts[depth] = 0; srcSeen[depth] = undefined; out[k] = { depth, marker: listMarker("ul", 0, depth) }; }   // a bullet breaks the ordered run at its depth
       }
       return out;
     }
@@ -752,6 +811,10 @@
     function parseCols(ln) { const m = /^\s*%%cols:([^%]*)%%\s*$/.exec(ln); return m ? colsFromCSV(m[1]) : null; }
     // optional table width rides the SAME %%cols%% line as "w:NN" (percent of the surface, 20–100)
     function parseTW(ln) { const m = /\bw:(\d+(?:\.\d+)?)/.exec(ln || ""); if (!m) return null; const v = parseFloat(m[1]); return (v >= 20 && v <= 100) ? v : null; }
+    // whole-table horizontal align (a:l|c|r, default l) and all-cells vertical align (va:t|m|b, default t)
+    // ride the SAME %%cols%% line, read independently like w: (defaults are omitted so plain tables stay clean)
+    function parseAlign(ln) { const m = /\ba:([lcr])\b/.exec(ln || ""); return m ? m[1] : null; }
+    function parseVAlign(ln) { const m = /\bva:([tmb])\b/.exec(ln || ""); return m ? m[1] : null; }
     function normalizeCols(ws) {
       const MIN = 5, sum = ws.reduce((a, b) => a + b, 0) || 1;
       const r = ws.map(w => Math.max(MIN, Math.round(w / sum * 100)));
@@ -764,8 +827,11 @@
     function cellText(cell) { return (cell.textContent || "").replace(/​/g, "").replace(/[\r\n]+/g, " ").replace(/\|/g, "/"); }
     /* ---- rich table cells (Feature 1): a cell's content is stored as markdown in the GFM
        source cell — <br> for hard line breaks, ** / * / ` inline, "• " prefix for a bulleted
-       line; "|" -> "/" (can't appear in a GFM cell). It renders STATICALLY formatted (real
-       <strong>, line breaks, no visible markers) and re-serializes on every edit. ---- */
+       line and "N. " for a numbered one; "|" -> "/" (can't appear in a GFM cell). It renders
+       STATICALLY formatted (real <strong>, line breaks, no visible markers) and re-serializes on
+       every edit. Lists are per-line MARKERS, not real list blocks: a GFM pipe cell can't hold a
+       newline, so the document's list machinery doesn't apply here. Ordinals are normalized by
+       cellRenumber() at serialize time — see the note there for why that's the only place. ---- */
     function wrapCellInline(t, b, i, c) {   // wrap a same-style run back into markdown markers
       if (c) return "`" + t + "`";
       const pre = (/^\s*/.exec(t) || [""])[0], post = (/\s*$/.exec(t) || [""])[0];
@@ -789,6 +855,20 @@
     // Defensive: comment ops never anchor inside a table run, but if an anchor marker ever lands
     // in a cell (paste, hand-edit) the cell mini-parser would show it raw — strip it here.
     function cellMdToHtml(md) { return String(md == null ? "" : md).replace(/@\{\/?c:[a-z0-9]{4,}\}/g, "").split("<br>").map(cellInlineToHtml).join("<br>"); }
+    // Renumber contiguous ordered-list runs in a cell's markdown ("1. ", "2. ", …). Lines are
+    // <br>-separated; any non-numbered line ends the run and restarts the count. Deliberately done
+    // at SERIALIZE time rather than in each edit handler: every path that changes a cell (typing,
+    // Enter, paste, delete, drag) already funnels through cellToMd → syncTable → re-render, so one
+    // rule here keeps the numbering right everywhere instead of needing a fix per keystroke path.
+    // It also means the Enter handler can insert a placeholder "1. " and let this correct it.
+    function cellRenumber(md) {
+      let n = 0;
+      return String(md == null ? "" : md).split("<br>").map(line => {
+        const m = /^(\d+)\.\s/.exec(line);
+        if (!m) { n = 0; return line; }
+        return (++n) + ". " + line.slice(m[0].length);
+      }).join("<br>");
+    }
     function cellToMd(cell) {   // walk the rich-contenteditable cell DOM back into markdown
       const runs = [];
       (function walk(node, b, i, c) {
@@ -814,7 +894,7 @@
         while (k + 1 < runs.length && !runs[k + 1].br && runs[k + 1].b === r.b && runs[k + 1].i === r.i && runs[k + 1].c === r.c) txt += runs[++k].t;   // coalesce same-style runs
         md += wrapCellInline(txt, r.b, r.i, r.c);
       }
-      return md;
+      return cellRenumber(md);
     }
     function cellLen(cell) { let n = 0; const w = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, { acceptNode: x => (x.nodeType === 3 || x.nodeName === "BR") ? 1 : 3 }); let k; while ((k = w.nextNode())) n += k.nodeName === "BR" ? 1 : k.nodeValue.length; return n; }
     function cellLineStartNode(cell) {   // first top-level child of the caret's visual line (after the previous <br>)
@@ -824,22 +904,38 @@
       let start = fi; while (start > 0 && kids[start - 1].nodeName !== "BR") start--;
       return kids[start] || null;
     }
+    const CELL_LIST_RE = /^(?:•\s|\d+\.\s)/;                                    // either list marker
     function cellLineIsBullet(cell) { const fn = cellLineStartNode(cell); return /^•\s/.test((fn && fn.textContent) || ""); }
-    function cellToggleBullet(cell) {   // Cmd/Ctrl+Shift+8: toggle a "• " prefix on the caret's line
+    function cellLineIsNumber(cell) { const fn = cellLineStartNode(cell); return /^\d+\.\s/.test((fn && fn.textContent) || ""); }
+    // Toggle a list prefix on the caret's line. kind "ul" → "• ", "ol" → "1. " (cellRenumber fixes
+    // the ordinal on serialize). Toggling the OTHER kind onto a list line swaps the marker rather
+    // than stacking them, so ⌘⇧7 on a bullet line converts it instead of producing "• 1. text".
+    function cellToggleList(cell, kind) {
       const fn = cellLineStartNode(cell); if (fn === null && !document.getSelection().rangeCount) return;
       const ft = fn && fn.nodeType === 3 ? fn : (fn && fn.firstChild && fn.firstChild.nodeType === 3 ? fn.firstChild : null);
-      if (ft && /^•\s/.test(ft.nodeValue)) ft.nodeValue = ft.nodeValue.replace(/^•\s/, "");
-      else cell.insertBefore(document.createTextNode("• "), fn || null);
+      const want = kind === "ol" ? "1. " : "• ";
+      if (ft && CELL_LIST_RE.test(ft.nodeValue)) {
+        const had = /^•\s/.test(ft.nodeValue) ? "ul" : "ol";
+        ft.nodeValue = ft.nodeValue.replace(CELL_LIST_RE, "");
+        if (had !== kind) ft.nodeValue = want + ft.nodeValue;                    // swap, don't stack
+      } else {
+        cell.insertBefore(document.createTextNode(want), fn || null);
+      }
       syncTable(cell);
     }
     function rowGFM(cells, cols) { let o = "|"; for (let c = 0; c < cols; c++) o += " " + (cells[c] != null ? String(cells[c]) : "") + " |"; return o; }
-    function emitTable(head, body, widths, tw) {
+    function emitTable(head, body, widths, tw, align, valign) {
       const cols = head.length;
       const out = [];
-      // column widths AND optional table width (w:NN) ride one %%cols%% meta line above the table
+      // column widths AND optional table width (w:NN) / align (a:X) / vertical-align (va:X) ride one
+      // %%cols%% meta line above the table. Non-default flags append as space-separated tokens.
       const colsCsv = (widths && widths.length) ? widths.slice(0, cols).join(",") : "";
-      const twPart = (tw != null && tw < 100) ? (colsCsv ? " " : "") + "w:" + tw : "";
-      if (colsCsv || twPart) out.push("%%cols:" + colsCsv + twPart + "%%");   // re-emitted on EVERY edit so it survives
+      const flags = [];
+      if (tw != null && tw < 100) flags.push("w:" + tw);
+      if (align && /^[lcr]$/.test(align) && align !== "l") flags.push("a:" + align);       // 'l' is default → omit
+      if (valign && /^[tmb]$/.test(valign) && valign !== "t") flags.push("va:" + valign);   // 't' is default → omit
+      const meta = colsCsv + (flags.length ? (colsCsv ? " " : "") + flags.join(" ") : "");
+      if (meta) out.push("%%cols:" + meta + "%%");   // re-emitted on EVERY edit so it survives
       out.push(rowGFM(head, cols), "|" + " --- |".repeat(cols));
       body.forEach(r => out.push(rowGFM(r, cols)));
       return out.join("\n");
@@ -859,8 +955,8 @@
       return cell;
     }
     function renderTable(rawLines, s, e) {
-      let widths = null, tw = null, off = 0;
-      if (isColsLine(rawLines[0])) { widths = parseCols(rawLines[0]); tw = parseTW(rawLines[0]); off = 1; }   // claim a leading %%cols%% line
+      let widths = null, tw = null, align = null, valign = null, off = 0;
+      if (isColsLine(rawLines[0])) { widths = parseCols(rawLines[0]); tw = parseTW(rawLines[0]); align = parseAlign(rawLines[0]); valign = parseVAlign(rawLines[0]); off = 1; }   // claim a leading %%cols%% line
       const head = splitCells(rawLines[off]);
       const body = rawLines.slice(off + 2).map(splitCells);
       const cols = Math.max(head.length, body.reduce((m, r) => Math.max(m, r.length), 0), 1);
@@ -868,6 +964,8 @@
       wrap.dataset.s = s; wrap.dataset.e = e;
       if (widths) wrap.dataset.cols = widths.join(",");
       if (tw != null) wrap.dataset.tw = tw;
+      if (align) wrap.dataset.align = align;     // CSS [data-align] positions a narrowed table L/C/R
+      if (valign) wrap.dataset.va = valign;      // CSS [data-va] sets all cells' vertical-align
       const table = document.createElement("table"); table.className = "mtable";
       if (tw != null) table.style.width = tw + "%";   // narrower-than-full table (default CSS is width:100%)
       if (widths && widths.length) {
@@ -881,8 +979,8 @@
       const tbody = document.createElement("tbody");
       body.forEach((r, ri) => { const tr = document.createElement("tr"); for (let c = 0; c < cols; c++) tr.appendChild(mkCell("td", r[c] || "", ri + 1, c)); tbody.appendChild(tr); });
       table.appendChild(tbody); wrap.appendChild(table);
-      if (!readOnly) {   // viewers get the rendered table only — no tools row, no resize grips
-        wrap.appendChild(tableTools(wrap));
+      if (!readOnly) {   // viewers get the rendered table only. Row/Col/delete ops now live in the
+        // right-click context menu (bug 5), not always-on pills — only the resize grips remain.
         wrap.addEventListener("pointerenter", () => layoutGrips(wrap));
         requestAnimationFrame(() => layoutGrips(wrap));
       }
@@ -968,21 +1066,21 @@
       table.style.tableLayout = "fixed";
     }
     function commitCols(wrap, widths) {
-      const s = +wrap.dataset.s, e = +wrap.dataset.e, m = tableMatrix(wrap);
+      const s = +wrap.dataset.s, e = +wrap.dataset.e, m = tableMatrix(wrap), meta = tableMeta(wrap);
       snapshot("cols");
-      text = text.slice(0, s) + emitTable(m.head, m.body, widths, tableMeta(wrap).tw) + text.slice(e);
+      text = text.slice(0, s) + emitTable(m.head, m.body, widths, meta.tw, meta.align, meta.valign) + text.slice(e);
       render(); onInput();
     }
     function commitWidth(wrap, tw) {   // persist the whole-table width drag into the %%cols%% meta
-      const s = +wrap.dataset.s, e = +wrap.dataset.e, m = tableMatrix(wrap);
+      const s = +wrap.dataset.s, e = +wrap.dataset.e, m = tableMatrix(wrap), meta = tableMeta(wrap);
       snapshot("twidth");
-      text = text.slice(0, s) + emitTable(m.head, m.body, tableMeta(wrap).widths, tw) + text.slice(e);
+      text = text.slice(0, s) + emitTable(m.head, m.body, meta.widths, tw, meta.align, meta.valign) + text.slice(e);
       render(); onInput();
     }
     function tableMatrix(wrap) {
       return { head: [...wrap.querySelectorAll("thead th")].map(cellToMd), body: [...wrap.querySelectorAll("tbody tr")].map(tr => [...tr.children].map(cellToMd)) };
     }
-    function tableMeta(wrap) { return { widths: colsFromCSV(wrap.dataset.cols), tw: (wrap.dataset.tw != null && wrap.dataset.tw !== "") ? +wrap.dataset.tw : null }; }
+    function tableMeta(wrap) { return { widths: colsFromCSV(wrap.dataset.cols), tw: (wrap.dataset.tw != null && wrap.dataset.tw !== "") ? +wrap.dataset.tw : null, align: wrap.dataset.align || null, valign: wrap.dataset.va || null }; }
     // offset = text chars + each <br> counted as 1 (the rendered-cell space; markers aren't shown)
     function caretInCell(cell) {
       const sel = document.getSelection(); if (!sel || !sel.rangeCount) return 0;
@@ -998,9 +1096,9 @@
       const wrap = cell.closest(".mtable-wrap"); if (!wrap) return;
       const cap = { tblS: +wrap.dataset.s, r: +cell.dataset.r, c: +cell.dataset.c, off: caretInCell(cell) };
       const s = +wrap.dataset.s, e = +wrap.dataset.e, m = tableMatrix(wrap);
-      const meta = tableMeta(wrap);   // keep persisted column + table widths through a cell edit
+      const meta = tableMeta(wrap);   // keep persisted column widths, table width, align + v-align through a cell edit
       snapshot("cell");
-      text = text.slice(0, s) + emitTable(m.head, m.body, meta.widths, meta.tw) + text.slice(e);
+      text = text.slice(0, s) + emitTable(m.head, m.body, meta.widths, meta.tw, meta.align, meta.valign) + text.slice(e);
       render(); restoreCell(cap); onInput();
     }
     function restoreCell(cap) {
@@ -1043,13 +1141,16 @@
       if (e.key === "Tab") { e.preventDefault(); e.stopPropagation(); moveCell(cell, e.shiftKey ? -1 : 1, !e.shiftKey); return; }
       if (e.key === "Enter") {   // Word/Docs: Enter = line break INSIDE the cell; continue a bullet line
         e.preventDefault(); e.stopPropagation();
-        const bullet = cellLineIsBullet(cell);
+        const bullet = cellLineIsBullet(cell), numbered = cellLineIsNumber(cell);
         document.execCommand("insertLineBreak");
         if (bullet) document.execCommand("insertText", false, "• ");
+        else if (numbered) document.execCommand("insertText", false, "1. ");   // cellRenumber sets the real ordinal
         return;
       }
       if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); exitTable(cell.closest(".mtable-wrap"), 1); return; }
-      if (mod && e.shiftKey && (e.key === "8" || e.key === "*" || e.code === "Digit8")) { e.preventDefault(); e.stopPropagation(); cellToggleBullet(cell); return; }
+      // Docs convention: ⌘⇧7 = numbered, ⌘⇧8 = bulleted
+      if (mod && e.shiftKey && (e.key === "7" || e.key === "&" || e.code === "Digit7")) { e.preventDefault(); e.stopPropagation(); cellToggleList(cell, "ol"); return; }
+      if (mod && e.shiftKey && (e.key === "8" || e.key === "*" || e.code === "Digit8")) { e.preventDefault(); e.stopPropagation(); cellToggleList(cell, "ul"); return; }
       if (mod && /^[bB]$/.test(e.key)) { e.preventDefault(); e.stopPropagation(); document.execCommand("bold"); return; }
       if (mod && /^[iI]$/.test(e.key)) { e.preventDefault(); e.stopPropagation(); document.execCommand("italic"); return; }
       if (mod && /^[uU]$/.test(e.key)) { e.preventDefault(); e.stopPropagation(); return; }   // underline isn't representable in md — swallow
@@ -1062,21 +1163,66 @@
       }
     }
     function replaceTable(wrap, head, body, widths) {
-      const s = +wrap.dataset.s, e = +wrap.dataset.e; snapshot("table");
+      const s = +wrap.dataset.s, e = +wrap.dataset.e, meta = tableMeta(wrap); snapshot("table");
       if (widths === undefined) widths = colsFromCSV(wrap.dataset.cols);
-      text = text.slice(0, s) + emitTable(head, body, widths, tableMeta(wrap).tw) + text.slice(e); render(); onInput();
+      text = text.slice(0, s) + emitTable(head, body, widths, meta.tw, meta.align, meta.valign) + text.slice(e); render(); onInput();
     }
     function addRow(wrap, focusFirst) {
       const m = tableMatrix(wrap), s = +wrap.dataset.s; m.body.push(new Array(m.head.length).fill(""));
       replaceTable(wrap, m.head, m.body);
       if (focusFirst) { const w = surface.querySelector('.mtable-wrap[data-s="' + s + '"]'); focusCell(w && w.querySelector("tbody tr:last-child .mcell")); }
     }
-    function addCol(wrap) {
-      const m = tableMatrix(wrap), s = +wrap.dataset.s; m.head.push(""); m.body.forEach(r => r.push(""));
+    /* ----- structural row/column ops (driven by the right-click menu). r is a cell's data-r
+       (0 = header, 1+ = body row); c is a 0-based column. All route through replaceTable so the
+       %%cols%% meta (widths / table-width / align / v-align) and undo/collab stay consistent. ----- */
+    // replaceTable re-renders and does NOT re-seat a caret, so each structural op re-focuses a
+    // sensible cell afterwards (matching syncTable/addRow), keeping the caret usable after the edit.
+    function focusTableCell(s, r, c) {
+      const w = surface.querySelector('.mtable-wrap[data-s="' + s + '"]'); if (!w) { surface.focus(); return; }
+      const pick = (rr, cc) => w.querySelector('.mcell[data-r="' + rr + '"][data-c="' + cc + '"]');
+      const cell = pick(r, c) || pick(Math.max(0, r - 1), c) || pick(0, Math.max(0, c)) || pick(0, 0) || w.querySelector(".mcell");
+      if (cell) focusCell(cell); else surface.focus();
+    }
+    function insertRow(wrap, r, dir) {
+      const m = tableMatrix(wrap), s = +wrap.dataset.s;
+      let at = r <= 0 ? 0 : (dir > 0 ? r : r - 1);      // header → first body row; body row r: below→r, above→r-1
+      at = Math.max(0, Math.min(m.body.length, at));
+      m.body.splice(at, 0, new Array(m.head.length).fill(""));
+      replaceTable(wrap, m.head, m.body);
+      focusTableCell(s, at + 1, 0);                     // caret into the new row (data-r = at+1)
+    }
+    function deleteRow(wrap, r) {
+      r = +r; if (!(r >= 1)) return;                    // the header row can't be deleted
+      const m = tableMatrix(wrap), s = +wrap.dataset.s; if (r - 1 >= m.body.length) return;
+      m.body.splice(r - 1, 1);
+      replaceTable(wrap, m.head, m.body);
+      focusTableCell(s, Math.min(r, m.body.length), 0);  // the row that slid up into r (header if the body is now empty)
+    }
+    function insertCol(wrap, c, dir) {
+      const m = tableMatrix(wrap), s = +wrap.dataset.s, preCols = m.head.length;
+      const at = Math.max(0, Math.min(preCols, (+c) + (dir > 0 ? 1 : 0)));
+      m.head.splice(at, 0, ""); m.body.forEach(row => row.splice(at, 0, ""));
       let widths = colsFromCSV(wrap.dataset.cols);
-      if (widths) widths = normalizeCols(widths.concat([100 / (widths.length + 1)]));   // grow + renormalize to 100
+      if (widths && widths.length === preCols) { widths.splice(at, 0, 100 / (preCols + 1)); widths = normalizeCols(widths); }
+      else widths = null;                               // absent / mismatched widths → let columns redistribute evenly
       replaceTable(wrap, m.head, m.body, widths);
-      const w = surface.querySelector('.mtable-wrap[data-s="' + s + '"]'); focusCell(w && w.querySelector("thead th:last-child"));
+      focusTableCell(s, 0, at);                          // caret into the new column's header
+    }
+    function deleteCol(wrap, c) {
+      c = +c; const m = tableMatrix(wrap), s = +wrap.dataset.s, preCols = m.head.length;
+      if (preCols <= 1) { deleteTable(wrap); return; }   // removing the only column → drop the whole table
+      m.head.splice(c, 1); m.body.forEach(row => row.splice(c, 1));
+      let widths = colsFromCSV(wrap.dataset.cols);
+      if (widths && widths.length === preCols) { widths.splice(c, 1); widths = widths.length ? normalizeCols(widths) : null; }
+      else widths = null;                               // absent / mismatched widths → let columns redistribute evenly
+      replaceTable(wrap, m.head, m.body, widths);
+      focusTableCell(s, 1, Math.min(c, m.head.length - 1));  // a body cell near the removed column
+    }
+    function setTableMeta(wrap, patch) {   // align / vertical-align changes, re-emitted through the controlled render path
+      const s = +wrap.dataset.s, e = +wrap.dataset.e, m = tableMatrix(wrap), meta = Object.assign(tableMeta(wrap), patch);
+      snapshot("tmeta");
+      text = text.slice(0, s) + emitTable(m.head, m.body, meta.widths, meta.tw, meta.align, meta.valign) + text.slice(e);
+      render(); onInput(); focusTableCell(s, 0, 0);
     }
     function exitTable(wrap, dir) {
       const s = +wrap.dataset.s, e = +wrap.dataset.e;
@@ -1089,14 +1235,8 @@
       if (text[e] === "\n") e++; else if (s > 0 && text[s - 1] === "\n") s--;
       text = text.slice(0, s) + text.slice(e); render(); setCaret(Math.min(s, text.length)); surface.focus(); onInput();
     }
-    function tableTools(wrap) {
-      const tools = document.createElement("div"); tools.className = "mtable-tools"; tools.setAttribute("contenteditable", "false");
-      const add = (label, svg, cls, fn) => { const b = document.createElement("button"); b.type = "button"; b.className = "mtt" + (cls ? " " + cls : ""); b.innerHTML = svg + (label ? "<span>" + label + "</span>" : ""); b.addEventListener("mousedown", ev => { ev.preventDefault(); fn(); }); tools.appendChild(b); };
-      add("Row", '<svg viewBox="0 0 24 24"><path d="M4 8h16M4 13h16M4 18h16"/><path d="M20 4v4M22 6h-4"/></svg>', "", () => addRow(wrap, true));
-      add("Col", '<svg viewBox="0 0 24 24"><path d="M8 4v16M13 4v16M18 4v16"/><path d="M4 6h4M6 4v4"/></svg>', "", () => addCol(wrap));
-      add("", '<svg viewBox="0 0 24 24"><path d="M4.5 6.5h15M9.5 6.2V5h5v1.2M6.8 6.5l.8 13h8.8l.8-13"/></svg>', "danger", () => deleteTable(wrap));
-      return tools;
-    }
+    // (The always-on Row·Col·delete pills were removed — those ops now live in the right-click
+    //  context menu; see buildCtx / insertRow / deleteRow / insertCol / deleteCol. Bug 5.)
     function applyReveal() {
       // Read-only surfaces never reveal: no active line, no comment/link peek — the load-time
       // selA=selB=0 (which otherwise marks block 0 active forever, since a viewer's caret
@@ -1310,6 +1450,35 @@
       if (pos > at || (pos === at && insAt)) return pos + delta;
       return pos;
     }
+    /* ----- pending ("sticky") inline format armed at an empty caret ----- */
+    const PEND_ORDER = ["b", "em", "del", "code"];   // outermost → innermost when stacked
+    function pendToggle(kind, at) {
+      if (!pendInline || pendInline.at !== at) pendInline = { at, kinds: [kind] };
+      else {
+        const i = pendInline.kinds.indexOf(kind);
+        if (i >= 0) pendInline.kinds.splice(i, 1); else pendInline.kinds.push(kind);
+        if (!pendInline.kinds.length) pendInline = null;
+      }
+      if (barRefresh) barRefresh();
+    }
+    // Consume the armed state: insert `d` already wrapped in real markers, caret INSIDE them so
+    // typing continues in-format. Produces ordinary markdown (`**x**`), never a style span — the
+    // source stays portable and the Obsidian export sees real emphasis.
+    function pendConsume(at, d) {
+      const kinds = pendInline.kinds.slice();
+      pendInline = null;                     // cleared first, so edit()'s own disarm is a no-op
+      let open = "", close = "";
+      for (const kind of PEND_ORDER) {
+        if (kinds.indexOf(kind) < 0) continue;
+        let mk = EMPH_MARKS[kind][0];
+        const ch = mk[0];
+        // same collision rule addInlineSeg uses: never butt a marker against its own char
+        if (EMPH_MARKS[kind][1] !== mk && (text[at - 1] === ch || text[at] === ch)) mk = EMPH_MARKS[kind][1];
+        open += mk; close = mk + close;
+      }
+      edit(at, at, open + d + close, at + open.length + d.length, "type");
+    }
+
     // The one entry point for Bold / Italic / Strike / Code — true Word semantics:
     //   collapsed caret inside a run  → unwrap that whole run
     //   collapsed caret in a word     → format/unformat the word
@@ -1334,10 +1503,11 @@
           unwrapEmph(t, a); return;
         }
         const w = wordRangeAt(a);
-        // no word at the caret (e.g. an empty line): nothing to wrap. An empty pair (`****`) has
-        // no inner content, so the parser can't recognize/hide it as a real emphasis run — it would
-        // just sit there as bare, permanently-visible asterisks. No-op instead.
-        if (w[0] === w[1]) return;
+        // no word at the caret (e.g. an empty line): nothing to wrap YET. An empty pair (`****`)
+        // has no inner content, so the parser can't recognize/hide it as a real emphasis run — it
+        // would just sit there as bare, permanently-visible asterisks. Arm the format instead;
+        // the next typed character gets written already wrapped (pendConsume).
+        if (w[0] === w[1]) { pendToggle(kind, a); return; }
         const ws = snapMarks(w[0], w[1]); a = ws[0]; b = ws[1];
       }
       const segs = lineSegments(a, b);
@@ -1417,6 +1587,10 @@
         if (a === b) out[kind] = !!mine.find(t => t.s < a && a < t.e);
         else out[kind] = segs.length > 0 && segs.every(sg => segCovered(mine, sg[0], sg[1]));
       }
+      // a format armed but not yet consumed at this exact caret reads as ON, so the toolbar
+      // button lights up the moment you hit Cmd+B on a blank line
+      if (a === b && pendInline && pendInline.at === a)
+        for (const kind of pendInline.kinds) out[kind] = true;
       const sp = enclosingStyleSpan(a, b);
       if (sp && parseStyleSpec(text.slice(sp.s + 4, sp.openEnd - 1)).u === "1") out.u = true;
       const lr = curLineRange(a), bl = classify(text.slice(lr[0], lr[1]), lr[0], lr[1]);
@@ -1656,6 +1830,7 @@
       lastType = type; lastAt = t;
     }
     function edit(a, b, ins, caret, type) {
+      pendInline = null;   // any real edit disarms a pending format (pendConsume clears it first)
       // any ranged replace treats hidden emphasis-marker pairs as units (never orphans one)
       let extra = null;
       if (acceptMd && b > a) { const bal = balanceEmphasis(a, b); a = bal.a; b = bal.b; extra = bal.extra; }
@@ -1829,26 +2004,28 @@
     /* ----- smart lists: Enter continues a bullet/numbered/checklist item (next
        marker, numbers auto-increment); Enter on an EMPTY item exits the list.
        Returns true when it handled the keystroke, so the caller skips the plain newline. */
+    // What marker should the line AFTER this list item carry? Split out of smartListEnter so
+    // enterCollapsed can borrow the answer while still writing its own single splice (a
+    // formatting split has to ride along in the SAME edit, or it lands as two undo steps).
+    // Returns null (not a list), {empty} (Enter on an empty item ⇒ outdent/exit), or {prefix}.
+    function listEnterSpec(ls, le) {
+      const line = text.slice(ls, le);
+      let m;
+      if ((m = line.match(/^( *)([-*+])\s+\[(?: |x|X)\]\s+(.*)$/)))
+        return m[3].trim() === "" ? { empty: true, lead: m[1], type: "ul" } : { prefix: m[1] + m[2] + " [ ] " };
+      if ((m = line.match(/^( *)([-*+]\s+)(.*)$/)))
+        return m[3].trim() === "" ? { empty: true, lead: m[1], type: "ul" } : { prefix: m[1] + m[2] };
+      if ((m = line.match(/^( *)(\d+)\.(\s+)(.*)$/)))
+        return m[4].trim() === "" ? { empty: true, lead: m[1], type: "ol" } : { prefix: m[1] + (parseInt(m[2], 10) + 1) + "." + m[3] };
+      return null;
+    }
     function smartListEnter(pos) {
       const ls = lineStart(pos);
       let le = text.indexOf("\n", pos); if (le < 0) le = text.length;
-      const line = text.slice(ls, le);
-      let m, prefix;
-      if ((m = line.match(/^( *)([-*+])\s+\[(?: |x|X)\]\s+(.*)$/))) {
-        if (m[3].trim() === "") return emptyListItem(ls, le, m[1], "ul");
-        prefix = m[1] + m[2] + " [ ] ";
-        const ins = "\n" + prefix;
-        edit(pos, pos, ins, pos + ins.length, "nl");
-        return true;
-      }
-      if ((m = line.match(/^( *)([-*+]\s+)(.*)$/))) {
-        if (m[3].trim() === "") return emptyListItem(ls, le, m[1], "ul");
-        prefix = m[1] + m[2];
-      } else if ((m = line.match(/^( *)(\d+)\.(\s+)(.*)$/))) {
-        if (m[4].trim() === "") return emptyListItem(ls, le, m[1], "ol");
-        prefix = m[1] + (parseInt(m[2], 10) + 1) + "." + m[3];
-      } else return false;
-      const ins = "\n" + prefix;
+      const spec = listEnterSpec(ls, le);
+      if (!spec) return false;
+      if (spec.empty) return emptyListItem(ls, le, spec.lead, spec.type);
+      const ins = "\n" + spec.prefix;
       edit(pos, pos, ins, pos + ins.length, "nl");
       return true;
     }
@@ -1917,6 +2094,104 @@
         edit(ls, le, "", ls, "nl");
       }
       return true;
+    }
+
+    /* ----- Enter across formatting (new-features-and-bugs.md, Aaron 2026-07-26) -------------
+       A newline must never land BETWEEN a formatting marker and the text it formats. Every
+       marker here is display:none under acceptMd, so the caret at the VISUAL start of
+       `# **Bold**` is source offset 4 — a raw \n there wrote `# **` / `Bold**`: the heading
+       stranded on an empty line, its text demoted to a paragraph, the bold pair torn in half.
+       Three rules, each measured against Word/Docs:
+         • visual START of a formatted block → the block moves down WHOLE, and the line left
+           above it is a plain paragraph. Deliberately NOT Docs' empty-`# `-heading-above:
+           an empty formatted line IS the orphan artifact this bug report is about. Lists are
+           the exception (an empty bullet above is useful and already correct).
+         • MID-line → the tail keeps its formatting: two headings, two quote lines, two bold
+           runs. A raw split left `**bold` / ` text**` — unbalanced emphasis that renders as
+           literal asterisks here AND in Obsidian (Features #2's whole point).
+         • END of line → plain new line, unchanged (Word's "next paragraph style"); list items
+           still continue, which is what smartListEnter is for.
+       Gated on acceptMd throughout: with raw marks SHOWN, the caret at offset 2 of `**bold**`
+       is a position the user can see and chose, so a literal split is the honest answer. */
+    // Every inline run a newline at `p` would cut in half, outermost first. Read from a FRESH
+    // parse of the caret's line rather than emphTokens(), because style spans (@{s:…}…@{/s}) are
+    // deliberately absent from `toks` — they never reveal as raw syntax — yet they split exactly
+    // like emphasis does. One shape fits all of them: [s,is) opens, [ie,e) closes.
+    function inlineRuns(ls, le, mlen) {
+      const out = [];
+      if (!acceptMd) return out;
+      (function walk(content, base) {
+        for (const t of parseInline(content, base)) {
+          if (t.kind === "style") { out.push({ s: t.s, is: t.openEnd, ie: t.closeStart, e: t.e }); walk(t.inner, t.openEnd); }
+          else if (t.kind === "code") out.push({ s: t.s, is: t.s + 1, ie: t.e - 1, e: t.e });
+          else if (t.kind === "link") out.push({ s: t.s, is: t.s + 1, ie: t.s + 1 + t.ltext.length, e: t.e });
+          else if (t.kind === "strong" || t.kind === "em" || t.kind === "del") {
+            const m = t.mark.length;
+            out.push({ s: t.s, is: t.s + m, ie: t.e - m, e: t.e });
+            walk(t.inner, t.s + m);
+          }
+        }
+      })(text.slice(ls + mlen, le), ls + mlen);
+      return out;
+    }
+    // A caret resting just AFTER an opening marker belongs before it; one resting just BEFORE a
+    // closing marker belongs after it — so the whole run travels to one side of the split.
+    // (skipMarksRight did the second half and the OPPOSITE of the first: at t.s it hopped INTO
+    // the run, which is how `**bold** rest` became `**` / `bold** rest`.) Terminates: a left hop
+    // lands on some run's `s` and a right hop on some `e`, and non-overlapping/properly-nested
+    // runs can never have one run's `s` equal another's `ie` — the guard is belt-and-braces.
+    function enterSplitPos(p, runs) {
+      for (let g = 0; g < 64; g++) {
+        let moved = false;
+        for (const t of runs) {
+          if (t.ie === p && t.ie < t.e) { p = t.e; moved = true; break; }
+          if (t.is === p && t.s < t.is) { p = t.s; moved = true; break; }
+        }
+        if (!moved) break;
+      }
+      return p;
+    }
+    function enterCollapsed(a) {
+      let ls = lineStart(a);
+      let le = text.indexOf("\n", a); if (le < 0) le = text.length;
+      const b0 = classify(text.slice(ls, le), ls, le);
+      const p = enterSplitPos(a, inlineRuns(ls, le, b0.mlen || 0));
+      // the hop can cross a line boundary in principle; re-derive rather than assume
+      ls = lineStart(p); le = text.indexOf("\n", p); if (le < 0) le = text.length;
+      const b = classify(text.slice(ls, le), ls, le);
+      const cs = ls + (b.mlen || 0);                        // first CONTENT offset of the line
+      const spec = listEnterSpec(ls, le);
+      if (p === ls) { edit(ls, ls, "\n", p + 1, "nl"); return; }   // before the marker: nothing to carry
+      if (spec && spec.empty) { emptyListItem(ls, le, spec.lead, spec.type); return; }
+      // rule 1 — at content start, with content to move: the block goes down intact
+      if (!spec && acceptMd && p === cs && p < le && (b.type === "h" || b.type === "bq")) {
+        edit(ls, ls, "\n", p + 1, "nl"); return;
+      }
+      // rule 2 — the marker the tail carries. Lists continue even at end-of-line (that IS the
+      // smart-list feature); a heading/quote only carries over on a genuine mid-line split.
+      const tailMark = spec ? spec.prefix
+        : (acceptMd && p < le && (b.type === "h" || b.type === "bq")) ? text.slice(ls, ls + b.mlen)
+        : "";
+      // rule 3 — close the cut runs innermost-first, reopen them outermost-first, using the
+      // document's OWN delimiters so `__b__` / `_i_` / `[t](url)` variants survive verbatim.
+      const runs = inlineRuns(ls, le, b.mlen || 0).filter(t => t.is < p && p < t.ie)
+        .sort((x, y) => x.s - y.s || y.e - x.e);
+      let close = "", open = "";
+      for (let i = runs.length - 1; i >= 0; i--) close += text.slice(runs[i].ie, runs[i].e);
+      for (let i = 0; i < runs.length; i++) open += text.slice(runs[i].s, runs[i].is);
+      // Whitespace at the split boundary moves OUTSIDE the marks: `** text**` is not emphasis in
+      // CommonMark (a left-flanking run needs a non-space after it), so it would export to
+      // Obsidian as literal asterisks. Skipped when either half would be left with no real
+      // content — an empty `****` pair is invisible garbage the user can't reach or delete.
+      let q = p, r = p;
+      const inner = runs.length ? runs[runs.length - 1] : null;
+      if (inner) {
+        while (q > inner.is && /\s/.test(text[q - 1])) q--;
+        while (r < inner.ie && /\s/.test(text[r])) r++;
+        if (!text.slice(inner.is, q).trim() || !text.slice(r, inner.ie).trim()) { q = r = p; }
+      }
+      const repl = close + text.slice(q, p) + "\n" + tailMark + text.slice(p, r) + open;
+      edit(q, r, repl, q + repl.length, "nl");
     }
 
     /* ----- delete hardening around hidden lines + invisible comment anchors -----
@@ -1996,14 +2271,19 @@
       const t = e.inputType;
       const cur = readSel() || [selA, selB];
       const a = cur[0], b = cur[1];
-      if (t === "insertText") { e.preventDefault(); const d = e.data == null ? "" : e.data; edit(a, b, d, a + d.length, "type"); }
+      if (t === "insertText") {
+        e.preventDefault();
+        const d = e.data == null ? "" : e.data;
+        // a format armed at an empty caret (Cmd+B on a blank line) wraps this first character
+        if (d && a === b && pendInline && pendInline.at === a) { pendConsume(a, d); return; }
+        edit(a, b, d, a + d.length, "type");
+      }
       else if (t === "insertReplacementText") { e.preventDefault(); const d = (e.dataTransfer && e.dataTransfer.getData("text")) || e.data || ""; edit(a, b, d, a + d.length, "rep"); }
       else if (t === "insertParagraph" || t === "insertLineBreak") {
         e.preventDefault();
-        // collapsed caret resting just before a hidden closing marker (e.g. right after typing
-        // "**word") must hop past it first — otherwise the \n splices BETWEEN content and its
-        // closing mark, orphaning the mark alone on the next line ("**word" / "**").
-        if (a === b) { const p = skipMarksRight(a); if (!smartListEnter(p)) edit(p, p, "\n", p + 1, "nl"); }
+        // a collapsed Enter is formatting-aware in both directions: see enterCollapsed (a \n must
+        // never splice BETWEEN a marker and the text it formats, on either side of the caret).
+        if (a === b) enterCollapsed(a);
         else edit(a, b, "\n", a + 1, "nl");
       }
       else if (t === "deleteContentBackward") { e.preventDefault(); if (a !== b) edit(a, b, "", a, "del"); else delBackward(a, "char"); }
@@ -2201,10 +2481,12 @@
         if (e.key === "Enter" || e.key === "Tab") { if (items.length) { e.preventDefault(); commit(msel); return; } }
         if (e.key === "Escape") { e.preventDefault(); closeMenu(); return; }
       }
+      // Escape disarms a pending inline format without swallowing the key from other handlers
+      if (e.key === "Escape" && pendInline) { pendInline = null; if (barRefresh) barRefresh(); }
       const mod = e.metaKey || e.ctrlKey;
       if (mod && (e.key === "z" || e.key === "Z")) { e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); return; }
       if (mod && e.key === "y") { e.preventDefault(); doRedo(); return; }
-      if (mod && (e.key === "b" || e.key === "B")) { e.preventDefault(); toggleInline("b"); return; }
+      if (mod && !e.shiftKey && (e.key === "b" || e.key === "B")) { e.preventDefault(); toggleInline("b"); return; }
       if (mod && (e.key === "i" || e.key === "I")) { e.preventDefault(); toggleInline("em"); return; }
       if (mod && (e.key === "u" || e.key === "U")) { e.preventDefault(); toggleUnderline(); return; }
       if (mod && e.shiftKey && (e.key === "x" || e.key === "X")) { e.preventDefault(); toggleInline("del"); return; }
@@ -2489,8 +2771,11 @@
       if (rafPending) return; rafPending = true;
       requestAnimationFrame(() => {
         rafPending = false;
-        if (selInCell()) { closeMenu(); return; }
+        if (selInCell()) { lastCellEl = cellOf(document.getSelection().anchorNode); closeMenu(); return; }
+        lastCellEl = null;
         const cur = readSel(); if (!cur) return;
+        // moving the caret off the armed offset (or making a selection) disarms a pending format
+        if (pendInline && (pendInline.at !== cur[0] || cur[0] !== cur[1])) pendInline = null;
         selA = cur[0]; selB = cur[1]; applyReveal(); syncMenu(); notifyCaret(); if (wcCaretRefresh) wcCaretRefresh(); if (cmtRefresh) cmtSelRefresh();
       });
     });
@@ -2573,6 +2858,7 @@
           '<div class="at-tw"><div class="at-lab">' + esc(it.lab) + "</div>" + (it.sub ? '<div class="at-sub">' + esc(it.sub) + "</div>" : "") + "</div></div>";
       });
       menu.innerHTML = html;
+      menu.classList.toggle("ver", items.length === 1 && !!items[0] && items[0].kind === "ver");
       menu.querySelectorAll(".at-item").forEach(el => {
         el.addEventListener("mousedown", e => { e.preventDefault(); commit(+el.dataset.i); });
         el.addEventListener("mousemove", () => { msel = +el.dataset.i; highlightMenu(); });
@@ -2633,9 +2919,9 @@
       // host command: consume the typed "@query" through the normal edit() path (undo-safe,
       // autosave sees the removal via onInput), then hand control to the host
       else if (it.kind === "command") { closeMenu(); edit(from, to, "", from, "chip"); try { it.cmd.run(); } catch (_) {} }
-      // "@ver" — the readout already showed in the menu label/sub while typing; committing just
-      // consumes the typed "@ver" the same undo-safe way a host command does (nothing to run)
-      else if (it.kind === "ver") { closeMenu(); edit(from, to, "", from, "chip"); }
+      // "@ver" — Enter pastes the full version + latest-change readout into the doc. The modal's
+      // .at-sub truncates the change note; pasting gives the untruncated text, via the undo-safe edit() path.
+      else if (it.kind === "ver") { const tok = "md-editor v" + MDE_VERSION + " — " + MDE_LAST_CHANGE; closeMenu(); edit(from, to, tok, from + tok.length, "chip"); }
     }
 
     /* ---- table grid-size picker ---- */
@@ -2712,6 +2998,15 @@
     const swatch = hex => '<span class="mde-cmd-sw" style="background:' + esc(hex) + '"></span>';
     const subItem = (id, title, run, ico) => ({ id, title, group: "", run, keywords: "", ico: ico || "" });
 
+    // Resolve the tracked cell into a live table context, or null. isConnected guards the case
+    // where the table was deleted after the caret last sat in it.
+    function paletteCellCtx() {
+      const cell = lastCellEl;
+      if (!cell || !cell.isConnected || readOnly) return null;
+      const wrap = cell.closest(".mtable-wrap");
+      if (!wrap || !wrap.isConnected) return null;
+      return { wrap, r: +cell.dataset.r, c: +cell.dataset.c, meta: tableMeta(wrap) };
+    }
     function rootCommands() {
       const c = [], add = (id, title, group, run, keywords) => c.push({ id, title, group, run, keywords: keywords || "" });
       add("bold", "Bold", "Format", () => toggleInline("b"), "strong weight");
@@ -2729,10 +3024,19 @@
       add("quote", "Quote", "Format", () => togglePrefix(/^(\s*)>\s?/, "> "), "blockquote");
       add("color", "Text color…", "Style", () => pushSub("Text color", PAL_COLORS.map(([n, hex]) => subItem("color-" + n, n, () => applyStyle({ c: hex }), swatch(hex))).concat([subItem("color-none", "Default color", () => applyStyle({ c: null }))])), "colour foreground");
       add("hilite", "Highlight…", "Style", () => pushSub("Highlight", PAL_HILITES.map(([n, hex]) => subItem("hl-" + n, n, () => applyStyle({ bg: hex }), swatch(hex))).concat([subItem("hl-none", "No highlight", () => applyStyle({ bg: null }))])), "background marker");
-      add("font", "Font…", "Style", () => pushSub("Font", PAL_FONTS.map(([n, key]) => subItem("font-" + key, n, () => applyStyle({ f: key })))), "typeface family");
+      // Built-ins first, then every installed family the host enumerated. A 190-entry submenu
+      // would be unusable as a menu, but this one is type-to-filter — search is the RIGHT
+      // interface for a set this big, and it keeps the fonts reachable per Features #3.
+      add("font", "Font…", "Style", () => pushSub("Font",
+        PAL_FONTS.map(([n, key]) => subItem("font-" + key, n, () => applyStyle({ f: key })))
+          .concat(installedFams.map(f => subItem("font-i-" + f, f, () => applyStyle({ f: f }))))),
+        "typeface family");
       add("size", "Font size…", "Style", () => pushSub("Font size", PAL_SIZES.map(([n, v]) => subItem("size-" + n, n, () => applyStyle({ sz: v })))), "scale bigger smaller");
       add("clearfmt", "Clear formatting", "Style", () => clearFormatting(), "remove reset plain");
       add("docstyle", "Document styles…", "Style", () => openDocStyles(), "theme font heading table colors defaults");
+      // host-gated, same as the toolbar button — absent entirely when no host supplies onHistory
+      if (typeof opts.onHistory === "function")
+        add("history", "Version history…", "Document", () => opts.onHistory(), "versions snapshots restore revert earlier previous rollback");
       add("table", "Insert table", "Insert", () => { const s = readSel() || [selA, selB]; openGrid(s[0], s[1]); }, "grid");
       add("image", "Insert image…", "Insert", () => pickImage(), "picture photo figure");
       add("link", "Insert link", "Insert", () => insertLink(), "url hyperlink");
@@ -2743,6 +3047,56 @@
       add("dark", "Toggle dark mode", "View", () => toggleTheme(), "theme night light");
       add("acceptmd", (acceptMd ? "Show raw markdown marks" : "Hide markdown marks (easter egg)"), "View", () => setAcceptMarkdown(!acceptMd), "markdown asterisk raw syntax accept reveal");
       add("copyplain", "Copy clean text", "Export", () => copyCleanAll(), "plain export paste docs");
+      // host-gated, same shape as onHistory: rendering a real-fidelity PDF needs a server that can
+      // drive a headless browser, which only the desktop app has. Absent entirely otherwise, so
+      // the inline web builds don't offer an action that would just fail.
+      if (typeof opts.onExportPdf === "function")
+        add("exportpdf", "Export to PDF…", "Export", () => opts.onExportPdf(), "pdf print save download paper share");
+      // Column width + ruler. Registered here rather than only on the ruler itself, because
+      // Features #3 is "these features should be searchable in the search-actions modal" and a
+      // control that only exists on a bar you first have to know how to show is unfindable.
+      // Width lives OFF the ruler on purpose, the way Docs splits page setup from the ruler: one
+      // drag should not change two things. "Reset" clears both margins AND the width, because
+      // Document styles' own Reset-all nulls every %%doc: key and would otherwise desync them.
+      if (!readOnly) {
+        add("ruler", (isRulerVisible() ? "Hide ruler" : "Show ruler"), "View", () => setRulerVisible(!isRulerVisible()), "margins ruler triangles indent gutter column drag");
+        add("colwidth", "Column width…", "Document", () => pushSub("Column width", [
+          subItem("cw-fit", "Fit window" + (String(docSpec.w || "").toLowerCase() === "fit" ? "  ✓" : ""), () => setDocStyle(clampDocBox({ w: "fit" }))),
+          ...[680, 760, 860, 960, 1100, 1300].map(px =>
+            subItem("cw-" + px, px + " px" + (safeNum(docSpec.w, 320, 2400) === px ? "  ✓" : ""), () => setDocStyle(clampDocBox({ w: px })))),
+          subItem("cw-reset", "Reset to this app's default", () => setDocStyle({ w: null, ml: null, mr: null })),
+        ]), "column width margins page measure narrow wide responsive fit");
+      }
+      add("toc", "Table of contents", "View", () => toggleTOC(), "outline headings contents navigate sidebar");
+      add("wordcount", "Word count", "View", () => openWordCount(), "words characters length statistics count");
+      if (!readOnly) add("save", "Save", "Document", () => onSave(), "write disk persist store");
+      // Comments anchor to pillSel (set while a selection exists), so only offer this with one.
+      if (commentsEnabled && !readOnly && selA !== selB)
+        add("comment", "Add comment", "Insert", () => openComposer(), "note annotate remark side margin feedback");
+      // Table structure — CONTEXTUAL, offered only when the caret was last inside a table, since
+      // "Delete row" is meaningless anywhere else. These mirror the right-click menu, which until
+      // now was the ONLY way to reach them (i.e. they were unsearchable). The ops take an explicit
+      // (wrap, r/c) and refocus the table themselves, so they're safe to run while the palette
+      // input holds focus.
+      const tc = paletteCellCtx();
+      if (tc) {
+        const chk = (on) => on ? "  ✓" : "";
+        if (tc.r >= 1) add("rowabove", "Insert row above", "Table", () => insertRow(tc.wrap, tc.r, -1), "table add new above");
+        add("rowbelow", "Insert row below", "Table", () => insertRow(tc.wrap, tc.r, 1), "table add new below");
+        add("colleft", "Insert column left", "Table", () => insertCol(tc.wrap, tc.c, -1), "table add new left");
+        add("colright", "Insert column right", "Table", () => insertCol(tc.wrap, tc.c, 1), "table add new right");
+        if (tc.r >= 1) add("delrow", "Delete row", "Table", () => deleteRow(tc.wrap, tc.r), "table remove drop");
+        add("delcol", "Delete column", "Table", () => deleteCol(tc.wrap, tc.c), "table remove drop");
+        add("deltable", "Delete table", "Table", () => deleteTable(tc.wrap), "table remove drop");
+        add("tablealign", "Align table…", "Table", () => pushSub("Align table",
+          [["Left", "l"], ["Center", "c"], ["Right", "r"]].map(p =>
+            subItem("ta-" + p[1], p[0] + chk((tc.meta.align || "l") === p[1]), () => setTableMeta(tc.wrap, { align: p[1] })))),
+          "table position left center right justify");
+        add("cellvalign", "Cell text position…", "Table", () => pushSub("Cell text",
+          [["Top", "t"], ["Middle", "m"], ["Bottom", "b"]].map(p =>
+            subItem("va-" + p[1], p[0] + chk((tc.meta.valign || "t") === p[1]), () => setTableMeta(tc.wrap, { valign: p[1] })))),
+          "table vertical align top middle bottom cell");
+      }
       return c;
     }
     function copyCleanAll() {
@@ -2824,6 +3178,124 @@
     }
     function closePalette() { if (!palOpen) return; palOpen = false; pal.classList.remove("open"); palStack = []; surface.focus(); }
 
+    /* ================= right-click context menu (context-aware; replaces the native menu
+       INSIDE the editable surface per Aaron's choice). In a table cell → structural row/column
+       ops + table align + cell v-align; over a selection → format / link / comment; always →
+       clipboard + a jump to the full "Search actions" palette. ================= */
+    const CTX_IC = {
+      rowAbove: '<svg viewBox="0 0 24 24"><rect x="4" y="12" width="16" height="7" rx="1.5"/><path d="M12 3.5v5.5M9.4 6.2h5.2"/></svg>',
+      rowBelow: '<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="7" rx="1.5"/><path d="M12 20.5V15M9.4 17.8h5.2"/></svg>',
+      colLeft:  '<svg viewBox="0 0 24 24"><rect x="12" y="4" width="7" height="16" rx="1.5"/><path d="M3.5 12h5.5M6.2 9.4v5.2"/></svg>',
+      colRight: '<svg viewBox="0 0 24 24"><rect x="5" y="4" width="7" height="16" rx="1.5"/><path d="M20.5 12H15M17.8 9.4v5.2"/></svg>',
+      trash:    '<svg viewBox="0 0 24 24"><path d="M4.5 6.5h15M9.5 6.2V5h5v1.2M6.8 6.5l.8 13h8.8l.8-13"/></svg>',
+      alignL:   '<svg viewBox="0 0 24 24"><path d="M4 6h10M4 12h16M4 18h10"/></svg>',
+      alignC:   '<svg viewBox="0 0 24 24"><path d="M7 6h10M4 12h16M7 18h10"/></svg>',
+      alignR:   '<svg viewBox="0 0 24 24"><path d="M10 6h10M4 12h16M10 18h10"/></svg>',
+      link:     '<svg viewBox="0 0 24 24"><path d="M10 14a3.5 3.5 0 0 0 5 0l3-3a3.5 3.5 0 1 0-5-5l-1 1"/><path d="M14 10a3.5 3.5 0 0 0-5 0l-3 3a3.5 3.5 0 1 0 5 5l1-1"/></svg>',
+      comment:  '<svg viewBox="0 0 24 24"><path d="M20 4H4v13h4v3l4-3h8z"/></svg>',
+      mag:      '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.2-4.2"/></svg>',
+      check:    '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 6.5"/></svg>',
+    };
+    const ctxMenu = document.createElement("div"); ctxMenu.className = "mde-ctx"; document.body.appendChild(ctxMenu);
+    let ctxOpen = false, ctxRows = [], ctxSel = -1, ctxA = 0, ctxB = 0;
+    function closeCtx() { if (!ctxOpen) return; ctxOpen = false; ctxMenu.classList.remove("open"); ctxRows = []; ctxSel = -1; }
+    function ctxRestoreSel() { surface.focus(); setCaret(ctxA, ctxA === ctxB ? null : ctxB); }
+    function buildCtx(target) {
+      const rows = [];
+      const cell = cellOf(target) || (target && target.closest ? target.closest(".mcell") : null);
+      const wrap = target && target.closest ? target.closest(".mtable-wrap") : null;
+      const inCell = !!(wrap && cell) && !readOnly;
+      const hasSel = ctxA !== ctxB;
+      if (inCell) {
+        const r = +cell.dataset.r, c = +cell.dataset.c, meta = tableMeta(wrap);
+        rows.push({ group: "Table" });
+        if (r >= 1) rows.push({ label: "Insert row above", ico: CTX_IC.rowAbove, run: () => insertRow(wrap, r, -1) });
+        rows.push({ label: "Insert row below", ico: CTX_IC.rowBelow, run: () => insertRow(wrap, r, 1) });
+        rows.push({ label: "Insert column left", ico: CTX_IC.colLeft, run: () => insertCol(wrap, c, -1) });
+        rows.push({ label: "Insert column right", ico: CTX_IC.colRight, run: () => insertCol(wrap, c, 1) });
+        rows.push({ sep: true });
+        if (r >= 1) rows.push({ label: "Delete row", ico: CTX_IC.trash, danger: true, run: () => deleteRow(wrap, r) });
+        rows.push({ label: "Delete column", ico: CTX_IC.trash, danger: true, run: () => deleteCol(wrap, c) });
+        rows.push({ label: "Delete table", ico: CTX_IC.trash, danger: true, run: () => deleteTable(wrap) });
+        // List toggles were keyboard-only (⌘⇧8, and ⌘⇧7 is new) — surface them, since a marker
+        // you can't discover may as well not exist. check: reflects the right-clicked LINE, which
+        // is why these read the live selection rather than the cell as a whole.
+        rows.push({ group: "Cell list" });
+        rows.push({ label: "Bulleted list", ico: TB_ICONS.bullets, check: cellLineIsBullet(cell), run: () => cellToggleList(cell, "ul") });
+        rows.push({ label: "Numbered list", ico: TB_ICONS.numbers, check: cellLineIsNumber(cell), run: () => cellToggleList(cell, "ol") });
+        rows.push({ group: "Align table" });
+        const al = meta.align || "l";
+        rows.push({ label: "Left", ico: CTX_IC.alignL, check: al === "l", run: () => setTableMeta(wrap, { align: "l" }) });
+        rows.push({ label: "Center", ico: CTX_IC.alignC, check: al === "c", run: () => setTableMeta(wrap, { align: "c" }) });
+        rows.push({ label: "Right", ico: CTX_IC.alignR, check: al === "r", run: () => setTableMeta(wrap, { align: "r" }) });
+        rows.push({ group: "Cell text" });
+        const va = meta.valign || "t";
+        rows.push({ label: "Top", check: va === "t", run: () => setTableMeta(wrap, { valign: "t" }) });
+        rows.push({ label: "Middle", check: va === "m", run: () => setTableMeta(wrap, { valign: "m" }) });
+        rows.push({ label: "Bottom", check: va === "b", run: () => setTableMeta(wrap, { valign: "b" }) });
+        rows.push({ sep: true });
+      } else if (hasSel && !readOnly) {
+        rows.push({ group: "Format" });
+        rows.push({ label: "Bold", ico: "<b>B</b>", run: () => { ctxRestoreSel(); toggleInline("b"); } });
+        rows.push({ label: "Italic", ico: "<i>I</i>", run: () => { ctxRestoreSel(); toggleInline("em"); } });
+        rows.push({ label: "Underline", ico: "<u>U</u>", run: () => { ctxRestoreSel(); toggleUnderline(); } });
+        rows.push({ label: "Strikethrough", ico: "<s>S</s>", run: () => { ctxRestoreSel(); toggleInline("del"); } });
+        rows.push({ label: "Link…", ico: CTX_IC.link, run: () => { ctxRestoreSel(); insertLink(); } });
+        if (commentsEnabled) rows.push({ label: "Add comment", ico: CTX_IC.comment, run: () => { ctxRestoreSel(); openComposer(); } });
+        rows.push({ sep: true });
+      }
+      // Clipboard works on the LIVE DOM selection (kept alive by each item's mousedown preventDefault),
+      // so it must NOT restore the doc selection — that would move focus out of a table cell.
+      if (!readOnly) rows.push({ label: "Cut", run: () => document.execCommand("cut") });
+      rows.push({ label: "Copy", run: () => document.execCommand("copy") });
+      if (!readOnly) rows.push({ label: "Paste", run: () => ctxPaste() });
+      rows.push({ sep: true });
+      rows.push({ label: "More actions…", ico: CTX_IC.mag, run: () => openPalette() });
+      return rows;
+    }
+    function ctxPaste() {
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        navigator.clipboard.readText().then(t => { if (t) document.execCommand("insertText", false, t); }).catch(() => {});
+      } else { try { document.execCommand("paste"); } catch (_) {} }
+    }
+    function renderCtx() {
+      let html = ""; ctxRows.forEach((row, i) => {
+        if (row.sep) { html += '<div class="mde-ctx-sep"></div>'; return; }
+        if (row.group) { html += '<div class="mde-ctx-group">' + esc(row.group) + "</div>"; return; }
+        html += '<div class="mde-ctx-item' + (row.danger ? " danger" : "") + (i === ctxSel ? " sel" : "") + '" data-i="' + i + '">' +
+          '<span class="mde-ctx-ico">' + (row.ico || "") + '</span><span class="mde-ctx-t">' + esc(row.label) + "</span>" +
+          (row.check ? '<span class="mde-ctx-chk">' + CTX_IC.check + "</span>" : "") + "</div>";
+      });
+      ctxMenu.innerHTML = html;
+      ctxMenu.querySelectorAll(".mde-ctx-item").forEach(el => {
+        el.addEventListener("mousedown", e => { e.preventDefault(); e.stopPropagation(); runCtx(+el.dataset.i); });
+        el.addEventListener("mousemove", () => { ctxSel = +el.dataset.i; highlightCtx(); });
+      });
+    }
+    function highlightCtx() { ctxMenu.querySelectorAll(".mde-ctx-item").forEach(el => el.classList.toggle("sel", +el.dataset.i === ctxSel)); }
+    function runCtx(i) { const row = ctxRows[i]; if (!row || !row.run) return; closeCtx(); try { row.run(); } catch (_) {} }
+    function openCtx(x, y, target) {
+      const sel = readSel(); ctxA = sel ? sel[0] : selA; ctxB = sel ? sel[1] : selA;
+      ctxRows = buildCtx(target); if (!ctxRows.length) return;
+      ctxSel = -1; ctxOpen = true; renderCtx(); ctxMenu.classList.add("open");
+      const w = ctxMenu.offsetWidth || 220, h = ctxMenu.offsetHeight || 260;
+      let left = x, top = y;
+      if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
+      if (top + h > window.innerHeight - 8) top = Math.max(8, y - h);
+      ctxMenu.style.left = Math.max(8, left) + "px"; ctxMenu.style.top = Math.max(8, top) + "px";
+    }
+    surface.addEventListener("contextmenu", e => { e.preventDefault(); openCtx(e.clientX, e.clientY, e.target); });
+    document.addEventListener("mousedown", e => { if (ctxOpen && !ctxMenu.contains(e.target)) closeCtx(); });
+    document.addEventListener("keydown", e => {
+      if (!ctxOpen) return;
+      const idxs = ctxRows.map((r, i) => (r.sep || r.group) ? -1 : i).filter(i => i >= 0);
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeCtx(); surface.focus(); }
+      else if (e.key === "ArrowDown") { e.preventDefault(); e.stopPropagation(); const p = idxs.indexOf(ctxSel); ctxSel = idxs[(p + 1) % idxs.length]; highlightCtx(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); e.stopPropagation(); const p = idxs.indexOf(ctxSel); ctxSel = idxs[(p - 1 + idxs.length) % idxs.length]; highlightCtx(); }
+      else if (e.key === "Enter" && ctxSel >= 0) { e.preventDefault(); e.stopPropagation(); runCtx(ctxSel); }
+      else if (e.key.length === 1 || e.key === "Backspace" || e.key === "Delete") { closeCtx(); }  // any real input dismisses (and proceeds normally)
+    }, true);
+
     document.addEventListener("mousedown", e => {
       if ((menuOpen && !menu.contains(e.target)) || (gridOpen && !gridPop.contains(e.target) && !surface.contains(e.target))) { closeMenu(); closeGrid(); }
       if (palOpen && !pal.contains(e.target)) closePalette();
@@ -2854,7 +3326,7 @@
     function getCmtModel() { if (cmtModelKey !== text) { cmtModel = scanCmtModel(text); cmtModelKey = text; } return cmtModel; }
     function cmtSignature(m) {
       let s = "";
-      for (const c of m.comments) s += c.id + c.state + (m.anchors.has(c.id) ? "1" : "0") + "\x01";
+      for (const c of m.comments) s += c.id + c.state + (m.anchors.has(c.id) ? "1" : "0") + "\x04" + (c.body || "") + "\x01";   // body IS in the sig so an author edit rebuilds the card
       s += "\x02";
       for (const r of m.reactions) s += r.id + "\x03" + r.emoji + "\x03" + r.users.length + "\x01";
       return s;
@@ -3001,6 +3473,20 @@
       if (!done) return false;
       cmtMutate(splices, "cmt"); return true;
     }
+    // edit a comment's body in place (author-only) — rewrites its %%mdc%% line, keeping state/author/ts.
+    function setCommentBody(id, body) {
+      if (readOnly || !commentsEnabled) return false;
+      const c = getCmtModel().comments.find(x => x.id === id); if (!c) return false;
+      if (c.authorId !== cmtUser.id) return false;   // only the comment's author may edit it
+      const splices = []; let off = 0, done = false;
+      for (const ln of text.split("\n")) {
+        const le = off + ln.length; const mm = MDC_LINE_RE.exec(ln);
+        if (mm && unescMeta(splitMeta(mm[1], "|")[0] || "") === id) { splices.push({ at: off, del: le - off, ins: mdcLine(id, c.state, { id: c.authorId, name: c.authorName }, c.ts, body) }); done = true; break; }
+        off = le + 1;
+      }
+      if (!done) return false;
+      cmtMutate(splices, "cmt"); return true;
+    }
     function deleteCommentOp(id) {
       if (readOnly || !commentsEnabled) return false;
       const m = getCmtModel(); if (!m.comments.some(c => c.id === id)) return false;
@@ -3055,9 +3541,10 @@
     const CMT_ICON_CHECK   = '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
     const CMT_ICON_TRASH   = '<svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M6.6 7l.8 12.4a1.5 1.5 0 0 0 1.5 1.4h6.2a1.5 1.5 0 0 0 1.5-1.4L17.4 7"/></svg>';
     const CMT_ICON_CHEVRON = '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
+    const CMT_ICON_PENCIL  = '<svg viewBox="0 0 24 24"><path d="M4 20h4L18.5 9.5a2 2 0 0 0-2.8-2.8L5 17v3z"/><path d="M14 8l2.8 2.8"/></svg>';
     const reactionPicker = commentsEnabled ? makeEmojiPicker(REACT_EMOJIS) : null;
     let cmtRoot = null, cmtRailEl = null, cmtStripEl = null, cmtPill = null, cmtComposer = null;
-    let cmtFocusId = null, cmtRaf = 0, cmtNarrow = false, pillSel = [0, 0];
+    let cmtFocusId = null, cmtRaf = 0, cmtNarrow = false, pillSel = [0, 0], cmtStageBasePadR = null;
     let cmtCollapsed = (function () { try { return localStorage.getItem("mde-cmt-collapsed") === "1"; } catch (_) { return false; } })();
 
     function iconBtn(svg, title, onClick) {
@@ -3115,6 +3602,22 @@
       return cmtRoot;
     }
     function onCmtReflow() { if (cmtRaf) return; cmtRaf = requestAnimationFrame(() => { cmtRaf = 0; positionCmtRail(); }); }
+    // Reserve horizontal room on the (scrolling) stage equal to the rail width, so the centered
+    // document never underlaps the comment cards or the divider. The stage's overflow:auto then
+    // gives a horizontal scrollbar if a wide element (e.g. a big table) no longer fits. (Tweak 1.)
+    function updateCmtReserve() {
+      if (!stage || !commentsEnabled) return;
+      if (cmtStageBasePadR == null) cmtStageBasePadR = parseFloat(getComputedStyle(stage).paddingRight) || 0;
+      const active = cmtRoot && !cmtCollapsed && !cmtNarrow && cmtRailEl && cmtRailEl.children.length > 0;
+      const railW = active ? (cmtRailEl.getBoundingClientRect().width || 0) : 0;
+      const want = (cmtStageBasePadR + railW) + "px";
+      if (stage.style.paddingRight !== want) stage.style.paddingRight = want;
+      // Mark the element that carries the INLINE reservation so the print stylesheet can undo it.
+      // The stage is whatever the host gave us (scrollParent || .editor-stage || parentElement),
+      // so a class-name-based print rule would miss hosts that use none of those — and the rail
+      // is display:none in print, leaving a dead band the rail's width down every page.
+      stage.classList.add("mde-cmt-reserved");
+    }
     function placeCmtRoot() {
       if (!cmtRoot || !stage) return;
       const r = stage.getBoundingClientRect();
@@ -3127,6 +3630,7 @@
       cmtNarrow = r.width <= 600;
       cmtRoot.classList.toggle("narrow", cmtNarrow);
       cmtRoot.classList.toggle("collapsed", cmtCollapsed);
+      updateCmtReserve();
     }
     function buildChipRow(id) {
       const m = getCmtModel();
@@ -3142,6 +3646,37 @@
       if (!readOnly) { const add = iconBtn(CMT_ICON_SMILE, "Add reaction", e => { e.stopPropagation(); reactionPicker.open(add, emoji => { if (emoji) toggleReactionOp(id, null, emoji); }); }); add.className = "mde-cmt-chip-add"; row.appendChild(add); }
       return row;
     }
+    // inline author edit: swap the card body for an editable box + Save/Cancel. Save rewrites the
+    // %%mdc%% line (which re-renders the rail); Cancel restores the body without a mutation.
+    function startCardEdit(card, c) {
+      const body = card.querySelector(".mde-cmt-body"); if (!body || card.querySelector(".mde-cmt-editwrap")) return;
+      const wrap = document.createElement("div"); wrap.className = "mde-cmt-editwrap";
+      const box = document.createElement("div"); box.className = "mde-cmt-editbox"; box.contentEditable = "true"; box.textContent = c.body || "";
+      const bar = document.createElement("div"); bar.className = "mde-cmt-editbar";
+      const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "mde-cmt-editcancel"; cancel.textContent = "Cancel";
+      const save = document.createElement("button"); save.type = "button"; save.className = "mde-cmt-editsave"; save.textContent = "Save";
+      bar.appendChild(cancel); bar.appendChild(save);
+      wrap.appendChild(box); wrap.appendChild(bar);
+      body.style.display = "none"; body.after(wrap);
+      const finish = (doSave) => {
+        if (doSave) { const nb = (box.innerText != null ? box.innerText : (box.textContent || "")).replace(/ /g, " ").trim();
+          if (nb && nb !== c.body) { wrap.remove(); body.style.display = ""; setCommentBody(c.id, nb); return; } }   // close the editor FIRST, then persist → re-renders with the new body
+        wrap.remove(); body.style.display = "";                              // cancel / no change → restore the body
+      };
+      box.addEventListener("click", e => e.stopPropagation());
+      box.addEventListener("keydown", e => {
+        e.stopPropagation();
+        if (e.key === "Escape") { e.preventDefault(); finish(false); }
+        else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); finish(true); }
+      });
+      cancel.addEventListener("mousedown", e => e.preventDefault());
+      cancel.addEventListener("click", e => { e.stopPropagation(); finish(false); });
+      save.addEventListener("mousedown", e => e.preventDefault());
+      save.addEventListener("click", e => { e.stopPropagation(); finish(true); });
+      box.focus();
+      const r = document.createRange(); r.selectNodeContents(box); r.collapse(false);
+      const s = document.getSelection(); s.removeAllRanges(); s.addRange(r);
+    }
     function buildCard(c) {
       const card = document.createElement("div"); card.className = "mde-cmt-card"; card.dataset.cid = c.id;
       card.addEventListener("click", () => focusComment(c.id));
@@ -3153,6 +3688,10 @@
       meta.appendChild(nm); meta.appendChild(tm); head.appendChild(meta);
       if (!readOnly) {
         const actions = document.createElement("div"); actions.className = "mde-cmt-actions";
+        if (c.authorId === cmtUser.id) {   // only the author may edit their own comment
+          const edit = iconBtn(CMT_ICON_PENCIL, "Edit", e => { e.stopPropagation(); startCardEdit(card, c); }); edit.className = "mde-cmt-act";
+          actions.appendChild(edit);
+        }
         const resolve = iconBtn(CMT_ICON_CHECK, "Resolve", e => { e.stopPropagation(); setCommentState(c.id, "r"); }); resolve.className = "mde-cmt-act";
         const del = iconBtn(CMT_ICON_TRASH, "Delete", e => { e.stopPropagation(); deleteCommentOp(c.id); }); del.className = "mde-cmt-act danger";
         actions.appendChild(resolve); actions.appendChild(del); head.appendChild(actions);
@@ -3267,7 +3806,14 @@
       // if there's no room (a narrow host).
       const sr = stage ? stage.getBoundingClientRect() : { right: window.innerWidth };
       const surfR = surface.getBoundingClientRect();
-      let left = sr.right - pr.width - 14;
+      // When the comment rail is EXPANDED with cards, dock the pill just LEFT of the rail's divider
+      // rather than the stage's far right (where it would sit on top of the cards). Bug 10.
+      let dockRight = 14;
+      if (cmtRoot && !cmtCollapsed && cmtRailEl && cmtRailEl.children.length > 0) {
+        const railW = cmtRailEl.getBoundingClientRect().width || 0;
+        if (railW > 0) dockRight = railW - pr.width / 2;   // center the pill ON the rail divider (tweak 2)
+      }
+      let left = sr.right - pr.width - dockRight;
       if (left < surfR.right + 6) left = Math.min(rect.right + 8, window.innerWidth - pr.width - M);
       left = Math.max(M, left);
       let top = Math.max(M, Math.min((rect.top + rect.bottom) / 2 - pr.height / 2, window.innerHeight - pr.height - M));
@@ -3717,11 +4263,13 @@
       for (const v of DOC_VARS) surface.style.removeProperty(v);
       const set = (v, val) => surface.style.setProperty(v, val);
       let c;
-      if (docSpec.font && FONT_STACKS[docSpec.font]) set("--mde-doc-font", FONT_STACKS[docSpec.font]);
+      if (docSpec.font && (c = safeFamily(docSpec.font))) set("--mde-doc-font", c);
       const bpx = safeNum(docSpec.sz, 10, 32);
       if (bpx != null) set("--mde-doc-size", bpx + "px");
       if (docSpec.c && (c = safeColor(docSpec.c))) set("--mde-doc-ink", c);
-      if (docSpec.hfont && FONT_STACKS[docSpec.hfont]) set("--mde-doc-hfont", FONT_STACKS[docSpec.hfont]);
+      // serif fallback: .ln.h resolves var(--mde-doc-hfont, var(--mde-serif)), so an uninstalled
+      // heading family must degrade to serif, not to safeFamily's sans default.
+      if (docSpec.hfont && (c = safeFamily(docSpec.hfont, FAMILY_FB_SERIF))) set("--mde-doc-hfont", c);
       for (let l = 1; l <= 3; l++) {
         if (docSpec["h" + l + "c"] && (c = safeColor(docSpec["h" + l + "c"]))) set("--mde-doc-h" + l + "c", c);
         const px = safeNum(docSpec["h" + l + "sz"], 10, 72);
@@ -3736,6 +4284,241 @@
       if (lh != null) set("--mde-doc-lh", lh);
       const ind = safeNum(docSpec.ind, 0, 6);
       if (ind != null) set("--mde-doc-indent", ind + "em");
+      applyDocBox(false);
+    }
+
+    /* ===== the document box: column width (#2) + ruler margins (#1) ==========================
+       Three per-document keys, all ABSENT by default — and absent means "write nothing and clear
+       nothing", so every host keeps the layout it has today. That property is what makes shipping
+       this to three live consumers safe, so it is load-bearing, not politeness.
+
+         w   920 | fit    column width in px, or "fit" to fill the stage        (request #2)
+         ml  0-35          left margin, PERCENT of the resolved box             (request #1)
+         mr  0-35          right margin, PERCENT of the resolved box
+
+       Applied as INLINE properties, never as CSS vars that a stylesheet consumes. Two reasons,
+       both measured: (1) every host sets the column at a specificity md-editor.css cannot reach —
+       `#mde-host .md-surface` (Helthy HQ, 820px), `.write-zen .mde-host .md-surface` (portal,
+       760px), and a later equal-specificity rule in AP; (2) there is no !important escape hatch,
+       because `max-width: var(--w) !important` with --w absent is invalid-at-computed-value-time
+       and falls back to `unset`, which would break every host that relies on its own max-width.
+
+       Stored as PERCENT, resolved to PX here. Percent is right for storage — the same document
+       opens in a 760px portal column and an 860px app column and should look proportional in both.
+       Percent is WRONG in the CSS, and that is not a style opinion: percentage padding resolves
+       against the CONTAINING BLOCK, not against the element's own box, so `ml=mr=35` on a 1400px
+       stage measured a border box of 980px (past its own 860px max-width, because used width cannot
+       go below the padding) and a text column of exactly 0px — at the permitted maximum. Resolving
+       to px here is what lets MIN_COL below be a real guarantee instead of an advertised one.
+       ===================================================================================== */
+    const MIN_COL = 200;              // px of text the clamp will not let the margins eat into
+    let boxCache = null;              // { key, boxW, padL, padR } — see applyDocBox's remeasure note
+    function docBoxKey() { return [docSpec.w || "", docSpec.ml || "", docSpec.mr || ""].join("|"); }
+    // Resolve and write the box. `remeasure` is a real perf switch, not a hint: measuring forces
+    // layout, and applyDocVars runs on every render() — i.e. every keystroke. So geometry is
+    // measured only when the SPEC changed or the stage resized (ResizeObserver below), and a
+    // plain re-render just re-writes the cached px.
+    function applyDocBox(remeasure) {
+      const key = docBoxKey();
+      if (!key) {                                        // no box keys at all: leave the host alone
+        if (boxCache || surface.style.maxWidth || surface.style.paddingLeft || surface.style.paddingRight) {
+          for (const p of ["max-width", "margin-left", "margin-right", "padding-left", "padding-right"]) surface.style.removeProperty(p);
+          delete surface.dataset.mdeDocMargins;
+        }
+        boxCache = null;
+        return;
+      }
+      const wRaw = String(docSpec.w || "").trim().toLowerCase();
+      const wPx = wRaw === "fit" ? "fit" : safeNum(wRaw, 320, 2400);
+      // width first: the margins are a fraction OF this box, so it has to be settled before we
+      // measure. (safeNum REJECTS out of range rather than clamping — md-editor.js:274 — so a
+      // nonsense w falls through to the host's own width, which is the safe direction.)
+      if (wPx === "fit") { surface.style.maxWidth = "none"; surface.style.marginLeft = "auto"; surface.style.marginRight = "auto"; }
+      else if (wPx != null) { surface.style.maxWidth = wPx + "px"; surface.style.marginLeft = "auto"; surface.style.marginRight = "auto"; }
+      else { for (const p of ["max-width", "margin-left", "margin-right"]) surface.style.removeProperty(p); }
+
+      const mlPct = safeNum(docSpec.ml, 0, 35), mrPct = safeNum(docSpec.mr, 0, 35);
+      if (mlPct == null && mrPct == null) {
+        surface.style.removeProperty("padding-left"); surface.style.removeProperty("padding-right");
+        delete surface.dataset.mdeDocMargins;
+        boxCache = { key, boxW: 0, padL: null, padR: null };
+        return;
+      }
+      if (remeasure || !boxCache || boxCache.key !== key || !boxCache.boxW) {
+        // Only the side whose key is PRESENT gets an inline value. The absent side keeps the host's
+        // own gutter, which is not decoration: student-portal sets
+        // `padding-left: max(28px, env(safe-area-inset-left))` below 860px precisely so text clears
+        // the notch in landscape and the engine's own floating tab-reveal / TOC buttons. Writing 0
+        // to an unset side would put the first line under a button, or under the notch.
+        const cs = getComputedStyle(surface);
+        const hostL = parseFloat(cs.paddingLeft) || 0, hostR = parseFloat(cs.paddingRight) || 0;
+        // measure the box with OUR padding temporarily cleared, so a previous run's value can't
+        // feed back into the new one (the seeded-value feedback loop: 10% → 16.3% → 26.6% → …)
+        const prevL = surface.style.paddingLeft, prevR = surface.style.paddingRight;
+        if (mlPct != null) surface.style.paddingLeft = "0px";
+        if (mrPct != null) surface.style.paddingRight = "0px";
+        let boxW = surface.getBoundingClientRect().width || 0;
+        surface.style.paddingLeft = prevL; surface.style.paddingRight = prevR;
+        let padL = mlPct != null ? Math.round(boxW * mlPct / 100) : null;
+        let padR = mrPct != null ? Math.round(boxW * mrPct / 100) : null;
+        // the clamp is on RESOLVED PX against the real box, which is the only place it can be a
+        // guarantee. Scale down proportionally, and only the sides we own.
+        const fixed = (padL == null ? hostL : 0) + (padR == null ? hostR : 0);
+        const ours = (padL || 0) + (padR || 0);
+        const room = Math.max(0, boxW - fixed - MIN_COL);
+        if (ours > room) {
+          const k = ours ? room / ours : 0;
+          if (padL != null) padL = Math.floor(padL * k);
+          if (padR != null) padR = Math.floor(padR * k);
+        }
+        boxCache = { key, boxW, padL, padR };
+      }
+      if (boxCache.padL != null) surface.style.paddingLeft = boxCache.padL + "px"; else surface.style.removeProperty("padding-left");
+      if (boxCache.padR != null) surface.style.paddingRight = boxCache.padR + "px"; else surface.style.removeProperty("padding-right");
+      surface.dataset.mdeDocMargins = "1";
+    }
+    // A px-resolved box has to be re-resolved when the stage changes size — that IS request #2
+    // (responsive to browser width). Deliberately a ResizeObserver on the stage rather than a
+    // window resize listener: the portal's zen surface changes width when its rail collapses with
+    // no window resize at all, and the comments rail re-reserves stage padding the same way.
+    if (typeof ResizeObserver === "function") {
+      const boxRO = new ResizeObserver(() => { if (docBoxKey()) applyDocBox(true); if (rulerOn) syncRuler(); });
+      try { boxRO.observe(stage); } catch (_) {}
+      if (stage !== surface.parentElement && surface.parentElement) { try { boxRO.observe(surface.parentElement); } catch (_) {} }
+    }
+    /* ===== the ruler (New requests #1) =======================================================
+       A Docs-style ruler above the document: a track spanning the page box with two draggable
+       triangles that set the left/right margins. Four things here are decisions, not details:
+
+       • OFF by default, remembered per browser. A version bump must not hand three live consumer
+         hosts new chrome they never asked for. Discoverable through the ⌥/ palette (View → "Show
+         ruler"), which also keeps it inside Features #3's "everything must be searchable" rule.
+       • NEVER built when readOnly. The ruler is a mutation affordance — a drag ends in
+         setDocStyle → snapshot + text mutation + render + onInput — and student-portal renders
+         parents and share-link viewers read-only. There it would dirty a document the viewer
+         cannot save and, with the collab binding attached, broadcast that mutation to every peer.
+       • Docked at z-index 52, above .mde-toolbar's 50/51, and it publishes its own height into
+         --mde-toc-below-top. Without that the floating TOC button (position:fixed, z-index 280,
+         top:7px right:12px, sized to the STAGE) sits exactly where the right triangle goes and
+         eats its pointer events — at every window width, not just narrow ones. The tab-reveal
+         handle does the same on the left.
+       • A triangle seeded from the HOST's computed padding is never committed. Only the side the
+         user actually dragged is written. Otherwise opening the ruler and nudging one side would
+         silently bake the other side's host gutter into the document as a doc-level margin.
+       ===================================================================================== */
+    let rulerEl = null, rulerTrack = null, rulerBox = null, rulerOn = false;
+    try { rulerOn = localStorage.getItem("mde-ruler") === "1"; } catch (_) {}
+    function rulerPct() {
+      // The doc's own value when it has one (exact, no read-back), the host's computed gutter only
+      // when it does not. `set` records which is which, so a drag can commit ONLY what it touched.
+      const ml = safeNum(docSpec.ml, 0, 35), mr = safeNum(docSpec.mr, 0, 35);
+      const cs = getComputedStyle(surface), box = surface.getBoundingClientRect().width || 1;
+      return {
+        box,
+        l: ml != null ? ml : Math.min(35, Math.round((parseFloat(cs.paddingLeft) || 0) / box * 1000) / 10),
+        r: mr != null ? mr : Math.min(35, Math.round((parseFloat(cs.paddingRight) || 0) / box * 1000) / 10),
+        lSet: ml != null, rSet: mr != null
+      };
+    }
+    function syncRuler() {
+      if (!rulerEl || !rulerTrack) return;
+      const sr = surface.getBoundingClientRect(), rr = rulerEl.getBoundingClientRect();
+      rulerTrack.style.width = Math.round(sr.width) + "px";
+      rulerTrack.style.marginLeft = Math.round(sr.left - rr.left) + "px";
+      const p = rulerPct(); rulerBox = p;
+      const padL = Math.round(p.box * p.l / 100), padR = Math.round(p.box * p.r / 100);
+      rulerTrack.style.setProperty("--r-l", padL + "px");
+      rulerTrack.style.setProperty("--r-r", padR + "px");
+      rulerTrack.dataset.l = p.l; rulerTrack.dataset.r = p.r;
+      // keep the floating TOC / tab-reveal buttons below the bar AND the ruler
+      const barH = barEl ? Math.round(barEl.getBoundingClientRect().height) : 0;
+      const rulH = Math.round(rulerEl.getBoundingClientRect().height);
+      rulerEl.style.top = barH + "px";
+      const host = surface.parentElement || surface;
+      host.style.setProperty("--mde-toc-below-top", (barH + rulH + 10) + "px");
+    }
+    function buildRuler() {
+      if (rulerEl || readOnly) return;
+      const parent = surface.parentElement; if (!parent) return;
+      rulerEl = document.createElement("div");
+      rulerEl.className = "mde-ruler"; rulerEl.setAttribute("contenteditable", "false");
+      rulerEl.setAttribute("aria-label", "Document margins");
+      rulerTrack = document.createElement("div"); rulerTrack.className = "mde-ruler-track";
+      const fill = document.createElement("div"); fill.className = "mde-ruler-fill";
+      rulerTrack.appendChild(fill);
+      for (const side of ["l", "r"]) {
+        const tri = document.createElement("button");
+        tri.type = "button"; tri.className = "mde-ruler-tri mde-ruler-tri-" + side; tri.tabIndex = -1;
+        tri.setAttribute("aria-label", (side === "l" ? "Left" : "Right") + " margin");
+        tri.addEventListener("pointerdown", e => startRulerDrag(e, side, tri));
+        rulerTrack.appendChild(tri);
+      }
+      rulerEl.appendChild(rulerTrack);
+      // AFTER the toolbar: buildToolbar does parent.insertBefore(bar, surface), so inserting before
+      // the surface now lands between the two. Order matters — whichever is inserted last ends up
+      // closest to the surface, and a ruler above the bar would be nonsense.
+      parent.insertBefore(rulerEl, surface);
+      syncRuler();
+    }
+    function startRulerDrag(e, side, tri) {
+      if (readOnly) return;
+      e.preventDefault(); e.stopPropagation();
+      const p = rulerPct(), box = p.box;
+      const startX = e.clientX, startPct = side === "l" ? p.l : p.r;
+      const otherPct = side === "l" ? p.r : p.l;
+      // the live cap mirrors applyDocBox's MIN_COL guarantee, so the drag can't visibly propose a
+      // column the commit would then refuse to honour
+      const capPct = Math.max(0, Math.min(35, (box - MIN_COL) / box * 100 - otherPct));
+      let pct = startPct;
+      tri.classList.add("dragging");
+      const move = ev => {
+        const dx = (ev.clientX - startX) * (side === "l" ? 1 : -1);
+        pct = Math.max(0, Math.min(capPct, Math.round((startPct + dx / box * 100) * 10) / 10));
+        // preview writes the inline padding directly: no text mutation, no snapshot, so the whole
+        // gesture stays ONE undo step. A re-render mid-drag resets it to the committed value for a
+        // frame, then the next pointermove re-writes it.
+        surface.style[side === "l" ? "paddingLeft" : "paddingRight"] = Math.round(box * pct / 100) + "px";
+        rulerTrack.style.setProperty(side === "l" ? "--r-l" : "--r-r", Math.round(box * pct / 100) + "px");
+      };
+      const up = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        tri.classList.remove("dragging");
+        // commit ONLY the dragged side (see the seeding note above), and hold the reading position:
+        // setDocStyle ends in render() + setCaret(), which rebuilds the surface and scrolls the
+        // caret into view — a margin nudge should not jump the page.
+        const sc = stage && stage.scrollTop;
+        const props = {}; props[side === "l" ? "ml" : "mr"] = pct;
+        setDocStyle(clampDocBox(props));
+        if (stage && sc != null) stage.scrollTop = sc;
+        syncRuler();
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    }
+    function setRulerVisible(v) {
+      if (readOnly) return;
+      rulerOn = !!v;
+      try { localStorage.setItem("mde-ruler", rulerOn ? "1" : "0"); } catch (_) {}
+      if (rulerOn) { buildRuler(); if (rulerEl) rulerEl.classList.add("on"); }
+      else if (rulerEl) rulerEl.classList.remove("on");
+      if (rulerOn) syncRuler();
+      else if (surface.parentElement) surface.parentElement.style.removeProperty("--mde-toc-below-top");
+    }
+    function isRulerVisible() { return !!rulerOn && !readOnly; }
+    // Pre-clamp before writing to %%doc:%%, because safeNum REJECTS an out-of-range value instead
+    // of clamping it (:274) — an unclamped 40 would be silently dropped and read back as "no
+    // margin", which looks like the control is broken rather than limited.
+    function clampDocBox(props) {
+      const o = {};
+      for (const k in props) {
+        let v = props[k];
+        if (v == null || v === "") { o[k] = null; continue; }
+        if (k === "ml" || k === "mr") v = Math.max(0, Math.min(35, Math.round(parseFloat(v) * 10) / 10));
+        else if (k === "w") v = String(v).trim().toLowerCase() === "fit" ? "fit" : Math.max(320, Math.min(2400, Math.round(parseFloat(v))));
+        o[k] = v;
+      }
+      return o;
     }
     function getDocStyle() { const o = {}; for (const k in docSpec) o[k] = docSpec[k]; return o; }
     function setDocStyle(props) {
@@ -3931,12 +4714,42 @@
       });
       return b;
     }
-    function dsSelect(key, options) {
+    function dsSelect(key, options, fonts) {
       const s = document.createElement("select"); s.className = "mde-ds-select";
       options.forEach(op => { const o = document.createElement("option"); o.value = op[1]; o.textContent = op[0]; s.appendChild(o); });
-      s.value = docSpec[key] || "";
-      s.addEventListener("change", () => { const p = {}; p[key] = s.value || null; setDocStyle(p); refreshDs(); });
+      if (fonts) {
+        if (installedFams.length) {
+          const g = document.createElement("optgroup"); g.label = "Installed";
+          installedFams.forEach(f => {
+            const o = document.createElement("option"); o.value = f; o.textContent = f;
+            o.style.fontFamily = '"' + f + '", ' + FAMILY_FB;
+            g.appendChild(o);
+          });
+          s.appendChild(g);
+        }
+        const cu = document.createElement("option"); cu.hidden = true; cu.value = FONT_CUSTOM_SENTINEL;
+        s.appendChild(cu); s._dsCustom = cu;
+      }
+      s.addEventListener("change", () => {
+        if (s.value === FONT_CUSTOM_SENTINEL) return;
+        const p = {}; p[key] = s.value || null; setDocStyle(p); refreshDs();
+      });
+      dsSyncSelect(s, key);
       return s;
+    }
+    /* Reflect docSpec[key] back into a select. For the font selects a family this machine
+       doesn't list still has to display: without the hidden mirror the select lands on
+       selectedIndex -1 and renders BLANK while the document is in fact styled — and an arrow
+       key on a -1 select selects the first option and fires change, silently wiping the doc's
+       font. */
+    function dsSyncSelect(s, key) {
+      const v = docSpec[key] || "", cu = s._dsCustom;
+      if (cu) {
+        const known = !!v && Array.from(s.options).some(o => o !== cu && o.value === v);
+        if (v && !known) { cu.value = v; cu.textContent = v; }
+        else { cu.value = FONT_CUSTOM_SENTINEL; cu.textContent = ""; }
+      }
+      s.value = v;
     }
     function dsNum(key, ph, lo, hi) {
       const n = document.createElement("input");
@@ -3959,7 +4772,7 @@
     function refreshDs() {
       if (!dsModal) return;
       dsModal.querySelectorAll(".mde-ds-well").forEach(w => w._paint && w._paint());
-      dsModal.querySelectorAll(".mde-ds-select").forEach(s => { if (s.dataset.dskey) s.value = docSpec[s.dataset.dskey] || ""; });
+      dsModal.querySelectorAll(".mde-ds-select").forEach(s => { if (s.dataset.dskey) dsSyncSelect(s, s.dataset.dskey); });
     }
     function buildDsDom() {
       dsScrim = document.createElement("div"); dsScrim.className = "mde-ds-scrim";
@@ -3973,8 +4786,8 @@
     function openDocStyles() {
       if (!dsScrim) buildDsDom();
       dsModal.innerHTML = '<div class="mde-ds-title">Document styles<span class="mde-ds-sub">saved inside this document</span></div>';
-      const bodyFont = dsSelect("font", DS_FONTS); bodyFont.dataset.dskey = "font";
-      const headFont = dsSelect("hfont", DS_FONTS); headFont.dataset.dskey = "hfont";
+      const bodyFont = dsSelect("font", DS_FONTS, true); bodyFont.dataset.dskey = "font";
+      const headFont = dsSelect("hfont", DS_FONTS, true); headFont.dataset.dskey = "hfont";
       const lineSpacing = dsSelect("lh", [["Default", ""], ["Single", "1"], ["1.15", "1.15"], ["1.5", "1.5"], ["Double", "2"]]);
       lineSpacing.dataset.dskey = "lh";
       const paraIndent = dsSelect("ind", [["None", ""], ["0.25in", "1.5"], ["0.5in", "3"]]);
@@ -4038,6 +4851,8 @@
       system: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="12" rx="2"/><path d="M9 21h6M12 17v4"/></svg>',
       // the PROse-design (Lucide) highlighter
       hilite: '<svg viewBox="0 0 24 24"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>',
+      // vendored Lucide "history" (24×24, 2px stroke, round caps) — unmodified path data
+      history: '<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>',
     };
     const toolbarEnabled = !!opts.toolbar;
     // The toolbar is a sticky, OPAQUE bar at the top of the scrolling stage — document text
@@ -4105,9 +4920,36 @@
       // font family + size (selection-level, invisible @{s:…} styling)
       const fontSel = document.createElement("select");
       fontSel.className = "mde-tb-select mde-tb-font"; fontSel.title = "Font (selection)";
-      DS_FONTS.forEach(op => { const o = document.createElement("option"); o.value = op[1]; o.textContent = op[0]; fontSel.appendChild(o); });
-      fontSel.addEventListener("change", () => { applyStyle({ f: fontSel.value || null }); surface.focus(); });
-      tbDd(bar, fontSel); barB.font = fontSel;
+      const fontCustom = document.createElement("option"); fontCustom.hidden = true; fontCustom.value = FONT_CUSTOM_SENTINEL;
+      // Rebuilt rather than appended to, because a host's fontList may resolve asynchronously —
+      // buildToolbar() runs synchronously inside makeEditor, long before a fetch() comes back.
+      const fillFonts = () => {
+        const keep = fontSel.value;
+        fontSel.textContent = "";
+        DS_FONTS.forEach(op => { const o = document.createElement("option"); o.value = op[1]; o.textContent = op[0]; fontSel.appendChild(o); });
+        if (installedFams.length) {
+          const g = document.createElement("optgroup"); g.label = "Installed";
+          installedFams.forEach(f => {
+            const o = document.createElement("option"); o.value = f; o.textContent = f;
+            o.style.fontFamily = '"' + f + '", ' + FAMILY_FB;   // preview each name in its own face
+            g.appendChild(o);
+          });
+          fontSel.appendChild(g);
+        }
+        fontSel.appendChild(fontCustom);
+        fontSel.value = keep;
+      };
+      fillFonts();
+      fontPickerRefresh = () => { fillFonts(); updateToolbar(); };
+      // Deliberately NO `value === "custom"` early-return of the kind sizeSel has: the hidden
+      // option carries the REAL family name as its value, so re-selecting it rewrites the same
+      // font instead of writing a literal "custom" into the document (which would pass
+      // FAMILY_RE and silently corrupt the doc's font).
+      fontSel.addEventListener("change", () => {
+        if (fontSel.value === FONT_CUSTOM_SENTINEL) return;
+        applyStyle({ f: fontSel.value || null }); surface.focus();
+      });
+      tbDd(bar, fontSel); barB.font = fontSel; barB.fontCustom = fontCustom;
       tbSep(bar);
       const sizeSel = document.createElement("select");
       sizeSel.className = "mde-tb-select mde-tb-size"; sizeSel.title = "Text size (selection)";
@@ -4143,8 +4985,15 @@
       tbSep(bar);
       tbBtn(bar, TB_ICONS.clear, "Clear formatting", () => clearFormatting());
       tbBtn(bar, TB_ICONS.styles, "Document styles", () => openDocStyles());
-      const spring = document.createElement("span"); spring.className = "mde-tb-spring"; bar.appendChild(spring);
-      // theme: light / dark / match-system
+      // Version history is a HOST capability (the desktop app persists snapshots via /api/history;
+      // the inline web builds have no such backend), so the engine only renders the button when a
+      // host supplies opts.onHistory — same opt-in shape as onSave/atCommands. It sits with the
+      // document-level actions, deliberately NOT beside undo/redo: those are session undo, and
+      // pairing them would imply one mechanism where there are two. The .mde-tb-history class is a
+      // stable hook so a host's outside-click handler can tell its own trigger from a stray click.
+      if (typeof opts.onHistory === "function")
+        tbBtn(bar, TB_ICONS.history, "Version history", () => opts.onHistory(), "mde-tb-history");
+      // theme: light / dark / match-system — grouped inline with the buttons (the whole bar centers)
       const seg = document.createElement("span"); seg.className = "mde-tb-theme";
       barB.thLight = tbBtn(seg, TB_ICONS.sun, "Light", () => { setTheme("light"); });
       barB.thDark = tbBtn(seg, TB_ICONS.moon, "Dark", () => { setTheme("dark"); });
@@ -4178,7 +5027,15 @@
       barB.bq.classList.toggle("on", f.bq);
       barB.head.value = f.h ? String(Math.min(f.h, 3)) : "p";
       const sp = enclosingStyleSpan(selA, selB), m = sp ? parseStyleSpec(specOf(sp)) : {};
-      barB.font.value = (m.f && FONT_STACKS[m.f]) ? m.f : "";
+      // A family the local picker doesn't list — uninstalled here, or the doc was authored on
+      // another machine — must still DISPLAY, so mirror it into the hidden option carrying its
+      // real value. Without this the select lands on selectedIndex -1 and renders blank while
+      // the document is in fact styled.
+      const fv = m.f ? String(m.f).trim().normalize("NFC") : "";
+      const known = !!fv && Array.from(barB.font.options).some(o => o !== barB.fontCustom && o.value === fv);
+      if (fv && !known) { barB.fontCustom.value = fv; barB.fontCustom.textContent = fv; }
+      else { barB.fontCustom.value = FONT_CUSTOM_SENTINEL; barB.fontCustom.textContent = ""; }
+      barB.font.value = fv;
       const szv = m.sz || "1";
       if (TB_SIZES.some(op => op[1] === szv)) barB.size.value = szv;
       else { barB.sizeCustom.textContent = String(Math.round((parseFloat(szv) || 1) * 11)); barB.size.value = "custom"; }
@@ -4191,6 +5048,40 @@
       barB.thAuto.classList.toggle("on", th === "auto");
     }
     if (toolbarEnabled) buildToolbar();
+    // The ruler mounts AFTER the toolbar exists (it docks below the bar and measures its height),
+    // and only when the pref says so — never in a read-only view. Deferred a frame so the host has
+    // finished laying the stage out; measuring at construction reads a zero-width surface.
+    if (rulerOn && !readOnly) {
+      const mountRuler = () => { buildRuler(); if (rulerEl) { rulerEl.classList.add("on"); syncRuler(); } };
+      if (typeof requestAnimationFrame === "function") requestAnimationFrame(mountRuler); else setTimeout(mountRuler, 0);
+    }
+
+    /* Resolve opts.fontList (array | function | async function) exactly once. Names are filtered
+       through the SAME FAMILY_RE the sanitizer uses — a family safeFamily would reject must
+       never be offerable — and deduped case-insensitively against the built-in keys AND labels,
+       so a real installed "Arial" doesn't sit next to the built-in Arial producing two entries
+       with different CSS and different spec values. */
+    function ingestFontList(list) {
+      if (!Array.isArray(list)) return;
+      const taken = new Set(Object.keys(FONT_STACKS).concat(DS_FONTS.map(op => String(op[0]).toLowerCase())));
+      const seen = new Set();
+      installedFams = list
+        .map(f => String(f == null ? "" : f).trim().normalize("NFC"))
+        .filter(f => {
+          const k = f.toLowerCase();
+          if (!f || taken.has(k) || seen.has(k) || !FAMILY_RE.test(f)) return false;
+          seen.add(k); return true;
+        })
+        .sort((a, b) => a.localeCompare(b));
+      if (fontPickerRefresh) fontPickerRefresh();
+    }
+    if (fontListOpt) {
+      try {
+        const r = typeof fontListOpt === "function" ? fontListOpt() : fontListOpt;
+        if (r && typeof r.then === "function") r.then(ingestFontList, () => {});
+        else ingestFontList(r);
+      } catch (_) {}
+    }
 
     /* A small whitelisted command API so a HOST TOOLBAR can run the essential
        editing actions (the same internals the palette drives). Keeps formatting
@@ -4241,6 +5132,13 @@
       setZoom, getZoom,
       // document styles — the hidden %%doc:…%% line (fonts, colors, heading/table looks).
       openDocStyles, setDocStyle, getDocStyle,
+      // document box — column width (%%doc:w%%) + ruler margins (%%doc:ml/mr%%). setDocBox clamps
+      // before writing, which matters: safeNum REJECTS an out-of-range value rather than clamping,
+      // so an unclamped 40 would be dropped and read back as "no margin" — a control that looks
+      // broken instead of limited. Ruler visibility is a per-browser preference, not a doc property.
+      setDocBox: props => setDocStyle(clampDocBox(props || {})),
+      getDocBox: () => ({ w: docSpec.w == null ? null : docSpec.w, ml: docSpec.ml == null ? null : docSpec.ml, mr: docSpec.mr == null ? null : docSpec.mr }),
+      setRulerVisible, isRulerVisible,
       // images — insert programmatically (src is sanitized; relative paths allowed).
       insertImage: insertImageSrc,
       // DOCS-TOC — table of contents (H1/H2). Hide the built-in button with opts.tocButton:false
@@ -4444,6 +5342,9 @@
       toc: outlineEnabled ? false : opts.toc,
       tocButton: outlineEnabled ? false : opts.tocButton,
       toolbar: opts.toolbar,                 // forward the Docs-style formatting bar
+      onHistory: opts.onHistory,             // forward the host's version-history trigger
+      fontList: opts.fontList,               // forward the host's installed-font enumerator (desktop app only)
+      onExportPdf: opts.onExportPdf,         // forward the host's PDF-export trigger (desktop app only)
       imageUpload: opts.imageUpload,         // forward the image hooks
       resolveImageSrc: opts.resolveImageSrc,
       acceptMarkdown: opts.acceptMarkdown,   // forward the markdown-demotion toggle (else the editor reads its persisted per-user pref)
