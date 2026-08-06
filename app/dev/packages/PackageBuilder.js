@@ -281,6 +281,11 @@ export default function PackageBuilder({ config }) {
               <p className="mt-1.5 text-[12px] text-ink-soft">
                 {money(P.subtotal)} − {money(P.totalDiscount)} ({P.totalDiscountPct}%)
               </p>
+              {P.capApplied && (
+                <p className="text-[12px] text-terracotta" title="Per-add-on discount is trimmed first; referral and sibling keep their full rate.">
+                  capped at {quote.maxStackPct}% (stack was {P.requestedStackPct}%)
+                </p>
+              )}
               {P.bonusTotal > 0 && (
                 <p className="text-[12px] text-moss">+ {money(P.bonusTotal)} in bonuses</p>
               )}
