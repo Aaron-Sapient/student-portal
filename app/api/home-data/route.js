@@ -12,6 +12,7 @@ import {
   checkedInThisWeek,
 } from '@/lib/seniors'
 import { projectMeetingCards } from '@/lib/projectMeetings'
+import { belongsToStudent } from '@/lib/calendarTitles'
 import { getSessionLog } from '@/lib/meetings'
 import { DateTime } from 'luxon'
 
@@ -76,7 +77,7 @@ function weeklySessionCounts(dayCounts) {
 // Past booked meetings for the sessions strip: events on an instructor's
 // calendar in the 12-week window whose title carries the student's name (the
 // same matching convention as getUpcomingMeetings). Returns [{ day, instructor }].
-async function fetchPastBookedMeetings(calendar, calendarId, instructor, studentName) {
+async function fetchPastBookedMeetings(calendar, calendarId, instructor, studentName, studentEmail) {
   if (!calendarId || !studentName) return []
   const now = DateTime.now().setZone(ZONE)
   const windowStart = now.startOf('week').minus({ weeks: 11 })
@@ -90,8 +91,18 @@ async function fetchPastBookedMeetings(calendar, calendarId, instructor, student
       maxResults: 250,
     })
     const name = studentName.toLowerCase().trim()
+    const mail = String(studentEmail || '').toLowerCase()
     return (res.data.items || [])
-      .filter((e) => e.status !== 'cancelled' && e.summary?.toLowerCase().includes(name))
+      .filter((e) => {
+        if (e.status === 'cancelled' || !e.summary) return false
+        // A portal booking names its own student; trust that over the title.
+        const pep = e.extendedProperties?.private || {}
+        if (pep.studentEmail && pep.studentEmail.toLowerCase() === mail) return true
+        if (!e.summary.toLowerCase().includes(name)) return false
+        // A parent meeting carries the student's name but is not a session they
+        // attended — counting it would overstate the frequency strip.
+        return belongsToStudent({ summary: e.summary })
+      })
       .map((e) => ({
         day: DateTime.fromISO(e.start?.dateTime || e.start?.date || '')
           .setZone(ZONE)
@@ -160,8 +171,8 @@ export async function GET() {
     // 📆 Meetings session log per the `meetings` flag (Sheets today). Returns
     // [{ date, teacher }] — the meetingLogRows shape dailySessionCounts expects.
     getSessionLog(sheets, studentSheetId).catch(() => []),
-    fetchPastBookedMeetings(calendar, process.env.GOOGLE_CALENDAR_ID_AARON, 'aaron', masterName),
-    fetchPastBookedMeetings(calendar, process.env.GOOGLE_CALENDAR_ID_RYAN, 'ryan', masterName),
+    fetchPastBookedMeetings(calendar, process.env.GOOGLE_CALENDAR_ID_AARON, 'aaron', masterName, userEmail),
+    fetchPastBookedMeetings(calendar, process.env.GOOGLE_CALENDAR_ID_RYAN, 'ryan', masterName, userEmail),
   ])
 
   // gradeGate (data-sufficiency) and projectRows now come straight from the

@@ -1,6 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
 import { DEVELOPER_EMAIL } from '@/lib/developerAuth';
+import { belongsToStudent } from '@/lib/calendarTitles';
 
 const RYANS_CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID_RYAN;
 const AARONS_CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID_AARON;
@@ -119,6 +120,9 @@ export async function GET(request) {
           // Longest-first scan: first hit is the best (most specific) match.
           const hit = directory.find(s => titleLower.includes(s.normalized));
           if (!hit) return null; // not a student meeting — drop it
+          // A parent meeting carries the student's name; attributing it to them
+          // here would report it as one of that student's own sessions.
+          if (!belongsToStudent({ summary: m.title })) return null;
           return {
             ...m,
             studentName: hit.name,
@@ -174,10 +178,19 @@ return (res.data.items || [])
     .filter(e => {
       if (e.status === 'cancelled' || !e.summary) return false;
 
+      // A portal booking identifies itself — trust that over the title.
+      const pep = e.extendedProperties?.private || {};
+      if (pep.studentEmail && pep.studentEmail.toLowerCase() === String(email || '').toLowerCase()) {
+        return true;
+      }
+
       const eventTitle = e.summary.toLowerCase().trim();
       const searchName = studentName.toLowerCase().trim();
+      if (!eventTitle.includes(searchName)) return false;
 
-      return eventTitle.includes(searchName);
+      // "Ryan-<Student> Parents" carries the student's name but is not their
+      // meeting — it must not show on the student's own Upcoming list.
+      return belongsToStudent({ summary: e.summary });
     })
     .map(e => {
       const fromExt = e.extendedProperties?.private || {};
