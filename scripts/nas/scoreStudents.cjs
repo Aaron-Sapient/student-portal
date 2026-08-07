@@ -48,6 +48,15 @@ const SKIP_SHEET_IDS = new Map([
       'number we then walk back. Her portal reads "First scores this week" meanwhile. ' +
       'REVIEW 2026-08-13.',
   ],
+  [
+    TEST_STUDENT,
+    'Test Student (2026-08-06) — its sheet is currently a deliberate MIRROR of ' +
+      'Olivia Lim so her first-login view can be inspected on an account we can ' +
+      'sign into. Olivia is held above, so scoring this one would refill its ' +
+      'Scores tab overnight and break the mirror on the single surface (Home) the ' +
+      'mirror exists to check. Lift together with the Olivia hold. ' +
+      'REVIEW 2026-08-13.',
+  ],
 ]);
 const SCORES_TAB = '📊 Scores';
 const PARAMS_TAB = '⚙️ Score Params'; // Master Sheet, written by the dev dashboard
