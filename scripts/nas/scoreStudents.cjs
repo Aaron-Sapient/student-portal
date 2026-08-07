@@ -1,8 +1,10 @@
 /**
  * scoreStudents.cjs — weekly holistic scoring (Academic / EC / Overall) + the
- * production Claude Coach note. Designed to run as a daily cron on the NAS:
+ * production Claude Coach note. RUNS ON RYAN'S MAC MINI as stage 1 of the
+ * Clauditor nightly (`com.ap.clauditor` → clauditor-nightly.sh, 05:30 PT;
+ * paid stages Mon+Thu only — see AP-Counseling's Claude_Clauditor.md):
  * each run scores only students whose last score is >6 days old, capped per
- * run, so ~40 students stagger naturally across the week.
+ * run, so ~40 students stagger naturally across the scoring days.
  *
  * One `claude -p` (Sonnet, Max-plan auth — NOT the metered API) call per student:
  * the student's sheet tabs are dumped into a packet, scored against the
@@ -20,10 +22,12 @@
  *   node scripts/nas/scoreStudents.cjs --commit --all     # GATED: all due students
  *   node scripts/nas/scoreStudents.cjs <SHEET_ID> --commit
  *
- * NAS setup (one-time): .env.local hand-placed at repo root (Syncthing never
- * syncs secrets), `npm ci` run natively (x86_64), `claude` CLI authed to the
- * Max plan. Cron (daily, quiet hours):
- *   10 5 * * * cd /share/.../student-portal && /usr/local/bin/node scripts/nas/scoreStudents.cjs --commit --all >> scripts/nas/logs/score.log 2>&1
+ * Host setup (one-time): .env.local hand-placed at repo root (Syncthing never
+ * syncs secrets), `npm ci`, `claude` CLI authed to the Max plan. Scheduling
+ * lives in clauditor-nightly.sh, NOT here and NOT in any crontab. (The
+ * original NAS score-cron this was designed for died 2026-06-11; deploy.sh
+ * beside this file still targets that dead container — Mini runs use this
+ * repo checkout directly at ~/Developer/student-portal.)
  */
 const fs = require('fs');
 const path = require('path');
