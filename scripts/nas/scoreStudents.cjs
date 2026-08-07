@@ -32,6 +32,23 @@ const { google } = require('googleapis');
 const { hasRecentGrades, TRANSCRIPT_GRADE_RANGE } = require('../../lib/gradeData.js');
 
 const TEST_STUDENT = '1UW-RSqv30c_BUdv9nfm48YVVs7L-UmWKsYn_jXhYt6w'; // Test2 Student2
+
+// ── Temporary scoring holds ─────────────────────────────────────────────────
+// Sheet IDs the nightly `--all` sweep skips. An explicit single-student run
+// (`node scoreStudents.cjs <SHEET_ID> --commit`) still scores them, so this
+// only stops the unattended cron — you can always score a held student by hand.
+// Every entry carries a reason AND a review date; without one a hold quietly
+// becomes permanent and the student silently stops being scored. Delete the
+// entry to resume normal weekly scoring.
+const SKIP_SHEET_IDS = new Map([
+  [
+    '1svCzLJYJjeGQ3FJUByd0C8TAESMFLhqQB8gTRZ4X2Dk',
+    'Olivia Lim (new 2026-08-06) — held so her FIRST score lands on the retuned ' +
+      'display curve rather than the current one, which would show her an inflated ' +
+      'number we then walk back. Her portal reads "First scores this week" meanwhile. ' +
+      'REVIEW 2026-08-13.',
+  ],
+]);
 const SCORES_TAB = '📊 Scores';
 const PARAMS_TAB = '⚙️ Score Params'; // Master Sheet, written by the dev dashboard
 // Rubric v2 point weights (must mirror lib/scoreParams.js DEFAULT_PARAMS). A
@@ -553,6 +570,12 @@ async function main() {
 
   let done = 0;
   for (const student of targets) {
+    // Holds apply to the unattended sweep only — an explicit sheet-id run is a
+    // deliberate act and still scores.
+    if (ALL && SKIP_SHEET_IDS.has(student.sheetId)) {
+      console.log(`Holding: ${student.name} — ${SKIP_SHEET_IDS.get(student.sheetId)}`);
+      continue;
+    }
     if (done >= MAX_PER_RUN) {
       console.log(`Cap of ${MAX_PER_RUN} reached — the rest stagger to later runs.`);
       break;
