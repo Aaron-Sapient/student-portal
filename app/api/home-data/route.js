@@ -112,12 +112,12 @@ export async function GET() {
   const sheets = getGoogleSheetsClient(userEmail)
   const calendar = getGoogleCalendarClient(userEmail)
 
-  // A:BD so col A (name — what calendar event titles carry) rides along.
+  // A:BE so col A (name — what calendar event titles carry) rides along.
   // Indices match scripts/nas/scoreStudents.cjs listStudents: name 0, portal
-  // URL 6, email 9, check-in/token block 50–55.
+  // URL 6, email 9, check-in/token block 50–55, "Needs Checkin" 56.
   const masterRes = await sheets.spreadsheets.values.get({
     spreadsheetId: process.env.MASTER_SHEET_ID,
-    range: "'👩‍🎓 All Data'!A:BD",
+    range: "'👩‍🎓 All Data'!A:BE",
   })
 
   const masterRows = masterRes.data.values || []
@@ -204,6 +204,18 @@ const aaronMeetingType = studentRow[53] || null;
 // Token is "available" iff isART AND (BD empty OR BD timestamp is older than this week's Saturday).
 const isART = studentRow[54] === 'TRUE' || studentRow[54] === true;
 const artBookingTimestamp = studentRow[55] || '';
+
+// Col BE "Needs Checkin" — THE roster-maintained answer to "is this student in the
+// weekly check-in cadence at all?" (11 of 47 are marked out of it). Two other
+// consumers already treat this column as the authority and use exactly this rule —
+// excluded only on an EXPLICIT false, so a blank cell stays in the cadence:
+// Google Apps Scripts/checkin-reminder/checkinReminder.gs (AD_NEEDS_CHECKIN = 56)
+// and app/api/developer/checkinCompliance/route.js:104. The portal reads it so its
+// check-in nudge can't contradict the reminder email that same flag already gates.
+const needsCheckinRaw = studentRow[56];
+const needsCheckin = !(
+  needsCheckinRaw === false || /^false$/i.test(String(needsCheckinRaw ?? '').trim())
+);
 
 let artTokenAvailable = false;
 if (isART) {
@@ -316,6 +328,7 @@ if (isART) {
     meetingType,
     aaronLastCheckin,
     aaronMeetingType,
+    needsCheckin,
     isART,
     artTokenAvailable,
     hasCollegeList,

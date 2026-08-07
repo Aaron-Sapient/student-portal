@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { DateTime } from 'luxon';
 import { usePortalData } from '../PortalDataContext';
-import { ZONE, hasBookingAvailable, checkedInThisWeek } from '../portalUtils';
+import { ZONE, hasBookingAvailable, checkedInThisWeek, skipsCheckins } from '../portalUtils';
 import { ClayCam, Eyebrow, IconTile, SectionDial, WeekBars } from '../neu';
 import UpcomingMeeting from '../UpcomingMeeting';
 
@@ -156,59 +156,101 @@ function BookSection({ data, loading }) {
   const projectMeetings = data?.projectMeetings || [];
   const hasBookableProject = projectMeetings.some((p) => p.bookable);
 
+  // ORDER: what the student can actually book leads. A standing weekly session is a
+  // granted entitlement that needs no check-in, so whenever one is bookable it goes
+  // ABOVE the Ryan/Aaron cards — which, for that student, are two grey padlocks whose
+  // copy sends them back to a tab that has nothing for them.
+  const projectFirst = hasBookableProject;
+
+  // HIDE the check-in section only when it is BOTH inapplicable and empty. The
+  // cadence flag alone is not enough: admin/grantBooking writes a token straight to
+  // master AZ/BB to hand someone a meeting *outside* the check-in gate, so a student
+  // marked out of the cadence can still hold a live, bookable Ryan or Aaron card —
+  // and hiding the section would delete the only way to reach it. `checkedIn` counts
+  // as content too (it's a real confirmation, not a padlock). Requiring a project
+  // card guarantees something still renders in the section's place.
+  const standardHasContent =
+    ryan.bookable || aaron.bookable || (art && art.bookable) || ryan.checkedIn || aaron.checkedIn;
+  const hideStandard = skipsCheckins(data) && !standardHasContent && projectMeetings.length > 0;
+
+  // Cascade timings follow render order — whatever renders first starts at 110ms.
+  // Keyed on what actually renders, not on projectFirst: with the standard section
+  // hidden the project cards ARE the page and must not wait behind a phantom.
+  const projectDelay = projectFirst || hideStandard ? 110 : 290;
+  // One clean 60ms step past the last project card (which lands at 110 + (n-1)·60).
+  const standardDelay = projectFirst ? 110 + projectMeetings.length * 60 : 110;
+
+  const project = (
+    <ProjectSection projectMeetings={projectMeetings} loading={loading} baseDelay={projectDelay} />
+  );
+
+  const standard = hideStandard ? null : (
+    <section className="space-y-3.5">
+      <p
+        className="portal-rise px-1 text-xs font-semibold uppercase tracking-[0.13em] text-ink-faint"
+        style={{ animationDelay: `${standardDelay - 40}ms` }}
+      >
+        {/* Leading the page it's an open question; under the standing sessions it's
+            a second category, and needs to name itself rather than re-ask. */}
+        {projectFirst ? 'Check-in meetings' : 'Who do you want to meet with?'}
+      </p>
+      <OptionCard
+        href="/meetings/ryan"
+        icon={GraduationCap}
+        name="Ryan"
+        role="Counseling & academics"
+        state={ryan}
+        loading={loading}
+        delay={standardDelay}
+      />
+      <OptionCard
+        href="/meetings/aaron"
+        icon={Trophy}
+        name="Aaron"
+        role="Competitions & projects"
+        state={aaron}
+        loading={loading}
+        delay={standardDelay + 60}
+      />
+      {art && (
+        <OptionCard
+          href="/meetings/art"
+          icon={FlaskConical}
+          name="ART"
+          role="Advanced Research Team · with Aaron"
+          state={art}
+          loading={loading}
+          delay={standardDelay + 120}
+        />
+      )}
+    </section>
+  );
+
   return (
     <div className="space-y-7">
-      <section className="space-y-3.5">
-        <p
-          className="portal-rise px-1 text-xs font-semibold uppercase tracking-[0.13em] text-ink-faint"
-          style={{ animationDelay: '70ms' }}
-        >
-          Who do you want to meet with?
+      {projectFirst ? (
+        <>
+          {project}
+          {standard}
+        </>
+      ) : (
+        <>
+          {standard}
+          {project}
+        </>
+      )}
+
+      {/* Only when there is genuinely nothing on the page. A student with project
+          cards always has those rendered (booked-this-week ones included), so the
+          message would be contradicting visible content. Copy splits on the cadence
+          flag — telling someone who has no check-in to go complete one is a dead end. */}
+      {!loading && !standardHasContent && projectMeetings.length === 0 && (
+        <p className="portal-rise text-center text-sm text-ink-soft" style={{ animationDelay: '270ms' }}>
+          {skipsCheckins(data)
+            ? 'Nothing to book right now — Ryan or Aaron will set up your sessions.'
+            : 'Nothing to book yet — complete a weekly check-in to unlock a meeting.'}
         </p>
-        <OptionCard
-          href="/meetings/ryan"
-          icon={GraduationCap}
-          name="Ryan"
-          role="Counseling & academics"
-          state={ryan}
-          loading={loading}
-          delay={110}
-        />
-        <OptionCard
-          href="/meetings/aaron"
-          icon={Trophy}
-          name="Aaron"
-          role="Competitions & projects"
-          state={aaron}
-          loading={loading}
-          delay={170}
-        />
-        {art && (
-          <OptionCard
-            href="/meetings/art"
-            icon={FlaskConical}
-            name="ART"
-            role="Advanced Research Team · with Aaron"
-            state={art}
-            loading={loading}
-            delay={230}
-          />
-        )}
-      </section>
-
-      <ProjectSection projectMeetings={projectMeetings} loading={loading} baseDelay={290} />
-
-      {!loading &&
-        !ryan.bookable &&
-        !aaron.bookable &&
-        !(art && art.bookable) &&
-        !hasBookableProject &&
-        !ryan.checkedIn &&
-        !aaron.checkedIn && (
-          <p className="portal-rise text-center text-sm text-ink-soft" style={{ animationDelay: '270ms' }}>
-            Nothing to book yet — complete a weekly check-in to unlock a meeting.
-          </p>
-        )}
+      )}
     </div>
   );
 }
@@ -301,8 +343,11 @@ function ProjectSection({ projectMeetings, loading, baseDelay = 110 }) {
   if (cards.length === 0) return null;
   return (
     <section className="space-y-3.5">
-      <p className="portal-rise px-1 text-xs font-semibold uppercase tracking-[0.13em] text-ink-faint" style={{ animationDelay: '70ms' }}>
-        {cards.length > 1 ? 'Project meetings' : 'Project meeting'}
+      {/* "Project meetings" was only ever true for the solo-research plans. The track
+          now also carries named tutoring sessions (SAT Reading, SAT Grammar), so the
+          heading names what they all ARE — a standing weekly slot — not one use of it. */}
+      <p className="portal-rise px-1 text-xs font-semibold uppercase tracking-[0.13em] text-ink-faint" style={{ animationDelay: `${baseDelay - 40}ms` }}>
+        {cards.length > 1 ? 'Your weekly sessions' : 'Your weekly session'}
       </p>
       {cards.map((c, i) => (
         <OptionCard
