@@ -29,8 +29,8 @@
      sync.sh, so a consumer's own copy always answers for itself. Workflow: bump BOTH of these
      AND add a dated entry to CHANGELOG.md as a normal part of shipping any user-visible change —
      see CHANGELOG.md's header. Do not let this drift; a stale stamp defeats the whole feature. */
-  const MDE_VERSION = "1.5.0";
-  const MDE_LAST_CHANGE = "Pending (\"sticky\") inline format on an empty caret: Cmd+B / Cmd+I / Shift+Cmd+X on a blank line now arms the format instead of no-opping, and the next character you type is written already wrapped in real markdown, caret inside, so you keep typing in-format. Formats stack (Cmd+B then Cmd+I -> ***s***) and disarm on Escape, re-pressing the shortcut, any edit, or moving the caret. Plus: Version history moved into the toolbar as a host-gated button (new opts.onHistory, Lucide history icon) — it renders only where a host actually persists snapshots, so the inline web builds don't ship a dead control. And the Option+/ palette finally covers the table ops (insert/delete row & column, Align table, Cell text position — previously right-click-only and therefore unsearchable), shown contextually only while the caret is in a table, alongside new Table of contents, Word count, Save and Add comment entries. Table cells also gained real list support: Cmd+Shift+8 bulleted and Cmd+Shift+7 numbered, on the right-click menu too, with ordinals renumbering themselves as you type, paste or delete. Plus: the font controls opened up to ANY installed macOS font. The 8-key FONT_STACKS table was the sanitizer, not just a short list, so an arbitrary family could not pass through @{s:f=...} at all; a family name is now validated by charset instead of by membership, which matters because the exported-HTML path builds a raw unescaped style attribute. The picker itself is host-gated behind the new opts.fontList (same opt-in shape as opts.onHistory) since only the desktop app can enumerate installed fonts, while the sanitizer stays open everywhere so a doc authored in the Mac app keeps its font when opened in a web build. Also fixed along the way: FONT_STACKS was a bare object literal, so f=constructor and friends read back truthy off Object.prototype and pushed a Function as the CSS value. Plus: Export to PDF. A new host-gated opts.onExportPdf adds an Export to PDF entry to the palette Export group, and the desktop app answers it by driving the full Chrome for Testing over CDP against its own editor page and printing — so the PDF is the REAL render (doc styles, installed fonts, theme tokens) rather than a hand-rebuilt approximation. Most of the work landed in the print stylesheet, which browser Cmd+P benefits from too: the comments rail no longer leaves a dead band down the right of every page, side paddings stay symmetric, table rows are not sliced across a page break, and headings are not orphaned at a page bottom. PDFs are forced light (a dark OS appearance on the print machine otherwise produced a solid black page), and an export now refuses rather than printing stale content if the document could not be saved first. Plus: Enter is formatting-aware. Pressing Enter at the beginning of a heading used to move the TEXT down as body text and leave the heading stranded on an empty line, and a bold first word lost its ** the same way; every marker is display:none, so the caret at the visual start of \"# **Bold**\" is source offset 4 and a raw newline spliced between a marker and the text it formats. Now the block moves down whole with a plain line left above it, a mid-line split keeps the formatting on BOTH halves (two headings, two quote lines, two bold runs) instead of stranding unbalanced ** that renders as literal asterisks, and end-of-line is unchanged. Plus: the document column is yours to set. A new ruler with Google-Docs-style drag triangles sets the left/right margins, and a Column width entry sets the measure in px or fits it to the window. Both ride in the document's hidden %%doc: line, both are absent by default so every host keeps the layout it has today, and margins are stored as a percentage but resolved to pixels against the real box so a minimum text column is a guarantee rather than a hope. The ruler is off by default, never built in a read-only view, and PDFs honour the margins you set. Plus: sync.mjs can no longer report success into a directory it invented.";
+  const MDE_VERSION = "1.5.1";
+  const MDE_LAST_CHANGE = "A table at the very top or bottom of a document no longer traps the caret: ArrowUp/ArrowDown now walk table rows and step out past the header/last row, Shift+Tab or ArrowLeft out of the first cell conjures a blank line above when none exists (Escape already did below), and clicking the empty surface above/below an edge table does the same — so text can always be added around a table without opening the file elsewhere.";
 
   /* ============================================================================
      Side comments + emoji reactions — the in-document data model (MODULE scope, so
@@ -1121,6 +1121,20 @@
     function focusCell(cell) { if (!cell) return; cell.focus({ preventScroll: true }); const r = document.createRange(); r.selectNodeContents(cell); r.collapse(false); const s = document.getSelection(); suppress = true; s.removeAllRanges(); s.addRange(r); suppress = false; }
     function atCellStart(cell) { const s = document.getSelection(); return s && s.isCollapsed && caretInCell(cell) === 0; }
     function atCellEnd(cell) { const s = document.getSelection(); return s && s.isCollapsed && caretInCell(cell) === cellLen(cell); }
+    // Is the collapsed caret on the cell's first/last <br>-separated line? Cell "lines" are the
+    // <br>-joined runs cellMdToHtml emits; a trailing <br> is the browser's caret filler, not a line.
+    function caretOnCellLine(cell, which) {
+      const sel = document.getSelection(); if (!sel || !sel.isCollapsed) return false;
+      const nodes = []; let n;
+      const w = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, { acceptNode: x => (x.nodeType === 3 || x.nodeName === "BR") ? 1 : 3 });
+      while ((n = w.nextNode())) nodes.push(n);
+      if (nodes.length && nodes[nodes.length - 1].nodeName === "BR") nodes.pop();
+      let pos = 0, first = -1, last = -1;
+      for (const k of nodes) { if (k.nodeName === "BR") { if (first < 0) first = pos; last = pos; pos += 1; } else pos += k.nodeValue.length; }
+      if (first < 0) return true;
+      const off = caretInCell(cell);
+      return which === "first" ? off <= first : off > last;
+    }
     function tableIsEmpty(wrap) { return allCells(wrap).every(c => (c.textContent || "").trim() === ""); }
     function moveCell(cell, dir, addRowIfEnd) {
       const wrap = cell.closest(".mtable-wrap"), cells = allCells(wrap), idx = cells.indexOf(cell) + dir;
@@ -1156,6 +1170,19 @@
       if (mod && /^[uU]$/.test(e.key)) { e.preventDefault(); e.stopPropagation(); return; }   // underline isn't representable in md — swallow
       if (e.key === "ArrowRight" && atCellEnd(cell)) { e.preventDefault(); e.stopPropagation(); moveCell(cell, 1, false); return; }
       if (e.key === "ArrowLeft" && atCellStart(cell)) { e.preventDefault(); e.stopPropagation(); moveCell(cell, -1, false); return; }
+      // Each cell is its own editing host, so native ArrowUp/Down dies at the cell boundary.
+      // Docs behavior instead: same column one row up/down; past the header row exit above,
+      // past the last row exit below (exitTable conjures a line at a document edge).
+      if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.shiftKey && !mod && !e.altKey && !e.isComposing) {
+        const up = e.key === "ArrowUp";
+        if (caretOnCellLine(cell, up ? "first" : "last")) {
+          e.preventDefault(); e.stopPropagation();
+          const wrap = cell.closest(".mtable-wrap"), r = +cell.dataset.r + (up ? -1 : 1);
+          const tgt = wrap.querySelector('.mcell[data-r="' + r + '"][data-c="' + cell.dataset.c + '"]');
+          if (tgt) focusCell(tgt); else exitTable(wrap, up ? -1 : 1);
+          return;
+        }
+      }
       if (e.key === "Backspace" && cellLen(cell) === 0) {
         e.preventDefault(); e.stopPropagation();
         const wrap = cell.closest(".mtable-wrap");
@@ -1224,10 +1251,27 @@
       text = text.slice(0, s) + emitTable(m.head, m.body, meta.widths, meta.tw, meta.align, meta.valign) + text.slice(e);
       render(); onInput(); focusTableCell(s, 0, 0);
     }
+    // Nearest sibling block a caret can actually land on: hidden comment/meta blocks (.cmh)
+    // are display:none, and a neighboring table is itself a contenteditable-false island —
+    // neither can host a caret, so neither counts as an escape landing (two stacked tables
+    // conjure a line BETWEEN them, not past them).
+    function caretableSibling(el, fwd) {
+      let n = fwd ? el.nextElementSibling : el.previousElementSibling;
+      while (n && n.classList.contains("cmh")) n = fwd ? n.nextElementSibling : n.previousElementSibling;
+      return n && !n.classList.contains("mtable-wrap") ? n : null;
+    }
     function exitTable(wrap, dir) {
       const s = +wrap.dataset.s, e = +wrap.dataset.e;
-      if (dir > 0) { if (e >= text.length) { snapshot("table"); text = text.slice(0, e) + "\n"; render(); onInput(); } setCaret(Math.min(e + 1, text.length)); }
-      else setCaret(Math.max(0, s - 1));
+      // A table at the document's very top/bottom (or fenced in by hidden lines) has no
+      // editable line beside it — the wrap is one contenteditable-false island — so exiting
+      // in that direction conjures the blank line the caret needs.
+      if (dir > 0) {
+        if (!caretableSibling(wrap, true)) { snapshot("table"); text = text.slice(0, e) + "\n" + text.slice(e); render(); onInput(); }
+        setCaret(Math.min(e + 1, text.length));
+      } else {
+        if (!caretableSibling(wrap, false)) { snapshot("table"); text = text.slice(0, s) + "\n" + text.slice(s); render(); onInput(); setCaret(s); }
+        else setCaret(Math.max(0, s - 1));
+      }
       surface.focus();
     }
     function deleteTable(wrap) {
@@ -2458,6 +2502,20 @@
       const d = e.dataTransfer && e.dataTransfer.getData("text/plain");
       if (!d) return;
       e.preventDefault(); const cur = readSel() || [selA, selB]; edit(cur[0], cur[1], d.replace(/\r\n?/g, "\n"), null, "drop");
+    });
+    // Clicking the surface padding above/below a table that sits at the document's very
+    // top/bottom: native caret placement has no editable line to land on there (the wrap is
+    // one contenteditable-false island), so conjure it. Any other padding click keeps the
+    // native nearest-line behavior — this only fires when the boundary block is a table.
+    surface.addEventListener("mousedown", e => {
+      // plain left-click only: right-click must stay a pure contextmenu, and shift-click is
+      // a selection extension — neither may mutate the document through the conjure path
+      if (readOnly || e.button !== 0 || e.shiftKey || e.target !== surface) return;
+      const kids = [...surface.children].filter(el => !el.classList.contains("cmh"));
+      if (!kids.length) return;
+      const first = kids[0], last = kids[kids.length - 1];
+      if (first.classList.contains("mtable-wrap") && e.clientY < first.getBoundingClientRect().top) { e.preventDefault(); exitTable(first, -1); }
+      else if (last.classList.contains("mtable-wrap") && e.clientY > last.getBoundingClientRect().bottom) { e.preventDefault(); exitTable(last, 1); }
     });
     surface.addEventListener("compositionstart", e => { if (cellOf(e.target)) return; composing = true; compAt = readSel() || [selA, selB]; });
     surface.addEventListener("compositionend", e => {
