@@ -40,7 +40,9 @@ function loadEnv() {
 function normalizeDate(raw) {
   if (raw === null || raw === undefined || raw === '') return '';
   if (typeof raw === 'number') {
-    const dt = DateTime.fromMillis((raw - 25569) * 86400 * 1000, { zone: ZONE });
+    // Serial = a zoneless calendar day → read back in UTC, not ZONE (reading it
+    // as LA lands on 17:00 the previous day). Mirrors lib/blocks.js.
+    const dt = DateTime.fromMillis(Math.round((raw - 25569) * 86400 * 1000), { zone: 'utc' });
     return dt.isValid ? dt.toFormat('yyyy-LL-dd') : '';
   }
   const dt = DateTime.fromISO(String(raw), { zone: ZONE });
