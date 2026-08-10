@@ -1,5 +1,5 @@
 import { requireDeveloper } from '@/lib/developerAuth';
-import { listBlocks, addBlock, deleteBlock } from '@/lib/blocks';
+import { listBlocks, addBlock, deleteBlock, invalidateBlocksCache } from '@/lib/blocks';
 
 // Blocks live in Supabase `instructor_blocks` and this route is their only writer — the
 // Sheets mirror was retired 2026-08-09. Google APIs are deliberately absent here now.
@@ -60,6 +60,10 @@ export async function POST(request) {
       startTime,
       endTime,
     });
+    // Must happen on every successful mutation. A missed invalidation here is the one way
+    // this cache produces a WRONG answer rather than a slow one: the admin would see the
+    // block listed while booking kept ignoring it.
+    invalidateBlocksCache();
     return Response.json({ success: true, id });
   } catch (err) {
     console.error('blocks POST error:', err);
@@ -77,6 +81,7 @@ export async function DELETE(request) {
       return Response.json({ error: 'Invalid block id' }, { status: 400 });
     }
     const removed = await deleteBlock(id);
+    if (removed) invalidateBlocksCache();
     if (!removed) {
       // Nothing matched: this tab is showing a block that no longer exists. Reporting
       // success would refresh the list and leave the row apparently still there.
