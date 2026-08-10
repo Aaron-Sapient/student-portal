@@ -50,7 +50,14 @@ const sheetId = (url) => { const m = String(url ?? '').match(/\/d\/([a-zA-Z0-9-_
 const intOrNull = (v) => { if (v === '' || v == null) return null; const n = parseInt(v, 10); return Number.isNaN(n) ? null : n; };
 const meetingDateOrNull = (v) => {
   if (v === '' || v == null) return null;
-  if (typeof v === 'number') return SERIAL_EPOCH.plus({ days: Math.round(v) }).toISO();
+  // Math.FLOOR, not round. A Sheets serial's fractional part is the time of day, so
+  // Math.round pushes anything after noon onto the NEXT day — silently, with no error.
+  // Probed live 2026-08-09: all 82 numeric cells in ✅ Check-Ins J:M are whole-day
+  // serials, so round and floor agree on today's data and no repair is needed. The
+  // moment someone types a date WITH a time into one of those cells, they diverge.
+  // (Truncating toward the day is also what the rest of the repo does — see the
+  // `{ zone: 'utc' }` serial idiom in lib/blocks.js, lib/projects.js, lib/meetings.js.)
+  if (typeof v === 'number') return SERIAL_EPOCH.plus({ days: Math.floor(v) }).toISO();
   const s = String(v).trim();
   if (!s || /^n\/?a$/i.test(s)) return null;
   const d = DateTime.fromISO(s, { zone: 'America/Los_Angeles' });
