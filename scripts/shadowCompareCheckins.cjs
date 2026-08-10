@@ -52,7 +52,11 @@ function cellToISODate(raw) {
   if (raw === null || raw === undefined) return null;
   if (typeof raw === 'number') {
     if (!raw) return null;
-    const dt = DateTime.fromMillis(Math.round((raw - 25569) * 86400 * 1000)).setZone(ZONE);
+    // HAND-COPY of app/api/developer/studentScores/shared.js cellToISODate — kept in
+    // lockstep deliberately. A Sheets serial is a zoneless calendar day, so it is
+    // rebuilt in UTC; the old `.setZone(ZONE)` form landed on the previous day and
+    // would make this comparator certify the wrong behavior as parity.
+    const dt = DateTime.fromMillis(Math.round((raw - 25569) * 86400 * 1000), { zone: 'utc' });
     return dt.isValid ? dt.toISODate() : null;
   }
   const s = String(raw).trim();

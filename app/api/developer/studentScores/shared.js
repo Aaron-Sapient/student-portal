@@ -98,11 +98,20 @@ export async function readLatestCheckins(sheets) {
 
 // UNFORMATTED_VALUE cell → ISO date or null. Handles Sheets serial numbers and
 // ISO / JS-parseable timestamp strings (mirrors checkinCompliance's parser).
+// ⚠ scripts/shadowCompareCheckins.cjs keeps a HAND-COPY of this function (it can't
+// import from app/). Change one, change both, or the parity instrument silently
+// starts measuring different behavior than the code it is meant to certify.
 export function cellToISODate(raw) {
   if (raw === null || raw === undefined) return null;
   if (typeof raw === 'number') {
     if (!raw) return null;
-    const dt = DateTime.fromMillis(Math.round((raw - 25569) * 86400 * 1000)).setZone(ZONE);
+    // A Sheets serial is a ZONELESS calendar day, so rebuild it in UTC. The old form
+    // (`fromMillis(...).setZone(ZONE)`) rendered midnight-UTC as 17:00 the PREVIOUS
+    // day and returned the wrong date — same defect fixed in lib/blocks.js (f29e12d).
+    // No re-anchoring in ZONE is needed here because we return toISODate() immediately;
+    // the calendar date is already correct. (At checkinCompliance the DateTime itself
+    // is the return value, so that site DOES re-anchor — the shapes differ on purpose.)
+    const dt = DateTime.fromMillis(Math.round((raw - 25569) * 86400 * 1000), { zone: 'utc' });
     return dt.isValid ? dt.toISODate() : null;
   }
   const s = String(raw).trim();

@@ -21,10 +21,22 @@
  * (student_sheet_id, instructor, submitted_at) — NO delete-then-insert window, so
  * it's safe to run on the reconcile cron while the app reads `checkins`. Requires
  * the unique constraint `checkins_natural_key (student_sheet_id, instructor,
- * submitted_at)` (see _notes/3nf-schema-draft.sql). The source read MUST stay
- * FORMATTED_VALUE (default) so the derived submitted_at stays byte-identical to the
- * existing rows — switching col A to UNFORMATTED_VALUE would change every submitted_at
- * and break the key match (duplicates instead of in-place updates).
+ * submitted_at)` (see _notes/3nf-schema-draft.sql).
+ *
+ * COL A IS PLAIN TEXT, not a date cell — PROBED LIVE 2026-08-09: CheckinForm!A and
+ * A_CheckinForm!A return the byte-identical string ("2026-04-14T22:37:14.765Z") under
+ * BOTH FORMATTED_VALUE and UNFORMATTED_VALUE. Sheets never coerced it because the app
+ * writes an ISO-8601 UTC string with USER_ENTERED and Sheets' date parser rejects the
+ * `T`/`Z` form. Two consequences worth knowing:
+ *   - The render option is irrelevant for col A. A previous version of this comment
+ *     claimed switching to UNFORMATTED_VALUE "would change every submitted_at and break
+ *     the key match"; that is FALSE, and the false warning is what made this file look
+ *     like it had a timezone hazard it does not have.
+ *   - Because the value carries an offset (`Z`), `new Date(s).toISOString()` below is a
+ *     byte-exact identity and is host-timezone-independent. It would NOT be safe on an
+ *     offset-less string like "8/13/2026" — that parses in the host's zone. The NAS cron
+ *     container pins TZ=America/Los_Angeles (verified live), which matters for any OTHER
+ *     backfill here that parses such a string.
  */
 const fs = require('fs');
 const path = require('path');

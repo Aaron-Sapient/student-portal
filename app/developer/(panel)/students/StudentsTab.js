@@ -48,27 +48,24 @@ function rankTokens(hay, query) {
 
 const rankStudent = (s, q) => rankTokens(`${s.name} ${s.classYear || ''} ${s.grade || ''}`, q);
 
+// These receive EITHER a bare calendar date ("2026-08-13", from cellToISODate) or a full
+// offset-bearing ISO instant (from parseTimestamp().toISO()). `new Date("2026-08-13")`
+// parses the bare form as midnight UTC and then renders it in the browser's zone, showing
+// the PREVIOUS day to anyone west of Greenwich — so these dates read a day early in
+// Pacific regardless of what the API sent. DateTime.fromISO(iso, { zone: ZONE }) is
+// correct for both shapes: it interprets a zoneless date IN the zone, and converts an
+// offset-bearing instant INTO it. (Verified against both shapes.)
 function fmtDate(iso) {
   if (!iso) return '';
-  try {
-    return new Date(iso).toLocaleDateString(undefined, {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-    });
-  } catch {
-    return iso;
-  }
+  const dt = DateTime.fromISO(iso, { zone: ZONE });
+  return dt.isValid ? dt.toFormat('ccc, LLL d') : iso;
 }
 
 // Short month/day (no weekday) for the compact compliance line.
 function fmtShort(iso) {
   if (!iso) return '';
-  try {
-    return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  } catch {
-    return iso;
-  }
+  const dt = DateTime.fromISO(iso, { zone: ZONE });
+  return dt.isValid ? dt.toFormat('LLL d') : iso;
 }
 
 // Compliance from the last check-in date (weekly cadence → a check-in within 7

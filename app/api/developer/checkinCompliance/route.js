@@ -33,14 +33,34 @@ function getServiceAuth() {
   });
 }
 
-// Cell → DateTime or null. Handles Sheets serials, ISO timestamps, the
-// Check-Ins tab's plain date strings ("06/12/2026"), and "N/A"/"TBD"/"-".
+// Cell → DateTime or null. Handles Sheets serials, ISO timestamps, and "N/A"/"TBD"/"-".
+//
+// ⚠ This function is read with UNFORMATTED_VALUE (see the batchGet below), so the
+// ✅ Check-Ins meeting columns J:M arrive as SERIAL NUMBERS, not as the "06/12/2026"
+// strings an earlier version of this comment described — that display form is what the
+// OTHER render option returns. Probed live 2026-08-09: J:M = 46219/46252/46241/46244.
+// The stale comment is how the off-by-one below survived, so it is corrected rather
+// than deleted.
+//
+// The numeric branch must anchor at MIDNIGHT in ZONE, because this parser is required
+// to stay in lockstep with Google Apps Scripts/checkin-reminder/checkinReminder.gs —
+// the script that actually emails students — whose `toDate` and `startOfToday` are both
+// midnight-LA (appsscript.json pins timeZone America/Los_Angeles). The previous
+// `fromMillis(...).setZone(ZONE)` produced 17:00 the PREVIOUS day, which silently broke
+// that lockstep: a meeting dated TODAY failed the `upcoming` test, and `daysSince`
+// oscillated by a day at 17:00 every afternoon.
 function parseTimestamp(raw) {
   if (raw === null || raw === undefined) return null;
   if (typeof raw === 'number') {
     if (!raw) return null;
-    const dt = DateTime.fromMillis(Math.round((raw - 25569) * 86400 * 1000)).setZone(ZONE);
-    return dt.isValid ? dt : null;
+    const utc = DateTime.fromMillis(Math.round((raw - 25569) * 86400 * 1000), { zone: 'utc' });
+    if (!utc.isValid) return null;
+    // Re-anchor the calendar date at midnight ZONE — the DateTime itself is the return
+    // value here, so unlike cellToISODate this step is load-bearing, not cosmetic.
+    return DateTime.fromObject(
+      { year: utc.year, month: utc.month, day: utc.day },
+      { zone: ZONE }
+    );
   }
   const s = String(raw).trim();
   if (!s || /^n\/?a$/i.test(s) || /^tbd$/i.test(s) || s === '-') return null;

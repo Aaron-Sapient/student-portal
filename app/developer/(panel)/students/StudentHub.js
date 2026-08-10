@@ -28,18 +28,15 @@ import { Badge, Card, EmptyNote, ErrorNote, PageHeader, TabSkeleton } from '../d
 
 const ZONE = 'America/Los_Angeles';
 
+// Accepts either a bare calendar date ("2026-08-13") or a full offset-bearing ISO
+// instant. `new Date("2026-08-13")` treats the bare form as midnight UTC and renders it
+// in the browser's zone, showing the previous day in Pacific. fromISO with an explicit
+// zone is correct for both shapes. See the matching note in StudentsTab.js.
 function fmtDate(iso, withWeekday = true) {
   if (!iso) return '';
-  try {
-    return new Date(iso).toLocaleDateString(undefined, {
-      ...(withWeekday ? { weekday: 'short' } : {}),
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    });
-  } catch {
-    return iso;
-  }
+  const dt = DateTime.fromISO(iso, { zone: ZONE });
+  if (!dt.isValid) return iso;
+  return dt.toFormat(withWeekday ? 'ccc, LLL d, yyyy' : 'LLL d, yyyy');
 }
 
 function daysAgo(iso) {

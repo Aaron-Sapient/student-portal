@@ -4,7 +4,7 @@ import { DateTime } from 'luxon';
 import Anthropic from '@anthropic-ai/sdk';
 import { triggerReportGeneration } from '@/lib/generateReport';
 import { listBlocksForBooking, isDateBlocked } from '@/lib/blocks';
-import { getProjectRows } from '@/lib/projects';
+import { getProjectRows, toLADate } from '@/lib/projects';
 import { makeApprovalToken } from '@/lib/checkinApproval';
 import { sendRyanMeetingRequestEmail } from '@/lib/checkinEmails';
 import { getSeniorBySheetId, createCheckinGrant } from '@/lib/seniors';
@@ -275,10 +275,13 @@ export async function POST(request) {
         // Flag-gated 🏆 Comps & Projects rows (Sheets today). E:N is a superset of
         // the old E:L read; the indices used below (0,3,4,6) are unchanged.
         const projectRows = await getProjectRows(sheets, studentSheetId);
+        // Uses lib/projects.js's toLADate — the same parser getProjectRows itself uses
+        // for these columns. The previous inline copy used native Date, which renders a
+        // Sheets serial in the SERVER's zone: correct on Vercel (UTC), a day early
+        // anywhere behind it.
         const fmtDate = (raw) => {
-          if (raw === '' || raw == null) return '';
-          const d = typeof raw === 'number' ? new Date((raw - 25569) * 86400 * 1000) : new Date(raw);
-          return isNaN(d) ? String(raw) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+          const d = toLADate(raw);
+          return d ? d.toFormat('LLL d') : (raw === '' || raw == null ? '' : String(raw));
         };
         const pct = (raw) => {
           if (raw === '' || raw == null) return null;
