@@ -67,7 +67,8 @@ export async function GET(request) {
   try {
     const authClient = getServiceAuth();
     const calendar = google.calendar({ version: 'v3', auth: authClient });
-    const sheets = google.sheets({ version: 'v4', auth: authClient });
+    // No Sheets client here anymore — instructor blocks moved to Supabase (2026-08-09)
+    // and this route reads nothing else from the Master Sheet.
 
     // Project-meeting gate (deep-linked ?m=project:<id>): authorize days against the
     // standing plan + 1/week ledger, NOT the senior essay gate. Resolved first so a
@@ -126,7 +127,7 @@ export async function GET(request) {
         singleEvents: true,
         orderBy: 'startTime',
       }),
-      listBlocksForBooking(sheets).catch(() => []),
+      listBlocksForBooking(),
     ]);
 
     const busyWindows = (eventsRes.data.items || [])

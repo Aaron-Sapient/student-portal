@@ -313,7 +313,7 @@ export async function POST(request) {
 
     // Block override: Ryan unavailable today → straight to a written report.
     const today = DateTime.now().setZone('America/Los_Angeles').toFormat('yyyy-LL-dd');
-    const blocks = await listBlocksForBooking(sheets).catch(() => []);
+    const blocks = await listBlocksForBooking();
     if (isDateBlocked(blocks, 'ryan', today)) {
       outcome = 'written';
       reason = 'Ryan is unavailable today — routed to a written report.';

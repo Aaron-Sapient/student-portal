@@ -91,7 +91,7 @@ export async function POST(request) {
     let reason = `Student selected ${responsePreference || '15min (default)'}.`;
 
     const today = DateTime.now().setZone('America/Los_Angeles').toFormat('yyyy-LL-dd');
-    const blocks = await listBlocksForBooking(sheets).catch(() => []);
+    const blocks = await listBlocksForBooking();
     if (isDateBlocked(blocks, 'aaron', today)) {
       decision = 'email';
       reason = 'Aaron is unavailable today — finalize over email this week.';

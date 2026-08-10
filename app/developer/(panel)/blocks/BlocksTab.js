@@ -70,16 +70,19 @@ export default function BlocksTab() {
     }
   };
 
-  const remove = async (rowIndex) => {
+  const remove = async (id) => {
     if (!confirm('Remove this block?')) return;
     const res = await fetch('/api/developer/blocks', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rowIndex }),
+      body: JSON.stringify({ id }),
     });
     if (!res.ok) {
       const data = await res.json();
       alert('Delete failed: ' + (data.error || 'unknown'));
+      // A 404 means this tab is stale — the block is already gone. Refresh anyway so the
+      // list stops showing a row that no longer exists.
+      if (res.status === 404) await refresh('blocks');
       return;
     }
     await refresh('blocks');
@@ -169,7 +172,7 @@ export default function BlocksTab() {
           <Card delay={150}>
             <ul className="divide-y divide-sand">
               {blocks.data.map((b) => (
-                <li key={b.rowIndex} className="flex items-center gap-3 py-3 text-[13px]">
+                <li key={b.id} className="flex items-center gap-3 py-3 text-[13px]">
                   <span className="w-16 shrink-0 font-semibold capitalize text-ink">
                     {b.instructor}
                   </span>
@@ -183,7 +186,7 @@ export default function BlocksTab() {
                     )}
                     {b.reason ? <span className="text-ink-faint"> · {b.reason}</span> : null}
                   </span>
-                  <GhostButton onClick={() => remove(b.rowIndex)} className="!px-3 !py-1.5 text-[12px]">
+                  <GhostButton onClick={() => remove(b.id)} className="!px-3 !py-1.5 text-[12px]">
                     Remove
                   </GhostButton>
                 </li>
