@@ -21,7 +21,9 @@
  * prevents overlapping runs. Mac↔NAS deploy is Aaron's call.
  *
  * NOTE — scope: covers the built-flag domains. Wave 1 added checkins,
- * instructor_blocks, transcript, college lists, and comps; Wave 3 added
+ * transcript, college lists, and comps (instructor_blocks was here too until
+ * 2026-08-09, when the app took sole ownership of that table — see ALL_STEPS);
+ * Wave 3 added
  * parent_checkins + written_reports (best-effort app dual-writes in
  * lib/parentCheckinCore.js / lib/generateReport.js + the developer/writtenReports
  * route, backstopped by these upsert steps) + compliance_cap (roster fields
