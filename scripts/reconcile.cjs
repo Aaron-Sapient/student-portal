@@ -51,7 +51,11 @@ const ALL_STEPS = [
   { name: 'roster (students + guardians + gender + soft-deactivate)', script: 'backfillStudents.cjs', args: ['--reconcile'] },
   { name: 'score_params', script: 'backfillScoreParams.cjs', args: [] },
   { name: 'checkins (live-safe upsert)', script: 'backfillCheckins.cjs', args: ['--reconcile'] },
-  { name: 'instructor_blocks (live-safe insert-missing/update/prune)', script: 'reconcileInstructorBlocks.cjs', args: [] },
+  // instructor_blocks step REMOVED 2026-08-09: blocks are no longer mirrored from
+  // Sheets. The app now owns `instructor_blocks` outright (Supabase is the sole
+  // source of truth, written directly by app/api/developer/blocks). Re-adding a
+  // Sheets→Supabase reconcile here would PRUNE every app-created block, since
+  // none of them exist in the frozen InstructorBlocks tab. Do not restore.
   { name: 'parent_checkins (live-safe upsert on natural key)', script: 'backfillParentCheckins.cjs', args: [] },
   { name: 'written_reports (live-safe upsert on sheet_row)', script: 'backfillWrittenReports.cjs', args: ['--reconcile'] },
   { name: 'meeting_cap_summary (live-safe upsert on student_sheet_id)', script: 'backfillCheckinSummary.cjs', args: [] },

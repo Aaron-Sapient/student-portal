@@ -19,16 +19,19 @@ DENV='export HOME=/share/Container/coach DOCKER_CONFIG=/share/Container/coach/.d
 
 ssh -i "$KEY" "$HOST" "mkdir -p $BASE/app/scripts $BASE/app/lib $BASE/logs"
 # Every script named in reconcile.cjs's ALL_STEPS must be hand-carried (the repo is NOT
-# synced to the NAS). Wave 1 added checkins, instructor_blocks, student-hub, transcript,
+# synced to the NAS). Wave 1 added checkins, student-hub, transcript,
 # college lists, and comps to the prior roster/params/scores set. Wave 3 added
 # parent_checkins, written_reports, backfillCheckinSummary.cjs (compliance_cap),
 # and backfillBookingTokens.cjs (booking_tokens — the final Bucket-A domain).
+# REMOVED 2026-08-09: reconcileInstructorBlocks.cjs. The app now owns instructor_blocks
+# outright (Supabase is the sole source; no Sheets mirror), so mirroring it back would
+# PRUNE every app-created block. Because /app is a BIND MOUNT, dropping a script from this
+# list does NOT delete it from the NAS — the orphaned copy was rm'd there by hand.
 scp -i "$KEY" \
   "$REPO/scripts/reconcile.cjs" \
   "$REPO/scripts/backfillStudents.cjs" \
   "$REPO/scripts/backfillScoreParams.cjs" \
   "$REPO/scripts/backfillCheckins.cjs" \
-  "$REPO/scripts/reconcileInstructorBlocks.cjs" \
   "$REPO/scripts/backfillParentCheckins.cjs" \
   "$REPO/scripts/backfillWrittenReports.cjs" \
   "$REPO/scripts/backfillCheckinSummary.cjs" \
