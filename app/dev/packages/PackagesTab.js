@@ -51,12 +51,14 @@ export default function PackagesTab() {
   // that can destroy one, so an occupied form asks first. "Occupied" is
   // measured against a pristine form rather than against the name fields —
   // add-ons and discounts are work too.
-  const openInBuilder = (selection) => {
+  const openInBuilder = (selection, sourceQuote) => {
     const dirty = JSON.stringify(form) !== JSON.stringify(makeInitial());
     if (dirty && !window.confirm('Replace the proposal currently in the builder? Unsaved changes will be lost.')) {
       return;
     }
-    setForm(fromSelection(selection));
+    // sourceQuote carries the row's id, so saving edits THIS proposal rather
+    // than whichever row happens to share the student's name.
+    setForm(fromSelection(selection, sourceQuote));
     setView('build');
   };
 

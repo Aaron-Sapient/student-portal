@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { DateTime } from 'luxon';
 import { useDevData } from '@/app/developer/(panel)/DevDataContext';
+import { studentNameKey } from '@/lib/pricingSchema';
 import {
   Badge,
   Card,
@@ -108,6 +109,7 @@ function QuoteDetail({ id, onBack, onOpenInBuilder }) {
               {stamp(quote.created_at)}
               {quote.created_by ? ` · ${quote.created_by}` : ''}
               {quote.grade ? ` · ${quote.grade}th` : ''}
+              {quote.updated_at ? ` · updated ${stamp(quote.updated_at)}` : ''}
             </p>
           )}
         </div>
@@ -115,7 +117,16 @@ function QuoteDetail({ id, onBack, onOpenInBuilder }) {
           <div className="flex flex-wrap items-center gap-2">
             {copied && <span className="text-[12px] font-medium text-moss">Copied.</span>}
             {quote.selection && (
-              <GhostButton onClick={() => onOpenInBuilder(quote.selection)}>Open in builder</GhostButton>
+              <GhostButton
+                onClick={() =>
+                  onOpenInBuilder(quote.selection, {
+                    id: quote.id,
+                    nameKey: studentNameKey(quote.student_name),
+                  })
+                }
+              >
+                Open in builder
+              </GhostButton>
             )}
             {html && <PillButton onClick={copy}>Copy for Gmail</PillButton>}
           </div>
@@ -205,7 +216,9 @@ export default function SavedQuotes({ onOpenInBuilder }) {
                   {q.student_name || 'Untitled'}
                 </p>
                 <p className="mt-0.5 text-[11px] font-medium text-ink-faint">
-                  {stamp(q.created_at)}
+                  {/* created_at stays the first save, so an in-place update
+                      would otherwise leave the row looking untouched. */}
+                  {q.updated_at ? `Updated ${stamp(q.updated_at)}` : stamp(q.created_at)}
                   {q.created_by ? ` · ${q.created_by}` : ''}
                 </p>
               </div>

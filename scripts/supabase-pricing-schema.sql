@@ -42,3 +42,17 @@ alter table public.package_quotes add column if not exists provisioned_at timest
 -- acceptance. Legacy rows (null) re-derive against the current config, with
 -- that risk documented in lib/packageContract.js.
 alter table public.package_quotes add column if not exists config_snapshot jsonb;
+
+-- 2026-08-11 (same day) — updated_at: a proposal is now editable in place. The
+-- builder offers "update <first name>'s proposal" when the student name already
+-- exists, instead of silently inserting a near-duplicate row; four rows for one
+-- student accumulated in a single afternoon before this existed. created_at
+-- stays the FIRST save, so the Saved tab can show both. Null = never updated.
+alter table public.package_quotes add column if not exists updated_at timestamptz;
+alter table public.package_quotes add column if not exists updated_by text;
+-- previous: the prior CONTENT of a proposal, newest first, capped in code.
+-- email_html is the only faithful record of what a family was sent, and Save
+-- and Copy are independent buttons in either order, so the app cannot know
+-- which stored version was the sent one — which makes keeping them the only
+-- correct answer. Mirrors markQuoteProvisioned's receipt chaining.
+alter table public.package_quotes add column if not exists previous jsonb;

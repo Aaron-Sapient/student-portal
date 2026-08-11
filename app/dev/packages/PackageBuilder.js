@@ -8,9 +8,10 @@ import {
   Chip,
   GhostButton,
   INPUT_CLS,
+  Modal,
   PillButton,
 } from '@/app/developer/(panel)/devUi';
-import { ADDON_DEFS, GRADES, PACKAGES, PACKAGE_LABELS } from '@/lib/pricingSchema';
+import { ADDON_DEFS, GRADES, PACKAGES, PACKAGE_LABELS, studentNameKey } from '@/lib/pricingSchema';
 import { computeQuote, money } from '@/lib/pricingCalc';
 import { buildEmail } from '@/lib/packageEmail';
 
@@ -38,6 +39,13 @@ export function makeInitial() {
     customPct: 0,
     services: { essential: emptySel(), comprehensive: emptySel(), vip: emptySel() },
     bonuses: { essential: emptySel(), comprehensive: emptySel(), vip: emptySel() },
+    // The saved row this form is editing, once there is one: { id, nameKey }.
+    // It is the form's IDENTITY, not part of the proposal, so it is excluded
+    // from the `state` memo that becomes `selection`. Without it a save can
+    // only identify its own row by the student's name — a mutable display
+    // string — and "update" then means "whichever row currently has that
+    // name", which for two students who share one is a different family's.
+    sourceQuote: null,
   };
 }
 
@@ -46,9 +54,10 @@ export function makeInitial() {
 // real, editable proposal. Every field is defaulted against makeInitial()
 // because a stored row is only as new as the day it was saved — an add-on key
 // added since then is simply absent from its selection maps.
-export function fromSelection(sel) {
+export function fromSelection(sel, sourceQuote = null) {
   const base = makeInitial();
   if (!sel || typeof sel !== 'object') return base;
+  base.sourceQuote = sourceQuote;
   const merge = (bucket) =>
     Object.fromEntries(PACKAGES.map((p) => [p, { ...emptySel(), ...(bucket?.[p] || {}) }]));
   // Keep however many seasons were stored — the UI renders one row per entry
@@ -164,6 +173,9 @@ export default function PackageBuilder({ config, form, setForm }) {
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [savedLabel, setSavedLabel] = useState('Saved.');
+  // The existing proposal for this student name, when the server found one.
+  const [duplicate, setDuplicate] = useState(null);
 
   const set = (key, value) => setF((s) => ({ ...s, [key]: value }));
   const setSeason = (i, key, value) =>
@@ -212,7 +224,17 @@ export default function PackageBuilder({ config, form, setForm }) {
     }
   };
 
-  const save = async () => {
+  // `intent` is undefined on the first attempt: the server then checks whether
+  // a proposal for this student name already exists and answers 409 with it,
+  // writing nothing. That answer opens the prompt below, and the user's choice
+  // comes back through here as { updateId } or { forceNew: true }.
+  const save = async (intent) => {
+    const studentName = `${f.firstName} ${f.lastName}`.trim();
+    // The open row's id is sent only while the name still refers to it. Rename
+    // the student and this is a different proposal, so it goes back through
+    // the collision check rather than overwriting the row it came from.
+    const source =
+      f.sourceQuote && f.sourceQuote.nameKey === studentNameKey(studentName) ? f.sourceQuote.id : undefined;
     setSaving(true);
     setSaved(false);
     try {
@@ -220,17 +242,33 @@ export default function PackageBuilder({ config, form, setForm }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          studentName: `${f.firstName} ${f.lastName}`.trim(),
+          studentName,
           grade: f.grade,
           selection: state,
           emailHtml: email.html,
+          // A save that already knows its row updates it, no prompt: this is
+          // the second click of "Save proposal" on the same proposal, which is
+          // how two rows for one student appeared within 55 seconds.
+          ...(source ? { updateId: source } : {}),
+          ...(source ? {} : { sourceId: f.sourceQuote?.id }),
+          ...intent,
         }),
       });
       const data = await res.json();
+      if (res.status === 409 && (data.duplicate || data.matches)) {
+        setDuplicate({ ...(data.duplicate || {}), ambiguous: !data.duplicate, matches: data.matches });
+        return;
+      }
       if (!res.ok) {
         alert('Save failed: ' + (data.error || 'unknown'));
         return;
       }
+      setDuplicate(null);
+      // Adopt the row this form now edits, so the NEXT save updates it.
+      if (data.quote?.id) {
+        setF((s) => ({ ...s, sourceQuote: { id: data.quote.id, nameKey: studentNameKey(studentName) } }));
+      }
+      setSavedLabel(data.updated ? 'Updated.' : 'Saved.');
       setSaved(true);
       setTimeout(() => setSaved(false), 2200);
       // DevDataContext.ensure() is fetch-once: without this the Saved tab keeps
@@ -386,8 +424,8 @@ export default function PackageBuilder({ config, form, setForm }) {
           <h3 className="font-display text-[15px] font-semibold text-ink">Proposal email</h3>
           <div className="flex items-center gap-2">
             {copied && <span className="text-[12px] font-medium text-moss">Copied.</span>}
-            {saved && <span className="text-[12px] font-medium text-moss">Saved.</span>}
-            <GhostButton onClick={save} disabled={saving}>
+            {saved && <span className="text-[12px] font-medium text-moss">{savedLabel}</span>}
+            <GhostButton onClick={() => save()} disabled={saving}>
               {saving ? 'Saving…' : 'Save proposal'}
             </GhostButton>
             <PillButton onClick={copy}>Copy for Gmail</PillButton>
@@ -412,6 +450,57 @@ export default function PackageBuilder({ config, form, setForm }) {
           })}
         </div>
       </Card>
+
+      {duplicate && (
+        <Modal onClose={() => (saving ? null : setDuplicate(null))}>
+          <h3 className="font-display text-lg font-semibold text-ink">
+            {f.firstName ? `${f.firstName} already has a saved proposal` : 'That student already has a saved proposal'}
+          </h3>
+          {duplicate.ambiguous ? (
+            <>
+              {/* More than one proposal carries this name and the builder was
+                  not opened from any of them, so there is no way to know which
+                  one "update" means. Guessing the newest could overwrite a
+                  different family who happens to share a name. */}
+              <p className="mt-2 text-[13px] leading-relaxed text-ink-soft">
+                There are {duplicate.matches} saved proposals under this name, so I can’t tell which
+                one you mean. To edit an existing one, open it from the Saved tab and save from
+                there. Otherwise this can be saved as a new proposal.
+              </p>
+              <div className="mt-5 flex flex-wrap justify-end gap-2">
+                <GhostButton onClick={() => setDuplicate(null)} disabled={saving}>
+                  Cancel
+                </GhostButton>
+                <PillButton onClick={() => save({ forceNew: true })} disabled={saving}>
+                  {saving ? 'Saving…' : 'Save as a new proposal'}
+                </PillButton>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="mt-2 text-[13px] leading-relaxed text-ink-soft">
+                {duplicate.student_name || 'A proposal'} was saved{' '}
+                {duplicate.created_at
+                  ? DateTime.fromISO(duplicate.created_at).setZone(ZONE).toFormat('LLL d, yyyy · h:mm a')
+                  : 'earlier'}
+                {duplicate.created_by ? ` by ${duplicate.created_by}` : ''}. Would you like to update{' '}
+                {f.firstName ? `${f.firstName}’s` : 'that'} proposal, or is this a new student?
+              </p>
+              <div className="mt-5 flex flex-wrap justify-end gap-2">
+                <GhostButton onClick={() => setDuplicate(null)} disabled={saving}>
+                  Cancel
+                </GhostButton>
+                <GhostButton onClick={() => save({ forceNew: true })} disabled={saving}>
+                  It’s a new student
+                </GhostButton>
+                <PillButton onClick={() => save({ updateId: duplicate.id })} disabled={saving}>
+                  {saving ? 'Updating…' : f.firstName ? `Update ${f.firstName}’s proposal` : 'Update it'}
+                </PillButton>
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
     </div>
   );
 }
