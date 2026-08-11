@@ -1,5 +1,5 @@
 import { requireAdmin } from '@/lib/developerAuth'
-import { listQuotes, saveQuote } from '@/lib/pricing'
+import { listQuotes, saveQuote, readPricing } from '@/lib/pricing'
 
 // Record-keeping for built proposals (replaces the sheet's "save student
 // profile"). GET → newest-first list; POST → save one. Admin-gated.
@@ -23,11 +23,14 @@ export async function POST(request) {
 
   try {
     const body = await request.json()
-    const { studentName, grade, selection, emailHtml } = body || {}
+    const { studentName, grade, selection, emailHtml, leadId } = body || {}
     if (!selection || typeof selection !== 'object') {
       return Response.json({ error: 'Missing selection' }, { status: 400 })
     }
-    const quote = await saveQuote({ studentName, grade, selection, emailHtml, createdBy: gate.email })
+    // Snapshot the active config into the row so the contract derivation can
+    // reproduce the family's numbers after the pricing dashboard moves.
+    const config = await readPricing()
+    const quote = await saveQuote({ studentName, grade, selection, emailHtml, leadId, config, createdBy: gate.email })
     return Response.json({ success: true, quote })
   } catch (err) {
     console.error('packageQuotes POST error:', err)

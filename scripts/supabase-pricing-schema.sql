@@ -26,3 +26,19 @@ create table if not exists public.package_quotes (
   email_html    text
 );
 alter table public.package_quotes enable row level security;
+
+-- 2026-08-11 — the lead→student bridge (applied same day via the pooler).
+-- lead_id: provenance link to the AP-project scoreapp_leads row this proposal
+-- answers (plain bigint — cross-project FKs don't exist; null = manual
+-- referral). provision/provisioned_at: the receipt stamped when a proposal
+-- became a student (see app/api/developer/packageQuotes/[id]/provision).
+alter table public.package_quotes add column if not exists lead_id        bigint;
+alter table public.package_quotes add column if not exists provision      jsonb;
+alter table public.package_quotes add column if not exists provisioned_at timestamptz;
+
+-- 2026-08-11 (same session, post-adversarial-review) — config_snapshot: the
+-- merged pricing config frozen at save time, so a contract re-derivation can
+-- never drift when the pricing dashboard changes between proposal and
+-- acceptance. Legacy rows (null) re-derive against the current config, with
+-- that risk documented in lib/packageContract.js.
+alter table public.package_quotes add column if not exists config_snapshot jsonb;

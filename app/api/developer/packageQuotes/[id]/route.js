@@ -1,5 +1,6 @@
 import { requireAdmin } from '@/lib/developerAuth';
-import { getQuote } from '@/lib/pricing';
+import { getQuote, readPricing } from '@/lib/pricing';
+import { buildContract } from '@/lib/packageContract';
 
 // GET /api/developer/packageQuotes/<id> → one saved proposal: the `selection`
 // blob and the sent `email_html`, both omitted by the list endpoint.
@@ -29,7 +30,10 @@ export async function GET(request, { params }) {
   try {
     const quote = await getQuote(id);
     if (!quote) return Response.json({ error: 'Not found' }, { status: 404 });
-    return Response.json({ quote });
+    // The quote read as a commitment: per-tier committed deliverables, derived
+    // from the same calculator that priced them (see lib/packageContract.js).
+    const contract = buildContract(quote, await readPricing());
+    return Response.json({ quote, contract });
   } catch (err) {
     console.error('packageQuotes GET one error:', err);
     return Response.json({ error: err.message || 'Server error' }, { status: 500 });
