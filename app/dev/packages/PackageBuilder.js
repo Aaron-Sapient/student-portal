@@ -277,7 +277,14 @@ export default function PackageBuilder({ config, form, setForm }) {
             </div>
           </div>
           <label className="block">
-            <span className={labelCls}>Discount expires</span>
+            {/* This date sets the BONUS deadline, not a discount one — it is
+                what the intro sentence and the "… Bonus: expires …" heading
+                both quote (Aaron, 2026-08-11). Discounts expire too, on their
+                own schedule, which this generator does not model; labelling
+                this one "Discount expires" invited setting it to the wrong
+                date. The state key stays `discountExpires` so stored
+                selections keep round-tripping. */}
+            <span className={labelCls}>Bonus expires</span>
             <input type="date" className={`${fieldCls} mt-1.5`} value={f.discountExpires} onChange={(e) => set('discountExpires', e.target.value)} />
           </label>
           <div className="block">
