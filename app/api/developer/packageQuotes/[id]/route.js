@@ -3,13 +3,15 @@ import { getQuote, readPricing } from '@/lib/pricing';
 import { buildContract } from '@/lib/packageContract';
 
 // GET /api/developer/packageQuotes/<id> → one saved proposal: the `selection`
-// blob and the sent `email_html`, both omitted by the list endpoint.
+// blob and the saved `email_html`, both omitted by the list endpoint.
 //
-// No consumer yet — the reopen control in the builder is UI and is deliberately
-// unbuilt. See lib/pricing.js getQuote for the reason a re-render is NOT
-// equivalent to the saved email: buildEmail resolves seasons, late-start and
-// early-start against a reference date, so reopening has to decide between
-// reproducing the original (pass created_at as refISO) and repricing for today.
+// Consumed by the Saved tab's detail panel (app/dev/packages/SavedQuotes.js),
+// which resolves the choice lib/pricing.js getQuote describes — a re-render is
+// NOT equivalent to the saved email, because buildEmail resolves seasons,
+// late-start and early-start against a reference date. The panel takes BOTH
+// sides explicitly: it displays `email_html` verbatim as the record, and
+// "Open in builder" re-prices `selection` for today, saying so on screen.
+// `contract` is returned for provisioning's benefit; the panel ignores it.
 //
 // Admin-gated (Aaron + Ryan), same as the list/save endpoint beside it.
 

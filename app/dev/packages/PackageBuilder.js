@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { DateTime } from 'luxon';
+import { useDevData } from '@/app/developer/(panel)/DevDataContext';
 import {
   Card,
   Chip,
@@ -15,12 +16,13 @@ import { buildEmail } from '@/lib/packageEmail';
 
 const SEASONS = ['summer', 'fall', 'winter', 'spring'];
 const SEASON_GRADES = ['9', '10', '11', '12'];
+const ZONE = 'America/Los_Angeles';
 
 const emptySel = () =>
   Object.fromEntries(ADDON_DEFS.map((d) => [d.key, d.kind === 'flat' ? false : 0]));
 
-function makeInitial() {
-  const expires = DateTime.now().setZone('America/Los_Angeles').plus({ days: 7 }).toFormat('yyyy-MM-dd');
+export function makeInitial() {
+  const expires = DateTime.now().setZone(ZONE).plus({ days: 7 }).toFormat('yyyy-MM-dd');
   return {
     firstName: '',
     lastName: '',
@@ -36,6 +38,53 @@ function makeInitial() {
     customPct: 0,
     services: { essential: emptySel(), comprehensive: emptySel(), vip: emptySel() },
     bonuses: { essential: emptySel(), comprehensive: emptySel(), vip: emptySel() },
+  };
+}
+
+// The inverse of the `state` memo below: a saved proposal's `selection` blob
+// back into the form's shape, so "Open in builder" on the Saved tab reopens a
+// real, editable proposal. Every field is defaulted against makeInitial()
+// because a stored row is only as new as the day it was saved — an add-on key
+// added since then is simply absent from its selection maps.
+export function fromSelection(sel) {
+  const base = makeInitial();
+  if (!sel || typeof sel !== 'object') return base;
+  const merge = (bucket) =>
+    Object.fromEntries(PACKAGES.map((p) => [p, { ...emptySel(), ...(bucket?.[p] || {}) }]));
+  // Keep however many seasons were stored — the UI renders one row per entry
+  // and buildEmail reads the first two. Reverting to the default pair on an
+  // unexpected length would fail to WRONG content rather than to the record.
+  const seasons = Array.isArray(sel.seasons) && sel.seasons.length
+    ? sel.seasons.map((s, i) => ({ ...(base.seasons[i] || base.seasons[0]), ...s }))
+    : base.seasons;
+  // An expiry only survives the round trip while it is still in the future.
+  // Everything else in the email re-prices to today — the month bonus, the
+  // late-start window, the early-start block — so restoring a stale date
+  // verbatim is the one thing here that would put a dead deadline ("expires
+  // 4/12", three times) in front of a family. ISO dates compare lexically.
+  const storedExpiry = String(sel.discountExpires || '');
+  const keepExpiry =
+    /^\d{4}-\d{2}-\d{2}$/.test(storedExpiry) &&
+    storedExpiry >= DateTime.now().setZone(ZONE).toISODate();
+  return {
+    ...base,
+    firstName: sel.firstName || '',
+    lastName: sel.lastName || '',
+    grade: GRADES.includes(String(sel.grade)) ? String(sel.grade) : base.grade,
+    gender: sel.gender === 'female' ? 'female' : 'male',
+    discountExpires: keepExpiry ? storedExpiry : base.discountExpires,
+    seasons,
+    referral: !!sel.discounts?.referral,
+    sibling: !!sel.discounts?.sibling,
+    // Stored as a fraction (0.0333), edited as a percentage (3.33).
+    customPct: Math.round((Number(sel.discounts?.custom) || 0) * 10000) / 100,
+    services: merge(sel.services),
+    bonuses: merge(sel.bonuses),
+    // No control writes this yet, but the 1-3 tier plumbing downstream already
+    // reads it (lib/packageEmail.js). Carrying it through the round trip now
+    // means a Comprehensive-only proposal can't silently reopen as a
+    // three-option one with VIP back on the table the day that control ships.
+    selectedPackages: sel.selectedPackages,
   };
 }
 
@@ -102,8 +151,16 @@ function AddOnGrid({ title, hint, sel, onChange }) {
 // Live proposal builder: configure a family + per-package recommendations, see
 // the three totals update, preview the email, then copy it (rich HTML for
 // Gmail) or save it as a record.
-export default function PackageBuilder({ config }) {
-  const [f, setF] = useState(makeInitial);
+//
+// The form state is OWNED BY PackagesTab, not here: the three views are
+// conditionally rendered, so a glance at the Pricing tab unmounts this
+// component. Holding `f` locally meant a half-built proposal was destroyed by
+// a tab switch — and, once the Saved tab could reopen a proposal, silently
+// reverted to the saved selection on the way back.
+export default function PackageBuilder({ config, form, setForm }) {
+  const f = form;
+  const setF = setForm;
+  const { refresh } = useDevData();
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -125,6 +182,10 @@ export default function PackageBuilder({ config }) {
       discounts: { referral: f.referral, sibling: f.sibling, custom: (Number(f.customPct) || 0) / 100 },
       services: f.services,
       bonuses: f.bonuses,
+      // Undefined for anything built here (no control writes it yet), which
+      // normalizeSelectedPackages reads as all three tiers — unchanged
+      // behaviour. Present only on a reopened proposal that carried one.
+      selectedPackages: f.selectedPackages,
     }),
     [f]
   );
@@ -172,6 +233,10 @@ export default function PackageBuilder({ config }) {
       }
       setSaved(true);
       setTimeout(() => setSaved(false), 2200);
+      // DevDataContext.ensure() is fetch-once: without this the Saved tab keeps
+      // serving the list it loaded earlier in the session, so a proposal saved
+      // seconds ago is simply absent from the only surface that can reopen it.
+      refresh('packageQuotes');
     } finally {
       setSaving(false);
     }
