@@ -116,7 +116,9 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
     setSlots([]);
     setLoadingSlots(true);
     const mins = meetingMinutes(meeting.start, meeting.end);
-    fetch(`/api/getAvailableSlots?date=${formatDateStr(rDate)}&duration=${mins}&instructor=${instructorSlug}`)
+    // excludeEventId: this meeting is being MOVED, so it must not count against the
+    // student's own allowance (or block its own time) while we look for a new slot.
+    fetch(`/api/getAvailableSlots?date=${formatDateStr(rDate)}&duration=${mins}&instructor=${instructorSlug}&excludeEventId=${encodeURIComponent(meeting.id)}`)
       .then((r) => r.json())
       .then((data) => { setSlots(data.slots || []); setLoadingSlots(false); })
       .catch(() => { setSlots([]); setLoadingSlots(false); });
@@ -151,26 +153,17 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
     }
   }
 
+  // ONE request. It used to be cancel-then-book from here, which deleted the meeting
+  // before knowing the replacement was allowed — any refusal left the student with NO
+  // meeting and no way back (that is how a student lost his on 2026-08-11). bookMeeting
+  // now books first and releases the old event itself, so the order can't be skipped or
+  // half-completed by the client, and the worst case is two meetings rather than none.
   async function doReschedule() {
     if (!slot) return;
     setBusy(true);
     setError(null);
     try {
-      const cancelRes = await fetch('/api/cancelMeeting', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          eventId: meeting.id,
-          studentName,
-          meetingTitle: meeting.title,
-          meetingStart: meeting.start,
-          isReschedule: true,
-          instructor: instructorSlug,
-        }),
-      });
-      if (!(await cancelRes.json()).success) throw new Error('Couldn’t release the old time');
-
-      const bookRes = await fetch('/api/bookMeeting', {
+      const res = await fetch('/api/bookMeeting', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -181,11 +174,23 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
           agenda: agenda.trim(),
           isReschedule: true,
           instructor: instructorSlug,
+          excludeEventId: meeting.id,
         }),
       });
-      if (!(await bookRes.json()).success) throw new Error('Couldn’t book the new time');
+      const booked = await res.json();
+      if (!booked.success) {
+        // bookMeeting can fail AFTER creating the event (a Sheets write, say), so never
+        // promise nothing changed — resync and let the card show the truth.
+        await refreshMeetings();
+        throw new Error(booked.error || 'Couldn’t book the new time. Please check your meetings below.');
+      }
 
       await refreshMeetings();
+      if (booked.staleMeeting) {
+        // New time is booked; the old event survived. Say so rather than reporting a
+        // clean success the card is about to contradict.
+        throw new Error('New time booked, but the old meeting couldn’t be released — please cancel it below.');
+      }
       setMode('view');
       setRDate(null);
       setSlot(null);

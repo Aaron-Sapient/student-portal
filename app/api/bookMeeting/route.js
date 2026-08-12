@@ -3,14 +3,24 @@ import { google } from 'googleapis';
 import nodemailer from 'nodemailer';
 import { DateTime } from 'luxon';
 import { getInstructor, validateInstructorHours } from '@/lib/instructors';
-import { getSeniorByEmail, loadSeniorBookingState, canBookOnDate, recordBooking, consumeOneoff } from '@/lib/seniors';
-import { loadProjectPlanForBooking, loadProjectBookingsForPlan, canBookProjectOnDate, recordProjectBooking } from '@/lib/projectMeetings';
+import {
+  getSeniorByEmail, loadSeniorBookingState, canBookOnDate, recordBooking, consumeOneoff,
+  reconsumeOneoff, cancelBookingByEventId, cancelOneoffByEventId,
+} from '@/lib/seniors';
+import {
+  loadProjectPlanForBooking, loadProjectBookingsForPlan, canBookProjectOnDate, recordProjectBooking,
+  cancelProjectBookingByEventId,
+} from '@/lib/projectMeetings';
 import { mirrorBookingToken, resolveStudentSheetId } from '@/lib/bookingTokens';
+import { resolveRescheduleTarget } from '@/lib/rescheduleTarget';
 
 // Human messages for canBookOnDate() rejection reasons (grant gates + package rules).
 const SENIOR_DENY = {
   'no-grant': 'Complete this week’s check-in to unlock booking.',
-  'out-of-window': 'You can only book inside this check-in’s window. Next week’s check-in unlocks the week after.',
+  // Says WHEN the next window opens, not "check in again to unlock it". The old
+  // wording read as an instruction to re-check-in immediately, which is what sent a
+  // student into the supersede that cost him a cross-meeting on 2026-08-11.
+  'out-of-window': 'That date is outside this check-in’s booking window. Your next weekly check-in, from Saturday, opens the week after.',
   'same-day': 'You already have a meeting that day — pick another day.',
   'tokens-used': 'You’ve booked all the meetings this check-in unlocked.',
   'wrong-teacher': 'That teacher isn’t bookable for you right now.',
@@ -64,9 +74,15 @@ async function sendBookingEmail(instructor, studentName, studentEmail, duration,
   const action = isReschedule ? 'rescheduled' : 'booked';
   const agendaLine = agenda ? `\nAgenda: ${agenda}` : '';
 
+  // A reschedule used to send TWO mails (bookMeeting → bookingEmail, cancelMeeting →
+  // cancelEmail) and those differ for Ryan — support@ vs ryan@. It is one request now,
+  // so cancelEmail is added here or Ryan's own inbox would stop hearing about moves.
+  const recipients = [studentEmail, instructor.bookingEmail];
+  if (isReschedule && instructor.cancelEmail) recipients.push(instructor.cancelEmail);
+
   await transporter.sendMail({
     from: process.env.SMTP_USER,
-    to: `${studentEmail}, ${instructor.bookingEmail}`,
+    to: [...new Set(recipients.filter(Boolean))].join(', '),
     subject: isReschedule
       ? `Meeting Rescheduled: ${studentName} – ${duration} with ${instructor.displayName}`
       : `New Meeting Booked: ${studentName} – ${duration} with ${instructor.displayName}`,
@@ -81,7 +97,7 @@ export async function POST(request) {
 
   try {
     const body = await request.json();
-    const { start, end, duration, studentName, agenda, isReschedule, instructor: instructorSlug, m } = body;
+    const { start, end, duration, studentName, agenda, isReschedule, instructor: instructorSlug, m, excludeEventId } = body;
     const instructor = getInstructor(instructorSlug);
     // Deep-linked project-meeting booking (?m=project:<id> → carried in the POST body).
     const projectPlanId = String(m || '').startsWith('project:') ? String(m).slice('project:'.length) : null;
@@ -106,6 +122,18 @@ export async function POST(request) {
     const calendar = google.calendar({ version: 'v3', auth: authClient });
     const sheets = google.sheets({ version: 'v4', auth: authClient });
 
+    // A reschedule is ONE request: book the replacement, then release the old meeting
+    // below. The client cannot be trusted to make the second half of the call — if it
+    // simply never cancelled, the exclusion would be a free extra meeting.
+    const replacingEventId = await resolveRescheduleTarget(
+      calendar, instructor, excludeEventId, email, studentName, now
+    );
+    if (excludeEventId && !replacingEventId) {
+      return Response.json({
+        error: 'That meeting can’t be rescheduled — it may have already moved, or it’s within 24 hours.',
+      }, { status: 409 });
+    }
+
     // Double-check slot is still free
     const conflictCheck = await calendar.events.list({
       calendarId: instructor.calendarId,
@@ -114,7 +142,12 @@ export async function POST(request) {
       singleEvents: true,
     });
 
-    const conflicts = (conflictCheck.data.items || []).filter(e => e.status !== 'cancelled');
+    // On a reschedule the old meeting is still on the calendar (it is cancelled only
+    // after this booking succeeds), so it must not block its own replacement — without
+    // this, moving a meeting to an overlapping time reports "just booked by someone else".
+    const conflicts = (conflictCheck.data.items || [])
+      .filter(e => e.status !== 'cancelled')
+      .filter(e => !replacingEventId || e.id !== replacingEventId);
     if (conflicts.length > 0) {
       return Response.json({
         error: 'This slot was just booked by someone else. Please choose another time.',
@@ -164,8 +197,13 @@ export async function POST(request) {
     const senior = projectPlanId ? null : await getSeniorByEmail(email);
     let seniorGrant = null;
     let seniorOneoffId = null;
+    let seniorOneoffRehydratedFrom = null;
     if (senior) {
-      const state = await loadSeniorBookingState(senior);
+      // Reschedule: don't charge the student twice for the meeting they're moving.
+      // Mirrors the exclusion getAvailableSlots applied to build this slot list, so the
+      // gate here can't contradict what the student was shown. Keyed on the VERIFIED
+      // id, never the raw request value.
+      const state = await loadSeniorBookingState(senior, replacingEventId);
       const verdict = canBookOnDate(senior, startTime, instructor.slug, seniorMins, state);
       if (!verdict.ok) {
         return Response.json(
@@ -175,8 +213,15 @@ export async function POST(request) {
       }
       // `via` tells us which ledger to charge: the weekly grant, or the separate
       // additive one-off track (weekly is always tried first inside canBookOnDate).
-      if (verdict.via === 'oneoff') seniorOneoffId = verdict.oneoffId;
-      else seniorGrant = state.grant;
+      if (verdict.via === 'oneoff') {
+        seniorOneoffId = verdict.oneoffId;
+        // A one-off surfaced by loadSeniorOneoffs' reschedule rehydration is already
+        // 'consumed' by the meeting being moved — re-point it to the new event rather
+        // than consume it again (which would match zero rows and leave this booking
+        // unpaid for, then hand the one-off back when the old event is cancelled).
+        seniorOneoffRehydratedFrom =
+          (state.oneoffs || []).find((o) => o.id === verdict.oneoffId)?.rehydratedFrom || null;
+      } else seniorGrant = state.grant;
     }
 
     // Seniors' non-project bookings are the college-app essay track — default the
@@ -250,7 +295,11 @@ export async function POST(request) {
     if (senior && (seniorGrant || seniorOneoffId)) {
       try {
         if (seniorOneoffId) {
-          await consumeOneoff(seniorOneoffId, eventRes.data.id);
+          if (seniorOneoffRehydratedFrom) {
+            await reconsumeOneoff(seniorOneoffId, seniorOneoffRehydratedFrom, eventRes.data.id);
+          } else {
+            await consumeOneoff(seniorOneoffId, eventRes.data.id);
+          }
         } else {
           await recordBooking(seniorGrant, {
             eventId: eventRes.data.id,
@@ -268,6 +317,33 @@ export async function POST(request) {
           console.error('Failed to roll back orphaned event:', delErr);
         }
         return Response.json({ error: 'Booking could not be recorded. Please try again.' }, { status: 500 });
+      }
+    }
+
+    // Release the meeting being replaced. Deliberately runs AFTER the replacement is
+    // fully booked and recorded, so the failure direction is "two meetings, cancel one"
+    // (recoverable, both visible on the meetings card) rather than "no meeting at all" —
+    // which is exactly what cost a student his meeting on 2026-08-11.
+    let staleMeetingLeft = false;
+    if (replacingEventId) {
+      try {
+        await calendar.events.delete({ calendarId: instructor.calendarId, eventId: replacingEventId });
+      } catch (delErr) {
+        const gone = delErr?.code === 404 || delErr?.response?.status === 404;
+        if (!gone) {
+          console.error('Reschedule: old event could not be deleted:', delErr);
+          staleMeetingLeft = true;
+        }
+      }
+      try {
+        // Each is a no-op for whichever ledger didn't fund the old meeting. A one-off
+        // that DID fund it was re-pointed to the new event above, so cancelOneoff finds
+        // nothing and the one-off is correctly not handed back.
+        await cancelBookingByEventId(replacingEventId);
+        await cancelOneoffByEventId(replacingEventId);
+        await cancelProjectBookingByEventId(replacingEventId);
+      } catch (ledgerErr) {
+        console.error('Reschedule: old ledger rows could not be released:', ledgerErr);
       }
     }
 
@@ -331,7 +407,9 @@ export async function POST(request) {
       console.error('Failed to send booking email:', emailErr);
     }
 
-    return Response.json({ success: true });
+    // staleMeeting: the replacement is booked but the old event outlived the delete —
+    // the student must be told to cancel it, not shown a bare success.
+    return Response.json({ success: true, staleMeeting: staleMeetingLeft });
 
   } catch (err) {
     console.error('bookMeeting error:', err);

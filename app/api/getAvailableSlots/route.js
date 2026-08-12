@@ -4,6 +4,7 @@ import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
 import { listBlocksForBooking, isDateBlocked, blockedWindowsForDate } from '@/lib/blocks';
 import { getSeniorByEmail, loadSeniorBookingState, canBookOnDate } from '@/lib/seniors';
+import { resolveRescheduleTarget } from '@/lib/rescheduleTarget';
 import {
   loadProjectPlanForBooking,
   loadProjectBookingsForPlan,
@@ -74,6 +75,11 @@ export async function GET(request) {
   const dateStr = searchParams.get('date');
   const duration = parseInt(searchParams.get('duration') || '30');
   const instructor = getInstructor(searchParams.get('instructor'));
+  // Reschedule: the meeting being MOVED must not count against the student while we
+  // check where it can go — neither in the senior gate below nor as a busy window on
+  // its own calendar. Without it the gate answers tokens-used/same-day/secondary-done
+  // and every candidate day comes back empty.
+  const excludeEventId = searchParams.get('excludeEventId') || null;
 
   if (!dateStr) {
     return Response.json({ error: 'Missing date parameter' }, { status: 400 });
@@ -88,6 +94,14 @@ export async function GET(request) {
     const calendar = google.calendar({ version: 'v3', auth: authClient });
     // No Sheets client here anymore — instructor blocks moved to Supabase (2026-08-09)
     // and this route reads nothing else from the Master Sheet.
+
+    // Verify the reschedule target before it is allowed to suppress anything. Slots are
+    // only a display, but showing times the booking gate will refuse is its own bug —
+    // and this keeps the two in agreement by construction. Unverified → null → the day
+    // is scored exactly as it would be without an exclusion.
+    const replacingEventId = await resolveRescheduleTarget(
+      calendar, instructor, excludeEventId, sessionClaims.email, null, now
+    );
 
     // Project-meeting gate (deep-linked ?m=project:<id>): authorize this date against
     // the standing plan + 1/week ledger. Else the senior essay gate. (One or the other —
@@ -106,7 +120,7 @@ export async function GET(request) {
     } else {
       const senior = await getSeniorByEmail(sessionClaims.email);
       if (senior) {
-        const state = await loadSeniorBookingState(senior);
+        const state = await loadSeniorBookingState(senior, replacingEventId);
         if (!canBookOnDate(senior, requestedDate, instructor.slug, duration, state).ok) {
           return Response.json({ slots: [], recommendations: [], unavailable: true });
         }
@@ -136,6 +150,9 @@ export async function GET(request) {
 
     const busyWindows = (eventsRes.data.items || [])
       .filter(e => e.status !== 'cancelled')
+      // The meeting being rescheduled must not block its own replacement — otherwise
+      // its current time (and anything overlapping it) is missing from the new day.
+      .filter(e => !replacingEventId || e.id !== replacingEventId)
       .map(e => ({
         start: DateTime.fromISO(e.start.dateTime || e.start.date),
         end: DateTime.fromISO(e.end.dateTime || e.end.date),
