@@ -145,6 +145,9 @@ export async function POST(request) {
     // On a reschedule the old meeting is still on the calendar (it is cancelled only
     // after this booking succeeds), so it must not block its own replacement — without
     // this, moving a meeting to an overlapping time reports "just booked by someone else".
+    // Every non-cancelled event conflicts, including ones Google marks Free. Deliberate —
+    // Ryan blocks time off with all-day events, which Google defaults to "Free" and he
+    // doesn't re-mark. Full reasoning in getMonthAvailability; don't change one site alone.
     const conflicts = (conflictCheck.data.items || [])
       .filter(e => e.status !== 'cancelled')
       .filter(e => !replacingEventId || e.id !== replacingEventId);

@@ -130,6 +130,26 @@ export async function GET(request) {
       listBlocksForBooking(),
     ]);
 
+    // ⚠️ DO NOT "fix" this by honoring Google's `transparency` field. Every non-cancelled
+    // event blocks, INCLUDING ones Google reports as Free — that is deliberate and
+    // load-bearing, not an oversight.
+    //
+    // Ryan blocks his own time off by creating an all-day event on his calendar (e.g. the
+    // Aug 10–15 2026 "Ryan" event). Google Calendar defaults all-day events to
+    // `transparency: 'transparent'` ("Free") unless you go change it, and he does not take
+    // that extra step — he reasonably expects that making a calendar event means he's
+    // booked. Respecting transparency would silently un-block every vacation he has ever
+    // marked, and nobody would notice until a student booked into one.
+    //
+    // He has no alternative: the `instructor_blocks` admin is behind requireDeveloper
+    // (Aaron only, lib/developerAuth.js), so his calendar IS his blocking mechanism.
+    // If that ever changes — Ryan gets access to the blocks admin, or starts marking
+    // all-day events Busy — revisit this, and change all three availability sites
+    // together (here, getAvailableSlots, bookMeeting).
+    //
+    // Cost of getting this wrong, the other direction: on 2026-08-13 this rule was
+    // diagnosed as the "bug" behind a student seeing no dates before Aug 18. It wasn't.
+    // The block was intended; the portal was right.
     const busyWindows = (eventsRes.data.items || [])
       .filter(e => e.status !== 'cancelled')
       .map(e => ({

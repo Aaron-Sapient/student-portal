@@ -148,6 +148,9 @@ export async function GET(request) {
       return Response.json({ slots: [], recommendations: [], blocked: true });
     }
 
+    // Every non-cancelled event blocks, including ones Google marks Free. Deliberate —
+    // Ryan blocks time off with all-day events, which Google defaults to "Free" and he
+    // doesn't re-mark. Full reasoning in getMonthAvailability; don't change one site alone.
     const busyWindows = (eventsRes.data.items || [])
       .filter(e => e.status !== 'cancelled')
       // The meeting being rescheduled must not block its own replacement — otherwise
