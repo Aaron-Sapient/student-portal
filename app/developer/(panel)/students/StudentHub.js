@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { Halo } from '@/app/(portal)/neu';
 import { Badge, Card, EmptyNote, ErrorNote, PageHeader, TabSkeleton } from '../devUi';
+import { SESSION_LENGTHS } from '@/lib/sessionSpec';
 
 // The per-student hub (slug = sheet id). One scrollable page aggregating the
 // student's identity, holistic scores, check-in cadence, files, read-only meeting
@@ -206,7 +207,7 @@ function ProjectMeetingCard({ sheetId, studentName }) {
             hand-inserted straight into Supabase, which is how a plan ends up with no
             granted_by and no note. Slots tile at any of these. */}
         <div className="flex gap-2">
-          {[15, 30, 45, 60].map((m) => (
+          {SESSION_LENGTHS.map((m) => (
             <Pill key={m} active={minutes === m} onClick={() => setMinutes(m)}>{m}-min</Pill>
           ))}
         </div>

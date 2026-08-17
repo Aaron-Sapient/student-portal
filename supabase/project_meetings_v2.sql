@@ -1,0 +1,20 @@
+-- project_meetings v2 (2026-08-17) — ONE gated, additive change to the weekly-session track.
+-- Apply via the session pooler (see .claude/CLAUDE.md, "Apply SQL via the session pooler").
+--
+-- One active plan per (student, teacher, length, label) — the DB-level form of the duplicate
+-- guard that lib/projectMeetings.findActiveDuplicatePlan already applies in code (admin
+-- route + scripts/sessions.mjs). The 1/week cap is per PLAN, so two identical active
+-- plans silently mean 2/week (health note 2026-08-06 §1d: Vaibhav Gaddam holds two active
+-- aaron/30/"Solo Research" plans, both with bookings).
+--
+-- ⛔ NOT APPLIED — creating this index FAILS while that duplicate exists. Decide first
+-- whether Vaibhav's 2/week is intended (then leave both rows and DON'T apply this; the
+-- honest model for a real 2/week is two differently labelled plans, e.g. "Solo Research
+-- A"/"B") or a mistake (end one: `node scripts/sessions.mjs end "Vaibhav" <planId> --commit`),
+-- then apply:
+--
+-- create unique index if not exists pmp_one_active_per_session
+--   on project_meeting_plans (student_sheet_id, teacher, minutes, lower(label))
+--   where active;
+-- (Identity matches lib/sessionSpec.sameSession exactly — teacher + minutes + label — so
+-- nothing the CLI/route accept can hit this index, and nothing it refuses can slip past.)

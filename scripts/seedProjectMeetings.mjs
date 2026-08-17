@@ -1,4 +1,8 @@
 /**
+ * ⚠ SUPERSEDED 2026-08-17 — historical 6/29 seed, kept for the record. To give a student
+ * weekly sessions today use `node scripts/sessions.mjs` (see BOOKING.md); this file has no
+ * duplicate guard (it is where Vaibhav's doubled plan came from) and hardcodes its targets.
+ *
  * seedProjectMeetings.mjs — one-time setup of the initial project-meeting plans, plus
  * Manusri's ART-flag flip. Idempotent: skips a student who already has an active plan,
  * and only flips the ART flag if it's currently TRUE. Prints everything it does.

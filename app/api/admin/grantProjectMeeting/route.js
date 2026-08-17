@@ -1,7 +1,8 @@
 import { google } from 'googleapis';
 import { requireAdmin } from '@/lib/developerAuth';
 import { getInstructor } from '@/lib/instructors';
-import { createProjectPlan } from '@/lib/projectMeetings';
+import { createProjectPlan, findActiveDuplicatePlan } from '@/lib/projectMeetings';
+import { validateSession, formatSession } from '@/lib/sessionSpec';
 import { sendProjectMeetingGrantedEmail } from '@/lib/checkinEmails';
 
 // Admin tool (stopgap): give a student a STANDING weekly "project meeting" (solo
@@ -40,30 +41,13 @@ export async function POST(request) {
   const { studentSheetId, instructor: instructorSlug, minutes, label, note, notify } = body;
   if (!studentSheetId) return Response.json({ error: 'Missing studentSheetId' }, { status: 400 });
 
-  const slug = String(instructorSlug || 'aaron').toLowerCase();
-  if (slug !== 'ryan' && slug !== 'aaron') {
-    return Response.json({ error: 'Instructor must be ryan or aaron' }, { status: 400 });
-  }
-  // 15/30/45/60: the lengths real packages actually use. The original 15-or-30 gate was
-  // narrower than the track itself — the 60-min SAT plans and the 45-min ACT plans both
-  // had to be inserted by hand around it, which is how a plan ends up with no audit
-  // trail. Slot generation steps by the plan's own length, so any of these tile cleanly.
-  const mins = parseInt(minutes, 10);
-  if (![15, 30, 45, 60].includes(mins)) {
-    return Response.json({ error: 'Minutes must be 15, 30, 45, or 60' }, { status: 400 });
-  }
-  const cleanLabel = String(label || '').trim() || 'Solo Research';
-  // The label now lands in the calendar TITLE (it's the default agenda for a blank-agenda
-  // project booking), and two consumers drop any event whose title contains "parent":
-  // getUpcomingMeetings' developer panel via belongsToStudent, and the meeting-tracker
-  // Apps Script that feeds meeting_cap_summary. A plan labelled "Parent Check-in" would
-  // therefore make every one of its bookings silently vanish from both. Refuse the label
-  // instead of shipping the disappearance.
-  if (/\bparents?\b/i.test(cleanLabel)) {
-    return Response.json({
-      error: 'Label can’t contain “parent” — meetings whose title says parent are filtered out of meeting reports. Try “Family Planning” or similar.',
-    }, { status: 400 });
-  }
+  // ONE rule set for teacher / length / label, shared with the developer panel's form
+  // and scripts/sessions.mjs (lib/sessionSpec.js) — so a plan that is legal from the CLI
+  // is legal here and vice-versa. Before this the route's own list lagged the real
+  // packages (15/30, then 15/30/45/60) and longer plans were hand-inserted around it.
+  const v = validateSession({ teacher: instructorSlug || 'aaron', minutes, label: label || 'Solo Research' });
+  if (!v.ok) return Response.json({ error: v.error }, { status: 400 });
+  const { teacher: slug, minutes: mins, label: cleanLabel } = v.value;
   const instructor = getInstructor(slug);
 
   try {
@@ -83,6 +67,17 @@ export async function POST(request) {
     const studentName = (row[0] || '').trim();
     const studentEmail = (row[9] || '').trim();
     const parentEmails = [row[10], row[11]].filter((e) => e && String(e).includes('@'));
+
+    // A second identical ACTIVE plan is not a no-op: the 1/week cap is per plan, so it
+    // silently doubles the student's weekly meetings (that is exactly how one student
+    // ended up with 2×30 Solo Research). Refuse unless the caller says it's deliberate.
+    const dupe = await findActiveDuplicatePlan(studentSheetId, v.value);
+    if (dupe && body.allowDuplicate !== true) {
+      return Response.json({
+        error: `${studentName || 'This student'} already has an active ${formatSession(v.value)} plan (${dupe.id}). Adding another would let them book it twice a week — give it a different label (e.g. “… B”) if they really need two.`,
+        duplicateOf: dupe.id,
+      }, { status: 409 });
+    }
 
     const plan = await createProjectPlan({
       studentSheetId,
