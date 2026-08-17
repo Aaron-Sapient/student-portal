@@ -44,11 +44,26 @@ export async function POST(request) {
   if (slug !== 'ryan' && slug !== 'aaron') {
     return Response.json({ error: 'Instructor must be ryan or aaron' }, { status: 400 });
   }
+  // 15/30/45/60: the lengths real packages actually use. The original 15-or-30 gate was
+  // narrower than the track itself — the 60-min SAT plans and the 45-min ACT plans both
+  // had to be inserted by hand around it, which is how a plan ends up with no audit
+  // trail. Slot generation steps by the plan's own length, so any of these tile cleanly.
   const mins = parseInt(minutes, 10);
-  if (mins !== 15 && mins !== 30) {
-    return Response.json({ error: 'Minutes must be 15 or 30' }, { status: 400 });
+  if (![15, 30, 45, 60].includes(mins)) {
+    return Response.json({ error: 'Minutes must be 15, 30, 45, or 60' }, { status: 400 });
   }
   const cleanLabel = String(label || '').trim() || 'Solo Research';
+  // The label now lands in the calendar TITLE (it's the default agenda for a blank-agenda
+  // project booking), and two consumers drop any event whose title contains "parent":
+  // getUpcomingMeetings' developer panel via belongsToStudent, and the meeting-tracker
+  // Apps Script that feeds meeting_cap_summary. A plan labelled "Parent Check-in" would
+  // therefore make every one of its bookings silently vanish from both. Refuse the label
+  // instead of shipping the disappearance.
+  if (/\bparents?\b/i.test(cleanLabel)) {
+    return Response.json({
+      error: 'Label can’t contain “parent” — meetings whose title says parent are filtered out of meeting reports. Try “Family Planning” or similar.',
+    }, { status: 400 });
+  }
   const instructor = getInstructor(slug);
 
   try {

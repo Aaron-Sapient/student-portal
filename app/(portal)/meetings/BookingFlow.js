@@ -217,7 +217,12 @@ export default function BookingFlow({ slug }) {
       })
       .catch(() => { if (!cancelled) { setAvailableDates(new Set()); setPhaseWeek(null); setLoadingMonth(false); } });
     return () => { cancelled = true; };
-  }, [calMonth, calYear, durationMins, instructor.slug, validating, authError, routedKind]);
+    // `m` is a dep even though it's already in the URL both fetches send: switching from
+    // one weekly-session card to another swaps `m` WITHOUT a remount, and two plans can
+    // now share a teacher AND a length (nothing stops a student holding two 30-min Ryan
+    // sessions), in which case no other dep changes and the calendar would keep showing
+    // the previous plan's window. Olivia's 45-vs-30 pair only escapes it via durationMins.
+  }, [calMonth, calYear, durationMins, instructor.slug, m, validating, authError, routedKind]);
 
   // 3) slots for selected day
   useEffect(() => {
@@ -234,7 +239,7 @@ export default function BookingFlow({ slug }) {
         setLoadingSlots(false);
       })
       .catch(() => { setSlots([]); setRecommended([]); setLoadingSlots(false); });
-  }, [selectedDate, durationMins, instructor.slug]);
+  }, [selectedDate, durationMins, instructor.slug, m]);
 
   async function handleBook() {
     if (!selectedSlot || !studentName) return;
@@ -257,7 +262,10 @@ export default function BookingFlow({ slug }) {
       const result = await res.json();
       if (!result.success) throw new Error(result.error || 'Booking failed');
       setBookedSlot(selectedSlot);
-      setBookedAgenda(agenda.trim());
+      // Prefer the agenda the SERVER used: it fills in the by-type default (a weekly
+      // session's own label, "College Apps" for a senior) that the student never typed.
+      // Falling back to the typed text keeps this correct against an older response.
+      setBookedAgenda(typeof result.agenda === 'string' ? result.agenda : agenda.trim());
       setBooked(true);
     } catch (err) {
       setBookingError(err.message);

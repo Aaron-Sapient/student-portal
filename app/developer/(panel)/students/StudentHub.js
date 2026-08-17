@@ -201,9 +201,14 @@ function ProjectMeetingCard({ sheetId, studentName }) {
           <Pill active={instructor === 'aaron'} onClick={() => setInstructor('aaron')}>Aaron</Pill>
           <Pill active={instructor === 'ryan'} onClick={() => setInstructor('ryan')}>Ryan</Pill>
         </div>
+        {/* 45 and 60 are real package lengths (45-min ACT sessions, 60-min SAT ones),
+            not hypotheticals — while this offered only 15/30 every longer plan had to be
+            hand-inserted straight into Supabase, which is how a plan ends up with no
+            granted_by and no note. Slots tile at any of these. */}
         <div className="flex gap-2">
-          <Pill active={minutes === 15} onClick={() => setMinutes(15)}>15-min</Pill>
-          <Pill active={minutes === 30} onClick={() => setMinutes(30)}>30-min</Pill>
+          {[15, 30, 45, 60].map((m) => (
+            <Pill key={m} active={minutes === m} onClick={() => setMinutes(m)}>{m}-min</Pill>
+          ))}
         </div>
         <input
           type="text"

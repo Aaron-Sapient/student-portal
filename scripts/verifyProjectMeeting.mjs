@@ -78,6 +78,29 @@ ok(cardThisBooked.bookable && cardThisBooked.window.start >= nextWk.toISODate(),
 const bothBooked = [{ week_start: weekStartISO(now), status: 'active' }, { week_start: nextWk.toISODate(), status: 'active' }];
 ok(!buildProjectCard(plan, bothBooked, now).bookable, 'both weeks booked → not bookable');
 
+// ── Several plans at once, two of them with the SAME teacher ─────────────────
+// The shape a real package now takes (Olivia Lim, 2026-08-17): 45-min ACT Reading with
+// Ryan + 30-min Counseling with Ryan + 30-min Competitions with Aaron. Two things must
+// hold or she books the wrong session: the LENGTH is the plan's own (not a global
+// 15/30), and the 1/week cap is per PLAN — one Ryan session must never consume the
+// other's week just because the teacher matches.
+const acted = { id: 'A', student_sheet_id: SHEET, teacher: 'ryan', minutes: 45, label: 'ACT Reading', active: true };
+const couns = { id: 'B', student_sheet_id: SHEET, teacher: 'ryan', minutes: 30, label: 'Counseling', active: true };
+const comps = { id: 'C', student_sheet_id: SHEET, teacher: 'aaron', minutes: 30, label: 'Competitions', active: true };
+
+ok(canBookProjectOnDate(acted, d2, 'ryan', 45, [], now).ok, '45-min plan authorizes a 45-min booking');
+ok(!canBookProjectOnDate(acted, d2, 'ryan', 30, [], now).ok, '45-min plan rejects a 30-min booking');
+ok(!canBookProjectOnDate(couns, d2, 'ryan', 45, [], now).ok, '30-min plan rejects a 45-min booking (same teacher)');
+ok(buildProjectCard(acted, [], now).durations.join() === '45', 'card carries the plan’s real length (45), not a bucket');
+
+// Same-teacher independence: ACT Reading booked this week leaves Counseling open.
+const byPlan = { A: thisWeekBooked, B: [], C: [] };
+const cards = [acted, couns, comps].map((p) => buildProjectCard(p, byPlan[p.id], now));
+ok(cards[0].bookedThisWeek && !cards[0].window?.start.startsWith(wkStart.toISODate()), 'ACT Reading: this week spent');
+ok(cards[1].bookable && !cards[1].bookedThisWeek, 'Counseling still bookable when the OTHER Ryan session is booked');
+ok(cards[2].bookable && !cards[2].bookedThisWeek, 'Competitions (Aaron) unaffected by a Ryan booking');
+ok(new Set(cards.map((c) => c.label)).size === 3, 'three distinct labels — no card collapses into another');
+
 // ── Live data path (synthetic sheet id) ──────────────────────────────────────
 try {
   const { data: planRow, error: planErr } = await sb

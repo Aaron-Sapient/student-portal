@@ -113,7 +113,11 @@ export async function POST(request) {
       return Response.json({ error: 'Meetings require 24-hour advance notice.' }, { status: 400 });
     }
 
-    const hoursError = validateInstructorHours(instructor, startTime);
+    // Parsed here, not at the ledger step below, because the hours check needs the
+    // LENGTH: a meeting can start inside the window and still end after close.
+    const seniorMins = parseInt(String(duration).replace(/\D/g, ''), 10);
+
+    const hoursError = validateInstructorHours(instructor, startTime, seniorMins);
     if (hoursError) {
       return Response.json({ error: hoursError }, { status: 400 });
     }
@@ -156,8 +160,6 @@ export async function POST(request) {
         error: 'This slot was just booked by someone else. Please choose another time.',
       }, { status: 409 });
     }
-
-    const seniorMins = parseInt(String(duration).replace(/\D/g, ''), 10);
 
     // The booked event's ACTUAL span must equal the validated/charged length. Both
     // canBookOnDate/canBookProjectOnDate and the ledger key off `seniorMins` (from the
@@ -227,11 +229,17 @@ export async function POST(request) {
       } else seniorGrant = state.grant;
     }
 
-    // Seniors' non-project bookings are the college-app essay track — default the
-    // agenda to "College Apps" so the title/description/email identify it, but
-    // anything the student actually types always wins (senior is never ART-eligible,
-    // so this never collides with the ART prefix below).
-    const agendaTrimmed = agenda?.trim() || (senior ? 'College Apps' : '');
+    // Default the agenda by booking TYPE so the title/description/email/upcoming-card
+    // all name WHAT the meeting is; anything the student actually types always wins.
+    //   • project meeting → the plan's own label ("ACT Reading", "Competitions", …).
+    //     Load-bearing once a student holds SEVERAL weekly sessions, two of them with
+    //     the same teacher: without it every card, title and email reads just "Ryan",
+    //     and a student naming one of them freehand ("ACT Reading Prep" on the
+    //     Competitions slot) is how the track drifts into a catch-all.
+    //   • senior, non-project → the college-app essay track ("College Apps"). A senior
+    //     is never ART-eligible, so this never collides with the ART prefix below.
+    const agendaTrimmed =
+      agenda?.trim() || (projectPlan ? projectPlan.label : senior ? 'College Apps' : '');
     const titlePrefix = instructor.slug === 'art' ? 'ART: ' : '';
     const eventTitle = agendaTrimmed
       ? `${titlePrefix}${studentName} – ${duration}: ${agendaTrimmed}`
@@ -412,7 +420,12 @@ export async function POST(request) {
 
     // staleMeeting: the replacement is booked but the old event outlived the delete —
     // the student must be told to cancel it, not shown a bare success.
-    return Response.json({ success: true, staleMeeting: staleMeetingLeft });
+    // agenda: the value we ACTUALLY used, defaults included. The confirmation screen
+    // builds the student's own "Add to Google/Apple Calendar" copy from it, so echoing it
+    // back is what keeps her saved event ("… 45min: ACT Reading") identical to the
+    // teacher's — it was reading only what she typed, so a defaulted agenda was on
+    // Ryan's copy and missing from hers.
+    return Response.json({ success: true, staleMeeting: staleMeetingLeft, agenda: agendaTrimmed });
 
   } catch (err) {
     console.error('bookMeeting error:', err);
