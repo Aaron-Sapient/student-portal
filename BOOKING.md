@@ -84,13 +84,13 @@ plan). The CLI and the admin route refuse the duplicate unless told `--allow-dup
 403s on booking (the card is keyed by sheet id, the gate by email). `sessions.mjs` takes the email
 from Master col J and warns when it's blank.
 
-## ⛔ Open (decisions that are Aaron's)
+## Decisions on record
 
-**Question (Aaron):** Vaibhav Gaddam holds two identical active `aaron/30/Solo Research` plans
-(6/29 seed + 7/01 panel), both with bookings — is 2/week intended? If NO:
-`node scripts/sessions.mjs end "Vaibhav" e0e44906 --commit`, then apply the unique index in
-`supabase/project_meetings_v2.sql`. If YES: leave both and don't apply the index (or make the
-doubling visible: end one and `add "Vaibhav" "aaron/30/Solo Research B"`, then apply it).
+**Status (2026-08-17 · Aaron):** Vaibhav Gaddam's two identical active `aaron/30/Solo Research`
+plans stay as they are for now (he can book twice a week). Consequence: the unique index in
+`supabase/project_meetings_v2.sql` stays UNAPPLIED; the duplicate guard is code-level only (CLI +
+admin route). If that ever changes: `node scripts/sessions.mjs end "Vaibhav" e0e44906 --commit`,
+then apply the index.
 **Status:** the CLI, shared validator, admin-route duplicate guard, and the admin-reschedule
 ledger sync (+ its 1/week pre-flight, which refuses the move before the calendar is touched) are
 in the repo as of 2026-08-17; deploy status is in the commit that carries them
