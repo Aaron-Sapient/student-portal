@@ -29,8 +29,8 @@
      sync.sh, so a consumer's own copy always answers for itself. Workflow: bump BOTH of these
      AND add a dated entry to CHANGELOG.md as a normal part of shipping any user-visible change —
      see CHANGELOG.md's header. Do not let this drift; a stale stamp defeats the whole feature. */
-  const MDE_VERSION = "1.5.1";
-  const MDE_LAST_CHANGE = "A table at the very top or bottom of a document no longer traps the caret: ArrowUp/ArrowDown now walk table rows and step out past the header/last row, Shift+Tab or ArrowLeft out of the first cell conjures a blank line above when none exists (Escape already did below), and clicking the empty surface above/below an edge table does the same — so text can always be added around a table without opening the file elsewhere.";
+  const MDE_VERSION = "1.5.2";
+  const MDE_LAST_CHANGE = "Peer cursors and selection highlights (collab) now scroll with the text instead of staying pinned on screen: the remote-caret overlay is positioned against the surface's own parent, so it rides inside the scroll container rather than a positioned ancestor outside it.";
 
   /* ============================================================================
      Side comments + emoji reactions — the in-document data model (MODULE scope, so
@@ -1949,7 +1949,17 @@
       caretLayer.className = "mde-remote-layer";
       caretLayer.setAttribute("contenteditable", "false");
       caretLayer.setAttribute("aria-hidden", "true");
-      (surface.parentNode || surface).appendChild(caretLayer);
+      // The layer must SCROLL WITH the surface, and an absolutely-positioned element only scrolls
+      // with an overflow box when its containing block is that box (or something inside it). If the
+      // surface's parent is `position: static`, the layer's containing block is some positioned
+      // ancestor OUTSIDE the scroller and the peer carets stay pinned on screen while the text
+      // scrolls under them (the tabs mount: .mde-tab-stage scrolls, .mde-tab-row is the positioned
+      // one — student-portal 2026-08-19). Promoting a static parent to relative changes no layout;
+      // it only makes the parent the containing block, so surface.offsetTop/Left and the layer's
+      // top/left share the same origin AND the same scroll.
+      const layerHost = (surface.parentNode && surface.parentNode.nodeType === 1) ? surface.parentNode : surface;
+      if (layerHost !== surface && getComputedStyle(layerHost).position === "static") layerHost.style.position = "relative";
+      layerHost.appendChild(caretLayer);
       surface.addEventListener("scroll", positionRemoteCarets, { passive: true });
       if (scrollParent && scrollParent !== surface) scrollParent.addEventListener("scroll", positionRemoteCarets, { passive: true });
       window.addEventListener("resize", positionRemoteCarets);
