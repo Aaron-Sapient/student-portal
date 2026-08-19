@@ -123,7 +123,7 @@ version history. Long-term: **all** students, **all** writing projects and tasks
 ## DOCS-7 — 🧱 Editor core already exists as a package: `Utils/md-editor` (P0 enabler)
 
 **The editor is already built and extracted** into a project-agnostic, dependency-free vanilla-JS
-package at **`/Users/aaron/Documents/VS Code/Claude/Utils/md-editor/`** (`md-editor.js` exposes
+package at **`/Users/aaron/Documents/VS Code/md-editor/`** (moved out of `Claude/Utils/` 2026-08-12) (`md-editor.js` exposes
 `window.MarkdownEditor = makeEditor`; `md-editor.css`). That folder is the **canonical source of
 truth** — synced Mac↔NAS and pushed to projects by its own `sync.sh`/`targets.json`. It was extracted
 from the Helthy meeting-notes editor. **Any feature/behavior change happens THERE first, then
@@ -276,7 +276,7 @@ A little pixelated creature lives in the **bottom-right** of the screen.
 
 ## Sources & references
 
-- **Editor core (canonical, source of truth):** `Claude/Utils/md-editor/` — `md-editor.js`
+- **Editor core (canonical, source of truth):** `VS Code/md-editor/` (was `Claude/Utils/md-editor/` until 2026-08-12) — `md-editor.js`
   (`window.MarkdownEditor = makeEditor`), `md-editor.css` (themeable via `--mde-*`), `sync.sh` +
   `targets.json`, `README.md` (full API + `%%…%%` + theming docs). Extracted from the Helthy editor
   (`Helthy-HQ/Helthy_Dashboard.html`), which is now a *consumer*, not the source. Editor changes go
