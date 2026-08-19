@@ -25,6 +25,14 @@
  * (disjoint sets → never a window where a live token is missing). Idempotent:
  * upsert on (student_sheet_id, instructor).
  */
+// ⛔ RETIRED 2026-08-19 (SUMMER-EXIT.md W6): booking_tokens is now the AUTHORITY
+// and the Master AZ/BB/BD cells are dead. Running this would overwrite real
+// grants with frozen sheet residue — the exact failure the cutover removed the
+// cron step to prevent. Kept only as reference until the post-ship cleanup
+// deletes it.
+console.error('backfillBookingTokens.cjs is RETIRED (2026-08-19): booking_tokens is authoritative; the sheet cells are dead. Refusing to run.');
+process.exit(1);
+
 const fs = require('fs');
 const path = require('path');
 const { google } = require('googleapis');

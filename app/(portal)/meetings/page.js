@@ -25,7 +25,6 @@ function ryanState(data) {
   const t = data?.meetingType;
   if (t === '15min' || t === '30min') return { bookable: true, label: t === '15min' ? '15-min Zoom' : '30-min Zoom' };
   if (t === 'written') return { bookable: false, checkedIn: true, note: 'Written update on the way' };
-  if (t === 'pending') return { bookable: false, checkedIn: true, note: 'Ryan is reviewing your check-in' };
   if (checkedInThisWeek(data?.lastCheckin))
     return { bookable: false, checkedIn: true, note: 'You’re checked in for this week!' };
   return { bookable: false, note: 'Check in to unlock' };

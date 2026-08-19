@@ -8,7 +8,8 @@
  *   node scripts/backfillCheckins.cjs --reconcile   # alias of --write (cron entrypoint)
  *
  * Source VERIFIED against submitUpdateForm/route.js + submitAaronUpdateForm +
- * bookMeeting (form column layouts) and checkinDecision (gate vocab):
+ * bookMeeting (form column layouts; gate vocab lives in submitUpdateForm since
+ * the 2026-08-19 direct-grant cutover — 'pending' no longer occurs in new rows):
  *  Ryan CheckinForm:  A ts · B name · C grades · D tests&deadlines · E taskUpdates
  *    · F concernCat · G concernText · H selfRating · I respPref · J agenda
  *    · K routingReason · L decision(gate: pending/written/15min/30min)

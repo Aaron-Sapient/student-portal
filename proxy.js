@@ -10,7 +10,7 @@ import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 // session to protect: they authenticate with a CRON_SECRET bearer instead
 // (lib/cronAuth.js requireCron, which fails closed). Without this allowlist entry
 // auth.protect() 404s them before their own guard ever runs.
-const isPublicRoute = createRouteMatcher(['/sign-in(.*)', '/sso-callback(.*)', '/parents(.*)', '/api/parentCheckin', '/checkin-approval(.*)', '/api/checkinDecision', '/write(.*)', '/api/writing/doc', '/api/writing/save', '/api/writing/tab', '/api/writing/history', '/sat(.*)', '/api/sat/init', '/api/sat/quiz', '/api/sat/submit', '/api/cron(.*)'])
+const isPublicRoute = createRouteMatcher(['/sign-in(.*)', '/sso-callback(.*)', '/parents(.*)', '/api/parentCheckin', '/write(.*)', '/api/writing/doc', '/api/writing/save', '/api/writing/tab', '/api/writing/history', '/sat(.*)', '/api/sat/init', '/api/sat/quiz', '/api/sat/submit', '/api/cron(.*)'])
 
 export default clerkMiddleware(async (auth, request) => {
   if (!isPublicRoute(request)) {

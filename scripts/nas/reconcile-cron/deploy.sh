@@ -27,6 +27,9 @@ ssh -i "$KEY" "$HOST" "mkdir -p $BASE/app/scripts $BASE/app/lib $BASE/logs"
 # outright (Supabase is the sole source; no Sheets mirror), so mirroring it back would
 # PRUNE every app-created block. Because /app is a BIND MOUNT, dropping a script from this
 # list does NOT delete it from the NAS — the orphaned copy was rm'd there by hand.
+# REMOVED 2026-08-19: backfillBookingTokens.cjs, for the same reason — the app now owns
+# booking_tokens outright (the Master AZ/BB/BD cells are dead), so reconciling from the
+# sheet would prune every app-created grant. rm the orphaned NAS copy when redeploying.
 scp -i "$KEY" \
   "$REPO/scripts/reconcile.cjs" \
   "$REPO/scripts/backfillStudents.cjs" \
@@ -35,7 +38,6 @@ scp -i "$KEY" \
   "$REPO/scripts/backfillParentCheckins.cjs" \
   "$REPO/scripts/backfillWrittenReports.cjs" \
   "$REPO/scripts/backfillCheckinSummary.cjs" \
-  "$REPO/scripts/backfillBookingTokens.cjs" \
   "$REPO/scripts/reconcileScores.cjs" \
   "$REPO/scripts/mirrorStudentHub.cjs" \
   "$REPO/scripts/reconcileTranscript.cjs" \

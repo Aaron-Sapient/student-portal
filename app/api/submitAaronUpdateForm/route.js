@@ -2,7 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { listBlocksForBooking, isDateBlocked } from '@/lib/blocks';
-import { mirrorBookingToken, resolveStudentSheetId } from '@/lib/bookingTokens';
+import { setBookingToken, resolveStudentSheetId } from '@/lib/bookingTokens';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -97,18 +97,19 @@ export async function POST(request) {
       reason = 'Aaron is unavailable today — finalize over email this week.';
     }
 
-    // ── 5. Write booking decision to 👩‍🎓 All Data col BB ──────────────────
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${MASTER_TAB}!BB${studentRowIndex}`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [[decision]] },
-    });
-
-    // Best-effort mirror to the booking_tokens cutover table (Aaron/BB; read side
-    // stays on Sheets). Resolve sheetId via a separate col-G read (rowIndex only here).
-    const aaronSid = await resolveStudentSheetId(sheets, studentRowIndex);
-    await mirrorBookingToken({ studentSheetId: aaronSid, slug: 'aaron', value: decision });
+    // ── 5. Write the booking decision (authoritative: Supabase booking_tokens) ──
+    // The Master BB cell is deliberately NOT written anymore — the booking
+    // outcome lives in the database. Resolve sheetId via a col-G read (this
+    // route only knows the rowIndex). A failed write gets the same honest,
+    // retryable contract as the senior grant path — never a bare "Server error"
+    // over a check-in that half-happened.
+    try {
+      const aaronSid = await resolveStudentSheetId(sheets, studentRowIndex);
+      await setBookingToken({ studentSheetId: aaronSid, slug: 'aaron', value: decision });
+    } catch (tokenErr) {
+      console.error('submitAaronUpdateForm: booking-decision write failed:', tokenErr);
+      return Response.json({ error: 'Check-in saved, but unlocking booking failed. Please retry.' }, { status: 500 });
+    }
 
     // ── 6. Backfill routing reason (col I) and decision (col J) on the appended row ──
     const allRowsRes = await sheets.spreadsheets.values.get({

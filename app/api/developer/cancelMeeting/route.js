@@ -4,7 +4,7 @@ import { getInstructor } from '@/lib/instructors';
 import { sendStudentCancellationEmail } from '@/lib/studentEmails';
 import { cancelBookingByEventId, cancelOneoffByEventId } from '@/lib/seniors';
 import { cancelProjectBookingByEventId } from '@/lib/projectMeetings';
-import { mirrorBookingToken, resolveStudentSheetId } from '@/lib/bookingTokens';
+import { setBookingToken, sheetIdFromPortalUrl } from '@/lib/bookingTokens';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -51,24 +51,24 @@ export async function POST(request) {
     if (studentEmail) {
       const masterRes = await sheets.spreadsheets.values.get({
         spreadsheetId: MASTER_SHEET_ID,
-        range: `${MASTER_TAB}!J:J`,
+        range: `${MASTER_TAB}!G:J`,
         valueRenderOption: 'UNFORMATTED_VALUE',
       });
       const rows = masterRes.data.values || [];
-      const rowIndex = rows.findIndex(r => r[0] === studentEmail) + 1;
+      const rowIndex = rows.findIndex(r => r[3] === studentEmail) + 1;
+      const cancelSheetId = rowIndex > 0 ? sheetIdFromPortalUrl(rows[rowIndex - 1][0]) : null;
 
       // Project meetings have their own ledger (freed above) — never restore a Master token.
       if (rowIndex > 0 && !wasProject) {
         const newValue = instructor.tokenIsTimestamp ? '' : (duration || '15min');
-        await sheets.spreadsheets.values.update({
-          spreadsheetId: MASTER_SHEET_ID,
-          range: `${MASTER_TAB}!${instructor.masterColumn}${rowIndex}`,
-          valueInputOption: 'USER_ENTERED',
-          requestBody: { values: [[newValue]] },
-        });
-        // Best-effort mirror to booking_tokens ('' = ART clear → delete the row).
-        const sid = await resolveStudentSheetId(sheets, rowIndex);
-        await mirrorBookingToken({ studentSheetId: sid, slug: instructor.slug, value: newValue });
+        // Authoritative restore (Supabase booking_tokens; '' = ART clear →
+        // delete the row). Best-effort at this point — the event is already
+        // deleted; log loudly rather than 500 a cancel that half-happened.
+        try {
+          await setBookingToken({ studentSheetId: cancelSheetId, slug: instructor.slug, value: newValue });
+        } catch (tokenErr) {
+          console.error(`developer cancelMeeting: TOKEN RESTORE FAILED for ${studentEmail} (${instructor.slug} → ${JSON.stringify(newValue)}) — re-grant manually:`, tokenErr?.message || tokenErr);
+        }
       }
 
       try {

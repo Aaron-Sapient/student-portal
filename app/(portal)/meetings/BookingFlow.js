@@ -157,7 +157,7 @@ export default function BookingFlow({ slug }) {
         const data = await res.json();
         if (!alive) return;
         if (!data.allowed) {
-          if (['written', 'email', 'pending'].includes(data.reason)) setRoutedKind(data.reason);
+          if (['written', 'email'].includes(data.reason)) setRoutedKind(data.reason);
           else setAuthError(data.reason || 'You can’t book a meeting right now.');
           setValidating(false);
           return;
@@ -304,12 +304,10 @@ export default function BookingFlow({ slug }) {
           <Mail className="h-8 w-8" strokeWidth={1.7} />
         </span>
         <h1 className="mt-5 font-display text-2xl font-semibold tracking-tight text-ink">
-          {routedKind === 'pending' ? 'Under review' : 'No meeting needed'}
+          No meeting needed
         </h1>
         <p className="mt-2 max-w-xs text-sm text-ink-soft">
-          {routedKind === 'pending'
-            ? 'Your check-in is in — Ryan is deciding whether a meeting is needed. If so, you’ll get an email with a link to book.'
-            : routedKind === 'written'
+          {routedKind === 'written'
             ? 'Your check-in is in — Ryan will send a written update this week.'
             : 'Your check-in is in — Aaron will follow up over email this week.'}
         </p>

@@ -30,12 +30,13 @@
  * needs_checkin/last_ryan_checkin/last_aaron_checkin folded into the existing
  * roster step; meeting_cap_summary best-effort dual-written by
  * admin/grantBooking's cap-bump, backstopped by backfillCheckinSummary.cjs) +
- * booking_tokens (best-effort app dual-writes at all 8 grant/consume/cancel sites
- * via lib/bookingTokens.js, backstopped by backfillBookingTokens.cjs --reconcile,
- * which upserts present tokens and prunes cleared/stale rows).
+ * booking_tokens was here until 2026-08-19, when the app took sole ownership
+ * of that table (Supabase is the authority; the Master AZ/BB/BD cells are dead
+ * and no longer written) — mirroring it back from the sheet would PRUNE every
+ * app-created grant. Same retirement pattern as instructor_blocks (2026-08-09).
  * All live-safe (upsert / insert-missing+prune-by-key, never delete-then-insert).
- * All four Bucket-A domains are now covered; meetings_log is being retired in
- * favor of the `meetings` hub table (kept fresh by the student-hub step).
+ * meetings_log is being retired in favor of the `meetings` hub table (kept
+ * fresh by the student-hub step).
  */
 const fs = require('fs');
 const os = require('os');
@@ -61,7 +62,6 @@ const ALL_STEPS = [
   { name: 'parent_checkins (live-safe upsert on natural key)', script: 'backfillParentCheckins.cjs', args: [] },
   { name: 'written_reports (live-safe upsert on sheet_row)', script: 'backfillWrittenReports.cjs', args: ['--reconcile'] },
   { name: 'meeting_cap_summary (live-safe upsert on student_sheet_id)', script: 'backfillCheckinSummary.cjs', args: [] },
-  { name: 'booking_tokens (live-safe upsert on (student,instructor) + prune)', script: 'backfillBookingTokens.cjs', args: ['--reconcile'] },
   // ---- heavy tier (per-student fan-out; full hourly pass only) ----
   { name: 'scores (live-safe upsert + prune)', script: 'reconcileScores.cjs', args: [], heavy: true },
   // Students-tab hub mirror (intended major + 📆 Meetings agenda). Heavy

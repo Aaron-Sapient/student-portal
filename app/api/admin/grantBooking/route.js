@@ -5,13 +5,14 @@ import { getInstructor } from '@/lib/instructors';
 import { getSeniorBySheetId, createOneoffGrant } from '@/lib/seniors';
 import { sendMeetingGrantedEmail } from '@/lib/checkinEmails';
 import { getSupabaseClient, MEETING_CAP_SUMMARY } from '@/lib/supabase';
-import { mirrorBookingToken } from '@/lib/bookingTokens';
+import { setBookingToken } from '@/lib/bookingTokens';
 
 // Admin tool: grant a student a ONE-OFF meeting that bypasses the weekly check-in
 // gate and unlocks booking in their Meetings tab. Two tracks, auto-detected:
-//   • Regular student → write the booking token to Master col AZ (Ryan) / BB (Aaron),
-//     exactly like a check-in grant would. For Ryan, bump the monthly cap so the
-//     extra meeting isn't capped out.
+//   • Regular student → write the booking token to Supabase booking_tokens,
+//     exactly like a check-in grant would (the Master cells are dead since the
+//     2026-08-19 cutover). For Ryan, bump the monthly cap so the extra meeting
+//     isn't capped out.
 //   • Senior (Class-of-2027 essay program) → a SEPARATE additive one-off grant row
 //     (senior_oneoff_grants); never touches their deterministic weekly cadence.
 // Then email the student (CC parents) a booking link. requireAdmin → Ryan + Aaron.
@@ -70,7 +71,6 @@ export async function POST(request) {
     const rows = masterRes.data.values || [];
     const rowIdx = rows.findIndex((r) => String(r[6] || '').includes(studentSheetId));
     const row = rowIdx >= 0 ? rows[rowIdx] : null;
-    const rowIndex = rowIdx + 1; // 1-based sheet row
 
     const senior = await getSeniorBySheetId(studentSheetId);
 
@@ -103,18 +103,10 @@ export async function POST(request) {
       detail = `extra meeting · bookable through ${through.toFormat('LLL d')}`;
     } else {
       // Regular student — write the booking token (bypasses the check-in gate).
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: MASTER_SHEET_ID,
-        range: `${MASTER_TAB}!${instructor.masterColumn}${rowIndex}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[`${mins}min`]] },
-      });
+      // Authoritative Supabase write; the Master cell is no longer written.
+      await setBookingToken({ studentSheetId, slug, value: `${mins}min` });
       kind = 'regular';
       detail = 'booking unlocked';
-
-      // Best-effort mirror to the booking_tokens cutover table (read side stays on
-      // Sheets). studentSheetId is validated non-empty at the top of the route.
-      await mirrorBookingToken({ studentSheetId, slug, value: `${mins}min` });
 
       // Ryan's monthly cap (✅ Check-Ins cols H=used, I=allowed) would otherwise
       // block an extra meeting once the student is at their limit. Lift it by one so

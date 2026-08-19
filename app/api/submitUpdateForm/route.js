@@ -5,15 +5,13 @@ import Anthropic from '@anthropic-ai/sdk';
 import { triggerReportGeneration } from '@/lib/generateReport';
 import { listBlocksForBooking, isDateBlocked } from '@/lib/blocks';
 import { getProjectRows, toLADate } from '@/lib/projects';
-import { makeApprovalToken } from '@/lib/checkinApproval';
-import { sendRyanMeetingRequestEmail } from '@/lib/checkinEmails';
+import { sendMeetingGrantedEmail } from '@/lib/checkinEmails';
 import { getSeniorBySheetId, createCheckinGrant } from '@/lib/seniors';
-import { mirrorBookingToken } from '@/lib/bookingTokens';
+import { setBookingToken, resolveStudentSheetId } from '@/lib/bookingTokens';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
 const CHECKIN_TAB = 'CheckinForm';
-const CHECKINS_TAB = '✅ Check-Ins';
 
 function getServiceAuth() {
   return new google.auth.GoogleAuth({
@@ -165,6 +163,12 @@ export async function POST(request) {
     // gets a "reconnect with Aaron" nudge, because BA never moves for them (they
     // have no separate Aaron check-in). Keep both columns in lockstep for seniors.
     // See Google Apps Scripts/checkin-reminder/checkinReminder.gs.
+    // Non-seniors are stamped LATER, after the booking token lands (step 7):
+    // AY is what the portal reads as "you're checked in for the week", so it
+    // must never say done while the decision write failed — a student stuck in
+    // that state would see a confirmation and silently get no token, no eval,
+    // and no report. Failing the other way (token written, AY stamp failed)
+    // just lets them re-submit, which supersedes harmlessly.
     if (isSenior) {
       await sheets.spreadsheets.values.batchUpdate({
         spreadsheetId: MASTER_SHEET_ID,
@@ -175,13 +179,6 @@ export async function POST(request) {
             { range: `${MASTER_TAB}!BA${studentRowIndex}`, values: [[now]] },
           ],
         },
-      });
-    } else {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: MASTER_SHEET_ID,
-        range: `${MASTER_TAB}!AY${studentRowIndex}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[now]] },
       });
     }
 
@@ -269,7 +266,6 @@ export async function POST(request) {
     // against where their projects actually stand. Best-effort: eval proceeds
     // without it if the read fails.
     let timelineText = 'No active projects on record.';
-    let behindSchedule = [];
     try {
       if (studentSheetId) {
         // Flag-gated 🏆 Comps & Projects rows (Sheets today). E:N is a superset of
@@ -298,7 +294,6 @@ export async function POST(request) {
           timelineText = active
             .map((p) => `- ${p.activity}: ${p.pct == null ? '?' : p.pct}% complete${p.deadline ? `, deadline ${p.deadline}` : ''} (${p.status})`)
             .join('\n');
-          behindSchedule = active.filter((p) => p.pct != null && p.pct < 50 && p.deadline);
         }
       }
     } catch (projErr) {
@@ -306,9 +301,10 @@ export async function POST(request) {
     }
 
     // ── 6. Urgency evaluation ────────────────────────────────────────────────
-    // Outcome is 'written' (no meeting — generate a report) or 'pending' (a
-    // meeting MAY be warranted → email Ryan to approve/reject). We NO LONGER
-    // auto-grant a booking token; the student cannot book until Ryan grants one.
+    // Outcome is 'written' (no meeting — generate a report) or 'granted' (the
+    // evaluator writes the booking token itself and the student books directly).
+    // No human approval step exists: D1 = Option A (Aaron, 2026-08-19) — no
+    // booking path may wait on a person clicking something (SUMMER-EXIT.md).
     let outcome = 'written';
     let suggestedLength = '15min';
     let reason = '';
@@ -327,13 +323,29 @@ export async function POST(request) {
       ? Object.entries(currentSnapshot).map(([cls, g]) => `${cls}: ${g}`).join(', ')
       : 'No grade data (summer / MS student).';
 
+    const gradeDropsText = gradeDrops.length
+      ? gradeDrops
+          .map((d) => `${d.class}: ${d.from} → ${d.to}${d.isDanger ? ' (now D/F territory)' : d.isSignificant ? ' (a full letter or more)' : ''}`)
+          .join('; ')
+      : 'None detected.';
+
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-    const systemPrompt = `You decide whether a student's WEEKLY SUMMER check-in should be routed to their counselor Ryan for a possible meeting.
+    // Seasonal gate — same June–August window as isSummer() in the check-in
+    // forms and the checkinReminder.gs summer exception, so the prompt can never
+    // contradict what the form is asking. Before this, the prompt hardcoded
+    // "IT IS SUMMER" and would have asserted it forever (SUMMER-EXIT.md).
+    const laMonth = DateTime.now().setZone('America/Los_Angeles').month;
+    const isSummerNow = laMonth >= 6 && laMonth <= 8;
+    const seasonContext = isSummerNow
+      ? `CONTEXT — IT IS SUMMER. Meetings are as-needed, not weekly; a written update is the healthy default for routine check-ins. Students used to a weekly cadence over-request out of habit — do not cater to habit for vague or low-content check-ins.`
+      : `CONTEXT — IT IS THE SCHOOL YEAR. Check-ins are weekly and include grades. A written update is still the right default for a routine, on-track week, but academic signals now carry real weight: a genuine grade drop, an approaching test or application deadline the student is anxious about, or schoolwork stress paired with a request to talk all favor a meeting.`;
 
-IMPORTANT: setting meeting = true does NOT grant a meeting — it emails Ryan, who approves or rejects with one click. So the real question is "does this deserve Ryan's eyes?" The costs are asymmetric: a wrong "true" costs Ryan one click to reject; a wrong "false" SILENTLY denies a student with no human ever reviewing it. When an explicit request is involved, lean true.
+    const systemPrompt = `You decide whether a student's WEEKLY check-in earns a meeting with their counselor Ryan.
 
-CONTEXT — IT IS SUMMER. Meetings are as-needed, not weekly; a written update is the healthy default for routine check-ins. Students used to a weekly cadence over-request out of habit — do not cater to habit for vague or low-content check-ins.
+IMPORTANT: setting meeting = true GRANTS the meeting — the student is immediately emailed a booking link. No human reviews this decision. The costs are asymmetric: a wrong "true" costs Ryan one short meeting that maybe wasn't strictly needed; a wrong "false" SILENTLY denies a student with no human ever seeing the request. When an explicit, substantiated request is involved, lean true.
+
+${seasonContext}
 
 Set meeting = TRUE when ANY of these hold:
 - The concern category is "Need to Discuss" AND the concern text names at least one real topic, question, or issue (i.e. it is not blank or a throwaway). An explicit, substantiated request to discuss ALWAYS goes to Ryan. A good self-rating does NOT override this — the self-rating is how their week went, not whether they need to talk something through.
@@ -348,7 +360,7 @@ Set meeting = FALSE (written report) when:
 
 A mid-to-high self-rating (4–10) is NEVER, by itself, a reason to deny an explicit "Need to Discuss" request with real content.
 
-If meeting = true, set suggestedLength: "30min" only for genuinely complex or multi-issue situations; otherwise "15min". (Ryan makes the final call regardless.)
+If meeting = true, set suggestedLength: "30min" only for genuinely complex or multi-issue situations; otherwise "15min". (This is the length the student is granted.)
 
 Respond with ONLY a JSON object — no markdown, no extra text:
 {"meeting": true|false, "suggestedLength": "15min"|"30min", "reason": "one-sentence justification addressed to Ryan"}`;
@@ -367,10 +379,11 @@ ${testsAndDeadlines || 'None reported'}
 TASK UPDATES:
 ${actionItemStatuses?.map(({ task, status }) => `- ${task}: ${status}`).join('\n') || 'None reported'}
 
-SUMMER PROJECT TIMELINE (active Comps & Projects — weigh urgency against these):
+PROJECT TIMELINE (active Comps & Projects — weigh urgency against these):
 ${timelineText}
 
-CURRENT GRADES (usually none in summer): ${currentGradesText}`;
+CURRENT GRADES: ${currentGradesText}
+GRADE CHANGES vs LAST CHECK-IN: ${gradeDropsText}`;
 
     if (!skipClaude) {
       try {
@@ -384,7 +397,7 @@ CURRENT GRADES (usually none in summer): ${currentGradesText}`;
         console.log('AI raw response:', rawText);
         const cleaned = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
         const parsed = JSON.parse(cleaned);
-        outcome = parsed.meeting === true ? 'pending' : 'written';
+        outcome = parsed.meeting === true ? 'granted' : 'written';
         suggestedLength = parsed.suggestedLength === '30min' ? '30min' : '15min';
         reason = parsed.reason || reason;
       } catch (aiErr) {
@@ -396,22 +409,23 @@ CURRENT GRADES (usually none in summer): ${currentGradesText}`;
       }
     }
 
-    // AZ value: 'pending' = awaiting Ryan's approval (un-bookable); 'written' =
-    // no meeting. A real booking token ('15min'/'30min') is written ONLY when
-    // Ryan grants, in /api/checkinDecision.
-    const decision = outcome === 'pending' ? 'pending' : 'written';
+    // decision: '15min'/'30min' = a live booking token; 'written' = no meeting.
+    const decision = outcome === 'granted' ? suggestedLength : 'written';
 
-    // ── 7. Write decision to 👩‍🎓 All Data col AZ ────────────────────────────
+    // ── 7. Write the booking token (authoritative: Supabase booking_tokens) ──
+    // The Master AZ cell is deliberately NOT written anymore — the booking
+    // outcome lives in the database, not the sheet. Fail loudly: a grant that
+    // doesn't land is a stranded student, not a cosmetic miss.
+    const tokenSheetId = studentSheetId || (await resolveStudentSheetId(sheets, studentRowIndex));
+    await setBookingToken({ studentSheetId: tokenSheetId, slug: 'ryan', value: decision });
+
+    // Decision landed — NOW mark the week's check-in done (see the note at step 2).
     await sheets.spreadsheets.values.update({
       spreadsheetId: MASTER_SHEET_ID,
-      range: `${MASTER_TAB}!AZ${studentRowIndex}`,
+      range: `${MASTER_TAB}!AY${studentRowIndex}`,
       valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [[decision]] },
+      requestBody: { values: [[now]] },
     });
-
-    // Best-effort mirror to the booking_tokens cutover table (Ryan/AZ;
-    // non-seniors only — the senior branch returned above). Read stays on Sheets.
-    await mirrorBookingToken({ studentSheetId, slug: 'ryan', value: decision });
 
     // ── 8. Stamp the just-appended CheckinForm row: K=reason, L=status ────────
     const allRowsRes = await sheets.spreadsheets.values.get({
@@ -438,29 +452,24 @@ CURRENT GRADES (usually none in summer): ${currentGradesText}`;
     }
 
     // ── 9. Act on the outcome ────────────────────────────────────────────────
-    if (outcome === 'pending' && lastMatchIndex > -1) {
-      // Email Ryan to approve/reject. Signed tokens carry everything the grant
-      // endpoint needs (Ryan clicks from his inbox, with no Clerk session).
-      const tokenBase = { masterRow: studentRowIndex, checkinRow, studentSheetId, studentName };
-      const tokens = {
-        grant15: makeApprovalToken({ ...tokenBase, action: 'grant15' }),
-        grant30: makeApprovalToken({ ...tokenBase, action: 'grant30' }),
-        reject: makeApprovalToken({ ...tokenBase, action: 'reject' }),
-      };
-      const signals = [
-        `Self-rating: ${selfRating}/10`,
-        questionsCategory && questionsCategory !== 'None'
-          ? `Concern (${questionsCategory}): ${questionsText || '—'}`
-          : null,
-        testsAndDeadlines ? `Tests/deadlines: ${testsAndDeadlines}` : null,
-        behindSchedule.length
-          ? `Behind schedule: ${behindSchedule.map((p) => `${p.activity} (${p.pct}%)`).join('; ')}`
-          : null,
-      ];
+    if (outcome === 'granted') {
+      // Email the student (CC parents) the booking link. Best-effort — the
+      // token is already written, so the student can also book straight from
+      // the portal (the check-in confirmation screen links there).
       try {
-        await sendRyanMeetingRequestEmail({ studentName, reason, suggestedLength, signals, tokens });
+        const emailsRes = await sheets.spreadsheets.values.get({
+          spreadsheetId: MASTER_SHEET_ID,
+          range: `${MASTER_TAB}!J${studentRowIndex}:L${studentRowIndex}`,
+          valueRenderOption: 'UNFORMATTED_VALUE',
+        });
+        const row = emailsRes.data.values?.[0] || [];
+        const studentEmail = String(row[0] || '').trim();
+        const parentEmails = [row[1], row[2]].map((e) => String(e || '').trim()).filter(Boolean);
+        if (studentEmail) {
+          await sendMeetingGrantedEmail({ studentEmail, parentEmails, studentName, decision });
+        }
       } catch (mailErr) {
-        console.error('submitUpdateForm: failed to email Ryan', mailErr);
+        console.error('submitUpdateForm: failed to send grant email', mailErr);
       }
     } else if (outcome === 'written') {
       const start = Date.now();

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { DateTime } from 'luxon';
 import {
   BookOpen,
@@ -92,7 +93,8 @@ const fieldCls =
 /* ── main ───────────────────────────────────────────────────────────────── */
 
 export default function RyanCheckIn() {
-  const [status, setStatus] = useState('loading'); // loading | error | done | needed | routed | review
+  const [status, setStatus] = useState('loading'); // loading | error | done | needed | routed | granted
+  const [grantedLength, setGrantedLength] = useState(null); // '15-minute' | '30-minute' while status === 'granted'
   const [formData, setFormData] = useState(null);
   const [error, setError] = useState(null);
 
@@ -194,10 +196,14 @@ export default function RyanCheckIn() {
       });
       const result = await res.json();
       if (!result.success) throw new Error(result.error || 'Submission failed');
-      // Summer flow: 'pending' → Ryan reviews whether a meeting is warranted;
-      // 'written' → a written update is on its way. The student never
-      // auto-routes to booking now — a granted meeting arrives by email.
-      setStatus(result.outcome === 'pending' ? 'review' : 'routed');
+      // 'granted' → the evaluator wrote a booking token; send them to book.
+      // 'written' → a written update is on its way. (No human review step.)
+      if (result.outcome === 'granted') {
+        setGrantedLength(result.decision === '30min' ? '30-minute' : '15-minute');
+        setStatus('granted');
+      } else {
+        setStatus('routed');
+      }
     } catch (e) {
       setError(e.message);
       setSubmitting(false);
@@ -268,19 +274,25 @@ export default function RyanCheckIn() {
     );
   }
 
-  if (status === 'review') {
+  if (status === 'granted') {
     return (
       <div className="portal-rise flex min-h-[55vh] flex-col items-center justify-center text-center">
         <span className="neu-chip flex h-16 w-16 items-center justify-center rounded-3xl text-terracotta">
-          <Mail className="h-8 w-8" strokeWidth={1.7} />
+          <CalendarClock className="h-8 w-8" strokeWidth={1.7} />
         </span>
         <h1 className="mt-5 font-display text-2xl font-semibold tracking-tight text-ink">
-          Check-in received
+          A meeting’s on
         </h1>
         <p className="mt-2 max-w-xs text-sm text-ink-soft">
-          Ryan is reviewing your week. If a meeting makes sense, you’ll get an email with a link to
-          book — otherwise a written update is on the way.
+          Your check-in earned a {grantedLength || '15-minute'} meeting with Ryan. Pick a time now —
+          we’ve also emailed you the booking link.
         </p>
+        <Link
+          href="/meetings/ryan"
+          className="mt-5 inline-flex items-center gap-2 rounded-full bg-terracotta px-5 py-2.5 text-sm font-bold text-paper"
+        >
+          Book your meeting →
+        </Link>
       </div>
     );
   }

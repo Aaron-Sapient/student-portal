@@ -11,7 +11,7 @@ import {
   loadProjectPlanForBooking, loadProjectBookingsForPlan, canBookProjectOnDate, recordProjectBooking,
   cancelProjectBookingByEventId,
 } from '@/lib/projectMeetings';
-import { mirrorBookingToken, resolveStudentSheetId } from '@/lib/bookingTokens';
+import { setBookingToken, getBookingToken, sheetIdFromPortalUrl } from '@/lib/bookingTokens';
 import { resolveRescheduleTarget } from '@/lib/rescheduleTarget';
 
 // Human messages for canBookOnDate() rejection reasons (grant gates + package rules).
@@ -229,6 +229,56 @@ export async function POST(request) {
       } else seniorGrant = state.grant;
     }
 
+    // Standard (Ryan/Aaron) + ART path — enforce the booking token server-side,
+    // the same final-authority contract as the senior/project gates above (the
+    // slot endpoints and validateBooking are client-called and can be bypassed
+    // by a direct POST; until 2026-08-19 this track never re-checked the token,
+    // so the gate blocking 45 of 47 students was enforceable only in the
+    // browser — SUMMER-EXIT.md W3). A verified reschedule is exempt from the
+    // token check — resolveRescheduleTarget proves the caller owns a future
+    // event on this teacher's calendar (ownership, not booking type: a crafted
+    // POST could swap a differently-tracked event into a standard one — a swap,
+    // not amplification; tightening that means verifying the old event's
+    // bookingType here).
+    let standardSheetId = null;
+    if (!senior && !projectPlanId) {
+      const masterRes = await sheets.spreadsheets.values.get({
+        spreadsheetId: MASTER_SHEET_ID,
+        range: `${MASTER_TAB}!A:BD`,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      });
+      const masterRows = masterRes.data.values || [];
+      const studentRow = masterRows.find((r) => r[9] === email); // col J = email
+      standardSheetId = sheetIdFromPortalUrl(studentRow?.[6]);   // col G = portal URL
+      if (!standardSheetId) {
+        return Response.json({ error: 'No booking authorization found. Please complete your weekly check-in first.' }, { status: 403 });
+      }
+      if (!replacingEventId) {
+        const token = await getBookingToken(standardSheetId, instructor.slug);
+        if (instructor.slug === 'art') {
+          const isART = studentRow[54] === 'TRUE' || studentRow[54] === true; // col BC
+          if (!isART) {
+            return Response.json({ error: 'Not part of the Advanced Research Team.' }, { status: 403 });
+          }
+          if (token) {
+            const lastBooked = DateTime.fromISO(String(token)).setZone('America/Los_Angeles');
+            let sat = now.set({ weekday: 6 });
+            if (now.weekday < 6) sat = sat.minus({ weeks: 1 });
+            if (lastBooked.isValid && lastBooked >= sat.startOf('day')) {
+              return Response.json({ error: 'You’ve already booked your ART meeting this week.' }, { status: 403 });
+            }
+          }
+        } else {
+          if (token !== '15min' && token !== '30min') {
+            return Response.json({ error: 'No booking authorization found. Please complete your weekly check-in first.' }, { status: 403 });
+          }
+          if (parseInt(token, 10) !== seniorMins) {
+            return Response.json({ error: 'That meeting length doesn’t match what was granted.' }, { status: 403 });
+          }
+        }
+      }
+    }
+
     // Default the agenda by booking TYPE so the title/description/email/upcoming-card
     // all name WHAT the meeting is; anything the student actually types always wins.
     //   • project meeting → the plan's own label ("ACT Reading", "Competitions", …).
@@ -358,31 +408,16 @@ export async function POST(request) {
       }
     }
 
-    // Find student row in master sheet
-    const masterRes = await sheets.spreadsheets.values.get({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${MASTER_TAB}!J:J`,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
-    const rows = masterRes.data.values || [];
-    const rowIndex = rows.findIndex(r => r[0] === email) + 1;
-
-    // Consume booking token (skip if rescheduling — token already consumed by the original booking).
-    // ART tracks the timestamp of the booking; everyone else uses a 'no' flag.
-    // Seniors have NO token (deterministic, count-based) — never write a column for them.
-    // Project meetings have their OWN ledger (above) — never touch a Master token column.
-    if (!isReschedule && rowIndex > 0 && !senior && !projectPlanId) {
+    // Consume the booking token (skip if rescheduling — the original booking
+    // consumed it). ART stores the booking instant; everyone else 'no'.
+    // Seniors are count-based and project meetings have their OWN ledger (above)
+    // — neither holds a token. Authoritative Supabase write; throws on failure →
+    // surfaces as a 500 (the event exists either way and the state is visible).
+    // Keyed on the VERIFIED replacingEventId, not the client's isReschedule flag:
+    // a forged flag with no real meeting to move must not keep the token alive.
+    if (!replacingEventId && !senior && !projectPlanId && standardSheetId) {
       const tokenValue = instructor.tokenIsTimestamp ? new Date().toISOString() : 'no';
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: MASTER_SHEET_ID,
-        range: `${MASTER_TAB}!${instructor.masterColumn}${rowIndex}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[tokenValue]] },
-      });
-      // Best-effort mirror to the booking_tokens cutover table (read side stays
-      // on Sheets). Same exact value written above → ART ISO byte-fidelity.
-      const sid = await resolveStudentSheetId(sheets, rowIndex);
-      await mirrorBookingToken({ studentSheetId: sid, slug: instructor.slug, value: tokenValue });
+      await setBookingToken({ studentSheetId: standardSheetId, slug: instructor.slug, value: tokenValue });
     }
 
     // Write agenda back to the appropriate CheckinForm tab.

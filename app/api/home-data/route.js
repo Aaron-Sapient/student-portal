@@ -12,6 +12,7 @@ import {
   checkedInThisWeek,
 } from '@/lib/seniors'
 import { projectMeetingCards } from '@/lib/projectMeetings'
+import { getBookingTokens } from '@/lib/bookingTokens'
 import { belongsToStudent } from '@/lib/calendarTitles'
 import { getSessionLog } from '@/lib/meetings'
 import { DateTime } from 'luxon'
@@ -207,14 +208,25 @@ export async function GET() {
   console.log('7. Project rows found:', projectRows.length)
   console.log('8. All project rows:', JSON.stringify(projectRows))
 
-const meetingType = studentRow[51] || null;
+// Booking tokens (ryan / aaron / art) — authoritative in Supabase
+// booking_tokens since the 2026-08-19 cutover; the Master AZ/BB/BD cells are
+// dead. Fail SOFT here: on a read error the cards render locked ("Check in to
+// unlock"), which a reload fixes — better than 500ing the whole home payload.
+let bookingTokens = { ryan: '', aaron: '', art: '' };
+try {
+  bookingTokens = await getBookingTokens(studentSheetId);
+} catch (e) {
+  console.error('home-data: booking token read failed (rendering locked):', e?.message || e);
+}
+const meetingType = bookingTokens.ryan || null;
 const aaronLastCheckin = studentRow[52] || null;
-const aaronMeetingType = studentRow[53] || null;
+const aaronMeetingType = bookingTokens.aaron || null;
 
-// ART eligibility (col BC) + token (col BD = ISO timestamp of last booking, or empty).
-// Token is "available" iff isART AND (BD empty OR BD timestamp is older than this week's Saturday).
+// ART eligibility (col BC, still roster data) + token (ISO timestamp of the
+// last booking, or empty). "Available" iff isART AND (no timestamp OR it's
+// older than this week's Saturday).
 const isART = studentRow[54] === 'TRUE' || studentRow[54] === true;
-const artBookingTimestamp = studentRow[55] || '';
+const artBookingTimestamp = bookingTokens.art || '';
 
 // Col BE "Needs Checkin" — THE roster-maintained answer to "is this student in the
 // weekly check-in cadence at all?" (11 of 47 are marked out of it). Two other

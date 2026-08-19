@@ -10,8 +10,9 @@ const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
 const CHECKINS_TAB = '✅ Check-Ins';
 
-// Master-sheet column indices (A=0). AY=50, AZ=51, BA=52, BB=53, BC=54, BD=55.
-const COLUMN_INDEX = { ryan: 51, aaron: 53, art: 55 };
+// Master-sheet column index (A=0) still read from the roster row: BC=54 (ART
+// flag). Booking tokens themselves live in Supabase booking_tokens — the old
+// AZ/BB/BD cells are dead (cutover 2026-08-19, SUMMER-EXIT.md W6).
 const NON_BOOKABLE_VALUE = { ryan: 'written', aaron: 'email' };
 const IS_ART_COL = 54;
 
@@ -177,7 +178,7 @@ export async function GET(request) {
       if (!isART) {
         return Response.json({ allowed: false, reason: 'Not part of the Advanced Research Team.' });
       }
-      const bdValue = await getBookingToken(studentSheetId, 'art', studentRow[COLUMN_INDEX.art] || '');
+      const bdValue = await getBookingToken(studentSheetId, 'art');
       if (bdValue) {
         const bookingDate = DateTime.fromISO(String(bdValue)).setZone('America/Los_Angeles');
         if (bookingDate.isValid && bookingDate >= mostRecentSaturdayLA()) {
@@ -190,17 +191,15 @@ export async function GET(request) {
       return Response.json({ allowed: true, decision: '15min', studentName });
     }
 
-    // Standard path (Ryan / Aaron): decision string drives gating.
-    const decision = (await getBookingToken(studentSheetId, instructor.slug, studentRow[COLUMN_INDEX[instructor.slug]] || '')) || null;
+    // Standard path (Ryan / Aaron): decision string drives gating. ('pending'
+    // is no longer a reachable value — the check-in evaluator grants directly.)
+    const decision = (await getBookingToken(studentSheetId, instructor.slug)) || null;
     const nonBookable = NON_BOOKABLE_VALUE[instructor.slug];
 
-    // 'pending' = checked in, awaiting Ryan's approval. Not bookable until he
-    // grants a token (which flips AZ to '15min'/'30min').
-    if (decision === 'pending') {
-      return Response.json({ allowed: false, reason: 'pending' });
-    }
-
-    if (!decision || decision === 'no' || decision === nonBookable) {
+    // Allowlist: ONLY '15min'/'30min' book. nonBookable ('written'/'email')
+    // keeps its specific message; anything else — 'no', empty, or residue from
+    // a retired vocabulary — denies generically rather than falling through.
+    if (decision !== '15min' && decision !== '30min') {
       return Response.json({
         allowed: false,
         reason: decision === nonBookable
