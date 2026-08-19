@@ -1,13 +1,23 @@
 import { auth } from '@clerk/nextjs/server'
 import { getGoogleSheetsClient } from '@/lib/google'
-import { resolveStudentFolderId, streamDriveFileFromFolder } from '@/lib/studentFiles'
+import {
+  resolveStudentFolderId,
+  streamDriveFileFromFolder,
+  streamDriveFileAsAdmin,
+} from '@/lib/studentFiles'
 import { normEmail, sessionEmail } from '@/lib/identity'
+import { ADMIN_EMAILS } from '@/lib/developerAuth'
 
 // Streams a Drive file's bytes through the portal with its real Content-Type, so
 // uploaded HTML (and other text) renders instead of showing as raw source the way
 // Drive's own /view does. Access is gated: the file must live directly in the
 // student's OWN folder (the 🔎 Overview H2/L2 link), re-resolved here from the
 // session — a student can't fetch arbitrary Drive files via the service account.
+//
+// Staff (ADMIN_EMAILS — Aaron/Ryan) are exempt from the folder gate: they hold
+// full human access to the firm's Drive already, and they are not in the master
+// sheet's student column, so the student resolution below 404s them. Without the
+// exemption a counselor cannot open the very link they just sent a family.
 export async function GET(request) {
   const { userId, sessionClaims } = await auth()
   if (!userId) return new Response('Unauthorized', { status: 401 })
@@ -16,6 +26,10 @@ export async function GET(request) {
   if (!fileId) return new Response('Missing id', { status: 400 })
 
   const userEmail = sessionEmail(sessionClaims)
+  if (ADMIN_EMAILS.includes(normEmail(userEmail))) {
+    return streamDriveFileAsAdmin(fileId)
+  }
+
   const sheets = getGoogleSheetsClient(userEmail)
 
   // email -> student sheet
