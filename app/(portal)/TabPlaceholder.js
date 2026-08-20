@@ -18,7 +18,7 @@ export default function TabPlaceholder({ icon: Icon, title, blurb, stage, legacy
       {legacyHref && (
         <Link
           href={legacyHref}
-          className="mt-6 rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-paper shadow-card transition-transform active:scale-[0.98]"
+          className="mt-6 rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-cream shadow-card transition-transform active:scale-[0.98]"
         >
           Use the current version →
         </Link>
