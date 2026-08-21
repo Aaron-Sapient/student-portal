@@ -14,6 +14,7 @@ import {
   ArrowLeft,
 } from 'lucide-react';
 import TaskTrough from './TaskTrough';
+import WrongAccountHint from '@/components/portal/WrongAccountHint';
 
 const CONCERN_OPTIONS = ['None', 'Quick Question', 'Need to Discuss'];
 // value must match the backend's PREFERENCE_TO_DECISION map exactly; label is display-only.
@@ -195,6 +196,7 @@ export default function AaronCheckIn() {
         <CircleAlert className="mx-auto h-7 w-7 text-terracotta" strokeWidth={2} />
         <p className="mt-3 font-display text-lg font-semibold text-ink">Couldn’t load your check-in</p>
         <p className="mt-1 text-sm text-ink-soft">{error}</p>
+        <WrongAccountHint error={error} />
       </div>
     );
   }

@@ -4,6 +4,7 @@ import { DEVELOPER_EMAIL } from '@/lib/developerAuth';
 import PortalShell from '@/components/portal/PortalShell';
 import DevDataProvider from './DevDataContext';
 import DevNav from './DevNav';
+import AccountBubble from '@/components/portal/AccountBubble';
 
 export const metadata = {
   title: 'Dev Portal · Admissions.Partners',
@@ -25,10 +26,11 @@ export default async function DevPanelLayout({ children }) {
         <DevNav />
         {/* Wide column (tables) — clears the left rail on desktop, the bottom
             dock on phones. */}
-        <main className="relative z-10 mx-auto w-full max-w-[1500px] px-5 pb-32 pt-8 sm:px-8 md:pb-12 md:pl-[8.5rem] md:pt-10">
+        <main className="relative z-10 mx-auto w-full max-w-[1500px] px-5 pb-32 pt-20 sm:px-8 md:pb-12 md:pl-[8.5rem] md:pt-10">
           {children}
         </main>
       </DevDataProvider>
+      <AccountBubble />
     </PortalShell>
   );
 }

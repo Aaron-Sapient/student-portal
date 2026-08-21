@@ -6,6 +6,7 @@ import { resolveIdentity, sessionEmail } from '@/lib/identity';
 import ParentDataProvider from './ParentDataContext';
 import ParentTabBar from './ParentTabBar';
 import ChildSwitcher from './ChildSwitcher';
+import AccountBubble from '@/components/portal/AccountBubble';
 
 export const metadata = {
   title: 'Family Portal · Admissions.Partners',
@@ -22,7 +23,14 @@ export default async function ParentLayout({ children }) {
   const email = sessionEmail(sessionClaims);
   const identity = await resolveIdentity(getGoogleSheetsClient(email), email);
   if (identity.role !== 'parent' || !identity.children.length) {
-    redirect('/dashboard');
+    // → /account, NOT /dashboard. The (portal) layout bounces a Clerk
+    // `role: 'parent'` CLAIM to /parent/home, while this gate bounces on the
+    // authoritative ROSTER lookup — so a user the claim calls a parent and the
+    // roster does not (child's Class cell went NC, K/L edited, guardians mirror
+    // stale under READ_SUPABASE_ROSTER=on, which treats a clean miss as
+    // authoritative) ping-ponged between the two forever, rendering no page at
+    // all. /account is outside both gates and tells them what's wrong.
+    redirect('/account');
   }
 
   // Only serializable, non-sensitive child fields cross to the client.
@@ -36,7 +44,8 @@ export default async function ParentLayout({ children }) {
     <PortalShell iconNames="event,folder_open,home,school">
       <ParentDataProvider kids={kids}>
         <ParentTabBar />
-        <main className="relative z-10 mx-auto w-full max-w-2xl px-5 pb-32 pt-8 sm:px-7 md:pt-10">
+        <AccountBubble />
+        <main className="relative z-10 mx-auto w-full max-w-2xl px-5 pb-32 pt-20 sm:px-7 md:pt-10">
           <ChildSwitcher />
           {children}
         </main>

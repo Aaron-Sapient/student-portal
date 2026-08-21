@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, CircleAlert, Loader2, Plus, X } from 'lucide-react';
+import WrongAccountHint from '@/components/portal/WrongAccountHint';
 
 const SCORE_OPTIONS = [1, 2, 3, 4, 5];
 
@@ -182,6 +183,7 @@ export default function ApScoresCheckIn() {
         <CircleAlert className="mx-auto h-7 w-7 text-terracotta" strokeWidth={2} />
         <p className="mt-3 font-display text-lg font-semibold text-ink">Couldn’t load this</p>
         <p className="mt-1 text-sm text-ink-soft">{error}</p>
+        <WrongAccountHint error={error} />
       </div>
     );
   }

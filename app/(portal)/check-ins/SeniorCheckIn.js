@@ -23,6 +23,7 @@ import { ZONE } from '../portalUtils';
 import { usePortalData } from '../PortalDataContext';
 import WeekFeel, { feelToRating } from './WeekFeel';
 import TaskTrough from './TaskTrough';
+import WrongAccountHint from '@/components/portal/WrongAccountHint';
 
 const GRADE_OPTIONS = ['A+', 'A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D+', 'D', 'D-', 'F'];
 const CONCERN_OPTIONS = ['None', 'Quick Question', 'Need to Discuss'];
@@ -225,6 +226,7 @@ export default function SeniorCheckIn() {
         <CircleAlert className="mx-auto h-7 w-7 text-terracotta" strokeWidth={2} />
         <p className="mt-3 font-display text-lg font-semibold text-ink">Couldn’t load your check-in</p>
         <p className="mt-1 text-sm text-ink-soft">{error}</p>
+        <WrongAccountHint error={error} />
       </div>
     );
   }

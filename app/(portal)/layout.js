@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
 import PortalShell from '@/components/portal/PortalShell';
 import PortalTabBar from './PortalTabBar';
+import AccountBubble from '@/components/portal/AccountBubble';
 import PortalDataProvider from './PortalDataContext';
 
 export const metadata = {
@@ -23,8 +24,14 @@ export default async function PortalLayout({ children }) {
         {/* Thumb-reachable floating dock, bottom on every breakpoint. */}
         <PortalTabBar />
 
+        {/* "Which account am I in?" — see AccountBubble. Mounted in the LAYOUT, not
+            in a page, so it still renders for a user whose roster lookup fails and
+            every page below shows an error (verified: hasCheckinDue/
+            hasBookingAvailable both guard `if (!data) return false`). */}
+        <AccountBubble />
+
         {/* Content column. Bottom padding clears the floating tab dock. */}
-        <main className="relative z-10 mx-auto w-full max-w-2xl px-5 pb-32 pt-8 sm:px-7 md:pt-10">
+        <main className="relative z-10 mx-auto w-full max-w-2xl px-5 pb-32 pt-20 sm:px-7 md:pt-10">
           {children}
         </main>
       </PortalDataProvider>

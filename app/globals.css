@@ -150,6 +150,23 @@ body {
   }
 }
 
+/* Account bubble (components/portal/AccountBubble.js). Upper-left on phones —
+   the dock owns the bottom thumb zone, so the top-left hard-reach corner is the
+   right home for a control you touch twice a year. Lower-left from md up, where
+   the dock is a centered `max-w-md` pill and the corner is empty. z-20 sits above
+   the fixed z-0 backdrops and the z-10 content column, below the z-30 dock. */
+.portal-account-bubble {
+  top: max(0.75rem, env(safe-area-inset-top));
+  left: max(1rem, env(safe-area-inset-left));
+}
+@media (min-width: 768px) {
+  .portal-account-bubble {
+    top: auto;
+    bottom: max(1.25rem, env(safe-area-inset-bottom));
+    left: max(1.5rem, env(safe-area-inset-left));
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .portal-rise { animation: none; }
   .portal-skeleton { animation: none; }

@@ -9,6 +9,7 @@ import { ClayBloom, PointerRow, SectionDial } from '../neu';
 import { GaugeCluster, ScoreReadout, ProgressLine, Projects } from '../homeSections';
 import { subscribeNoProject, readNoProject, readNoProjectServer } from '../noProjectFlag';
 import { ZONE } from '../portalUtils';
+import WrongAccountHint from '@/components/portal/WrongAccountHint';
 
 const SECTIONS = [
   { key: 'today', label: 'Today', icon: Sun },
@@ -101,6 +102,7 @@ export default function HomePage() {
         <CircleAlert className="mx-auto h-7 w-7 text-terracotta" strokeWidth={2} />
         <p className="mt-3 font-display text-lg font-semibold text-ink">Something’s off</p>
         <p className="mt-1 text-sm text-ink-soft">{error}</p>
+        <WrongAccountHint error={error} />
       </div>
     );
   }
