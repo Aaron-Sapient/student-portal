@@ -43,7 +43,8 @@ async function readAgenda(sheetId) {
       .from(MEETINGS_TABLE)
       .select('meeting_date, teacher, project, agenda, homework, hw_status, pct')
       .eq('student_sheet_id', sheetId)
-      .order('meeting_date', { ascending: false });
+      .is('voided_at', null)
+      .order('meeting_date', { ascending: false, nullsFirst: false });
     if (error) return [];
     return (data || []).map((r) => ({
       date: r.meeting_date || null,

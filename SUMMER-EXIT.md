@@ -247,6 +247,15 @@ doesn't verify event ownership; (e) the reschedule exemption verifies ownership,
 in the gate comment); (f) the senior email-vs-sheetId resolution asymmetry (pre-existing, documented in
 `submitUpdateForm`).
 
+**W19 · Meetings log goes portal-native (per-student booster).** `DECIDED · Aaron 2026-08-21` · **Requires: W11.**
+First `/[student]/…` route shipped: `/[slug]/meetings`, staff-only, editable for students flagged
+`students.meetings_source='portal'` (Isaac Lee first; his 📆 sheet tab is frozen, the cron skips his meetings). The
+omnibar's dead "Meetings" tile and a typed `nm` verb deep-link into it. Details in `.claude/CLAUDE.md` → "Meetings LOG
+goes portal-native". Found and fixed on the way: the mirror's prune read was capped at PostgREST's 1,000 rows on a
+1,368-row table (under-pruned the tail for months; now paged).
+→ `INFERRED` next: flip the rest of the roster once Aaron has lived in the page for a week; then the Terminal-Mode
+`nm` inside a shelf (handoff: route model first); the scoreStudents/collegeList sheet readers switch to the table.
+
 ---
 
 ## Already done, 2026-08-18

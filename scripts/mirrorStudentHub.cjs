@@ -155,7 +155,7 @@ async function main() {
 
   const { data: students, error } = await sb
     .from('students')
-    .select('student_sheet_id, name')
+    .select('student_sheet_id, name, meetings_source')
     .eq('status', 'active')
     .order('name');
   if (error) throw error;
@@ -207,7 +207,16 @@ async function main() {
         grades.push({ student_sheet_id: s.student_sheet_id, grade: profile.current_year });
       }
       if (profile.major) withMajor++;
-      if (meetingVals !== null) {
+      // Portal-owned meetings log (students.meetings_source='portal', the per-student
+      // "booster" — supabase/meetings_portal_source.sql): the sheet tab is FROZEN and the
+      // portal is the writer, so neither upsert nor prune may touch this student's rows.
+      // Explicit `null` (never undefined — `undefined !== null` would add them to the
+      // prune scope and delete every portal-written row).
+      if (s.meetings_source === 'portal') {
+        meetingVals = null;
+        console.log(`  skip meetings (portal-owned): ${s.name}`);
+      }
+      if (meetingVals !== null && meetingVals !== undefined) {
         allMeetings.push(...meetingRowsFor(s.student_sheet_id, meetingVals));
         meetingReadIds.add(s.student_sheet_id);
       }
@@ -277,15 +286,26 @@ async function main() {
   // run, only seqs not present now. Current rows were upserted first, so the live
   // agenda is always complete during the prune.
   const currentKeys = new Set(allMeetings.map((m) => `${m.student_sheet_id}|${m.seq}`));
-  const { data: existing, error: exErr } = await sb
-    .from('meetings')
-    .select('id, student_sheet_id, seq');
-  if (exErr) {
-    console.error('meetings prune-read failed:', exErr.message);
-    process.exit(1);
+  // Page the read: PostgREST caps any single response at 1000 rows (measured 2026-08-21:
+  // 1,368 rows, 1,000 returned — the prune had silently never seen the tail of the table).
+  const existing = [];
+  for (let from = 0; ; from += 1000) {
+    const { data: page, error: exErr } = await sb
+      .from('meetings')
+      .select('id, student_sheet_id, seq, source')
+      .order('id')
+      .range(from, from + 999);
+    if (exErr) {
+      console.error('meetings prune-read failed:', exErr.message);
+      process.exit(1);
+    }
+    existing.push(...(page || []));
+    if (!page || page.length < 1000) break;
   }
   const orphanIds = (existing || [])
-    .filter((r) => meetingReadIds.has(r.student_sheet_id) && !currentKeys.has(`${r.student_sheet_id}|${r.seq}`))
+    // source='portal' rows are never prunable, whatever the student's flag says today
+    // (guards the one-way door: a student flipped back to 'sheet' keeps their portal rows).
+    .filter((r) => r.source !== 'portal' && meetingReadIds.has(r.student_sheet_id) && !currentKeys.has(`${r.student_sheet_id}|${r.seq}`))
     .map((r) => r.id);
   if (orphanIds.length) {
     for (let i = 0; i < orphanIds.length; i += 500) {
