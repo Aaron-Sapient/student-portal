@@ -1,5 +1,6 @@
 {
   "crons": [
-    { "path": "/api/cron/complianceDigest", "schedule": "0 16 * * 4" }
+    { "path": "/api/cron/complianceDigest", "schedule": "0 16 * * 4" },
+    { "path": "/api/cron/meetingTrackers", "schedule": "0 */4 * * *" }
   ]
 }
