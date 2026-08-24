@@ -1,4 +1,4 @@
-import { timingSafeEqual } from 'node:crypto'
+import { authorizedOmnibar } from '@/lib/omnibarAuth'
 import { getSupabaseClient } from '@/lib/supabase'
 
 // The AP omnibar's portal-docs feed (AP-Counseling/06. Scripts/omnibar/build_index.py::fetch_portal).
@@ -9,15 +9,8 @@ import { getSupabaseClient } from '@/lib/supabase'
 // (supabase/omnibar_portal_index.sql) and returns the exact row shape build_index expects.
 export const dynamic = 'force-dynamic'
 
-function authorized(request) {
-  const expected = process.env.OMNIBAR_READ_TOKEN || ''
-  const got = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '')
-  if (!expected || !got || got.length !== expected.length) return false
-  return timingSafeEqual(Buffer.from(got), Buffer.from(expected))
-}
-
 export async function GET(request) {
-  if (!authorized(request)) return new Response('Unauthorized', { status: 401 })
+  if (!authorizedOmnibar(request)) return new Response('Unauthorized', { status: 401 })
   try {
     const sb = getSupabaseClient()
     const { data, error } = await sb.rpc('omnibar_portal_index')
