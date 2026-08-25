@@ -37,7 +37,7 @@ const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = "'👩‍🎓 All Data'";
 
 // Exact enum domain (matches the package_type enum + the live Master col AL 1:1).
-const PACKAGE_ENUM = new Set(['Essential', 'Comprehensive', 'VIP', 'UVIP']);
+const PACKAGE_ENUM = new Set(['Essential', 'Comprehensive', 'VIP', 'UVIP', 'Essays']);
 
 function loadEnv() {
   const env = fs.readFileSync(path.join(__dirname, '..', '.env.local'), 'utf8');
