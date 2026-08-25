@@ -5,6 +5,7 @@ import { ADMIN_EMAILS, teacherForEmail } from '@/lib/developerAuth'
 import { sessionEmail, normEmail } from '@/lib/identity'
 import { studentBySlug, listMeetings, meetingForDay, todayLA } from '@/lib/meetingsLog'
 import MeetingsLog from './MeetingsLog'
+import './meetings.css'
 
 // /[student]/meetings — the first `/[student]/…` route (slug = students.slug, the same
 // string as the omnibar address; W11). Staff-only for now: a student hitting their own
@@ -39,7 +40,9 @@ export default async function StudentMeetingsPage({ params, searchParams }) {
 
   return (
     <PortalShell iconNames="calendar_month">
-      <main className="relative z-10 mx-auto w-full max-w-3xl px-5 pb-24 pt-8 sm:px-7">
+      {/* Full width on purpose: this is a scan surface (144 rows for one student),
+          not a reading column. The row grid, not the container, sets the measure. */}
+      <main className="relative z-10 mx-auto w-full max-w-[1560px] px-5 pb-20 pt-8 sm:px-7">
         <MeetingsLog
           student={{ id: student.id, slug: student.slug, name: student.name, klass: student.class, portalUrl: student.portal_url }}
           portalOwned={portalOwned}

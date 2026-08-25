@@ -256,6 +256,68 @@ goes portal-native". Found and fixed on the way: the mirror's prune read was cap
 → `INFERRED` next: flip the rest of the roster once Aaron has lived in the page for a week; then the Terminal-Mode
 `nm` inside a shelf (handoff: route model first); the scoreStudents/collegeList sheet readers switch to the table.
 
+**2026-08-24 · second student flipped: `ryan-koo-27` (Ryan Koo, class '27).** `DECIDED · Aaron 2026-08-24`. New
+counseling student, **essays-only package, meetings held in person and NOT booked through the portal** — so the
+portal is the meetings LOG of record for him from day one, with no 📆 sheet tab history to freeze. Two statements in
+one transaction: `update students set slug='ryan-koo-27' where student_sheet_id='1C5ur…L_kw' and slug is null`, then
+`update students set meetings_source='portal' where slug='ryan-koo-27'`. Post-commit state verified: `total=48,
+with_slug=48, flipped=2` (isaac-lee-27 + ryan-koo-27 only), and Ryan Koo's row is the sole row whose `updated_at`
+differs from that day's backfill sweep, so nothing else moved.
+- **The slug needed setting by hand, and this is the reusable gotcha.** He was added to the Master Sheet earlier the
+  same day; `backfillStudents.cjs --write` then ran at `22:50:05Z` and created his `students` row automatically. It
+  **never writes `slug`** (nor `meetings_source`), so he landed as the only slug-NULL row in the table and
+  `/[student]/meetings` would have called `notFound()`. Any future flip of a backfill-created student needs the same
+  manual slug step first. The flip side is the good news: because backfill touches neither column, both survive every
+  future sweep — empirically confirmed, since the 22:50 run preserved all 47 existing slugs and Isaac's `'portal'`.
+- **`package_type` is NULL and that is correct-for-now, not an oversight.** The Master's Package cell reads `Essays`,
+  which is outside the `package_type` enum (`Essential|Comprehensive|VIP|UVIP`), so backfill degraded it to NULL with
+  a warning exactly as `backfillStudents.cjs:128` intends. Isaac and Aasrith are also NULL there. Whether essays-only
+  becomes a real tier is an open call for Ryan.
+- **`grade` is NULL** because `mirrorStudentHub` owns it off `🔎 Overview!C4`, and his sheet has no `🔎 Overview` tab
+  (it is on an obsolete template). It will stay NULL until he is migrated.
+- **Verification did NOT come from an HTTP fetch, and the reason matters.** Local `:3000` returns an identical `307`
+  to Clerk sign-in for a known-good slug, the new slug, AND a garbage slug, so it cannot distinguish resolve from
+  404. `portal.admissions.partners` returns `404` for `/ryan-koo-27/meetings` — but also for `/isaac-lee-27/meetings`
+  and for `/`, while `/sign-in` returns `200`, and the same 404 appears on the
+  `student-portal-9o7r034rf-…vercel.app` host. **That is a pre-existing prod condition affecting the whole
+  `/[student]/…` route, not this flip.** Worth a look on its own; it is unrelated to Ryan Koo.
+  What WAS verified: `students` has RLS enabled with **zero policies**, so the service-role key is the only reader,
+  and that is the key `lib/supabase.js` uses. Running the page's own query (`lib/meetingsLog.js` `studentBySlug`,
+  `.eq('slug', …).maybeSingle()`) with that key returns a row for `isaac-lee-27` (control) and for `ryan-koo-27`
+  (subject), and `null` for a garbage slug (negative control). So the data-layer contract behind
+  `if (!student) notFound()` is satisfied.
+
+**2026-08-24 · Ryan Koo's sheet history backfilled into `meetings` (98 rows).** `DONE 2026-08-24` · His 📆 tab
+(3/7/2024 → 8/19/2026, 98 dated rows, zero blank-date gaps) now lives in the table: `count=98, seq 0..97,
+source='sheet', min_date=2024-03-07, max_date=2026-08-19, voided=0`. Table total 1366 → 1464; the whole-table
+per-student census before and after shows **exactly one** `student_sheet_id` changed. The sheet was not written to.
+- **The precedent is that there is no precedent — Isaac was never backfilled by a one-off.** His 145 rows were
+  mirrored row-for-row by `scripts/mirrorStudentHub.cjs` (`meetingRowsFor`, lines 97-131) under the reconcile cron,
+  months before his 2026-08-21 flip (`updated_at` = 2026-06-22 on all of them). Ryan Koo never had that: his
+  `students` row was created and flipped to `'portal'` the same day, so the mirror skipped him from row one. Any
+  future flip of a student whose 📆 history predates their row needs a hand backfill like this one.
+- **⚠ The mirror could NOT be reused, and this is the trap for the next flip.** `meetingRowsFor` finds the `Date`
+  header cell and reads every other field RELATIVE to it as `Date|Teacher|Project|Agenda|Homework|HW|%`. Ryan Koo's
+  sheet is on an **older template** whose header is `Date|Project|Agenda|Weekly Homework|Progress|%|File|Comments`
+  — **no Teacher column at all.** Running the mirror on him would have shifted every field one column left
+  (`Project`→`teacher`, `Agenda`→`project`, … `File`→`pct`) with no error. The backfill script hard-asserts the
+  literal 8-cell header and refuses to map if it differs (guard proven by failing it on purpose once).
+- **Three mapping calls, all conservative, none silent.** (1) `teacher` is **inferred `'Aaron'`** — his template has
+  no Teacher column; the evidence is the orientation doc's sheet-sourced "all Aaron-side academics/competition work"
+  plus first-person instructor voice throughout the agenda cells. Undo is one statement:
+  `update meetings set teacher=null where student_sheet_id='1C5ur…L_kw' and source='sheet'`. (2) `hw_status` is
+  **NULL for all 98** — the old template has no HW-status column (109 of Isaac's 145 are also NULL, so this is
+  in-shape). (3) col F `%` is a **decorative REPT bar glyph** (`ƖƖƖƖ…`/`||||…`), a rendering of col E `Progress`,
+  so `pct` reads col E via the mirror's own `normPct` and the glyph column is dropped as carrying no information.
+- **Nothing was dropped: `File` (77 rows) and `Comments` (9 rows) have no column in `meetings`** (the table has no
+  `notes` field), so each is appended to `agenda` on its own labeled line — `[File] …` / `[Comments] …` — visible on
+  the portal page and mechanically greppable for a later un-merge if a `file`/`notes` column ever lands.
+- **`source='sheet'`, deliberately, mirroring Isaac's history rows.** Consequence, and it is the right one: the
+  staff page can PATCH these rows but `DELETE` refuses them (`app/api/staff/meetings/route.js` — "Sheet-mirrored
+  rows are read-only"); only portal-written rows soft-void. The cron cannot prune them either, since a portal-owned
+  student is never added to `meetingReadIds`. Script kept at
+  `VS Code/scratchpads/ryan-koo-meetings-backfill/backfillRyanKooMeetings.cjs` with the 98 inserted ids alongside.
+
 ---
 
 ## Already done, 2026-08-18

@@ -1,35 +1,38 @@
-# Syncthing ignores for the NAS dev-server mirror.
-# House convention: SYNC .git (so devbox-Claude commits round-trip), exclude only
-# locks, platform junk, per-arch/build artifacts, and secrets.
-# A matching copy of this file lives on the NAS peer (per-device, not auto-shared).
+// Syncthing ignore patterns for the student-portal share (Mac <-> NAS ONLY — never Ryan's
+// devices; .env secrets and student data must not leave Aaron's machines).
+// .stignore is per-device and NOT synced: install this same file on BOTH sides
+// (Mac: folder root; NAS: /share/Container/Syncthing/data/student-portal/.stignore).
 
-# --- AI / editor / OS junk ---
-.claude
-.DS_Store
-**/.DS_Store
+// Git internals — DO NOT SYNC (same rule as AP-Social-Media, 2026-06-02: Syncthing
+// cannot safely merge refs/index; a two-machine main fork corrupts the repo).
+// The Mac is the ONLY git machine for this project; NAS Claude does admin ops, not commits.
+// History flows through GitHub (Aaron-Sapient/student-portal), not Syncthing.
+.git
+**/.git
+
+// Secrets stay OFF the Syncthing data tree (rule of record, 2026-05-25).
+// NAS Claude reads Supabase creds from /root/.claude/secrets/supabase-admissions-partners/
+// (already present on the devbox: ap-dashboard.txt + student-hubs.txt — both projects the
+// portal's .env.local points at, verified 2026-08-12).
+.env*
+**/.env*
+
+// Build artifacts / deps — machine-specific, huge (753M + 1.1G on the Mac).
+**/node_modules
+**/.next
+**/.vercel
+**/.turbo
+**/dist
+
+// Claude Code machine-local state — per-machine allowlists; sync only CLAUDE.md.
+!.claude/CLAUDE.md
+(?d).claude/**
+
+// macOS metadata — (?d) so it never blocks a remote directory deletion.
+(?d).DS_Store
+(?d)**/.DS_Store
+
+// Editor noise
 **/.vscode
 **/.idea
 **/*.swp
-
-# --- git internals that must not sync (cause conflicts) ---
-**/.git/index.lock
-**/.git/HEAD.lock
-**/.git/**/*.lock
-**/.git/objects/tmp_*
-**/.git/refs/heads/.tmp_*
-**/.git/COMMIT_EDITMSG
-
-# --- per-arch / build artifacts (Mac arm64 vs NAS x86_64; rebuilt natively on NAS) ---
-**/node_modules
-.next
-out
-build
-.vercel
-*.tsbuildinfo
-next-env.d.ts
-
-# --- secrets: NEVER sync to peers. Hand-placed directly on the NAS instead. ---
-.env
-.env.*
-.clerk
-Google Apps Scripts

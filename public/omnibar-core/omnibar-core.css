@@ -1,0 +1,50 @@
+/* ============================================================================
+   omnibar-core.css — the tokens the omnibar family shares.
+
+   Rule of ownership (measured 2026-08-20, scratchpads/students-omnibar/shared-layer-work/tokdiff.py):
+   a token lives here ONLY if its value is identical in every consumer BY DESIGN.
+   Everything else — the light palettes, the accents, the glows, the shadows,
+   --well-2 (whose semantics have already forked: AP .09, personal .045) — is
+   surface identity and stays in the host. The dark ground/ink scale is the layer
+   that actually drifted (hand-ported personal→AP, 2026-08-20); this file is what
+   makes that shared identity enforceable instead of manual.
+
+   Selector contract (matches both hosts' existing three-block theme structure):
+   - bare :root carries the shared base. Hosts define their full light palette in
+     their OWN :root — every color must exist in light; dark only overrides.
+   - dark comes twice on purpose: the media block serves the OS default, the
+     [data-theme="dark"] block serves an explicit Settings choice. Both are
+     guarded :not([data-nodark]) — the AP server stamps data-nodark per identity
+     (serve.py NO_DARK, i.e. Ryan); on hosts that never stamp it the guard is
+     inert. Never remove the guard here: this file cannot know which host it is in.
+   - shared and host token sets are DISJOINT. If a host re-declares a token owned
+     here, the host copy silently shadows every future sync — don't.
+   ============================================================================ */
+:root{
+  --bar:#ffffff; --accent-ink:#fff;
+  --r-pill:999px; --r-panel:28px;
+  --font:"Manrope",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --ease:cubic-bezier(.22,.8,.22,1);
+  --track:0;                /* light-on-dark needs a hair more tracking to stay legible; 0 in light = no change */
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]):not([data-nodark]){
+    --ink:#f1efea; --ink-2:#b8b4ad; --ink-3:#817d77; --ink-4:#45423e;
+    --line:rgba(255,255,255,.09);
+    --ground:#000000; --bar:#161514;
+    --well:rgba(255,255,255,.07);
+    --accent-ink:#1a0c08;
+    --track:.012em;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]:not([data-nodark]){
+  --ink:#f1efea; --ink-2:#b8b4ad; --ink-3:#817d77; --ink-4:#45423e;
+  --line:rgba(255,255,255,.09);
+  --ground:#000000; --bar:#161514;
+  --well:rgba(255,255,255,.07);
+  --accent-ink:#1a0c08;
+  --track:.012em;
+  color-scheme:dark;
+}

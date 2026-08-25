@@ -22,16 +22,18 @@ const MONTH_NAMES = [
 ];
 const AGENDA_MAX = 30;
 
-function formatDateStr(date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
+// The grid holds LUXON DateTimes anchored at LA midnight, never `new Date(y, m, d)`.
+// `new Date(...)` is midnight in the BROWSER's zone; converting that instant to LA lands
+// on a different calendar day for anyone outside Pacific — so a student in New York saw
+// each cell evaluated against the PREVIOUS day's instructor hours, and one in Seoul saw
+// today permanently disabled. Same instants-vs-calendar-dates trap as the Sheets serials.
 function buildCalendarGrid(year, month) {
-  const firstDay = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const first = DateTime.fromObject({ year, month: month + 1, day: 1 }, { zone: ZONE });
+  const firstDay = first.weekday % 7; // Luxon Mon=1..Sun=7 → grid col Sun=0
   const grid = [];
   let week = Array(firstDay).fill(null);
-  for (let d = 1; d <= daysInMonth; d++) {
-    week.push(new Date(year, month, d));
+  for (let d = 1; d <= first.daysInMonth; d++) {
+    week.push(first.set({ day: d }));
     if (week.length === 7) { grid.push(week); week = []; }
   }
   if (week.length > 0) { while (week.length < 7) week.push(null); grid.push(week); }
@@ -90,10 +92,13 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
-  // reschedule sub-state
-  const now = new Date();
-  const [calMonth, setCalMonth] = useState(now.getMonth());
-  const [calYear, setCalYear] = useState(now.getFullYear());
+  // reschedule sub-state. The month cursor is initialised in LA, not the browser's zone:
+  // on the last LA day of a month, a browser east of Pacific is already in the NEXT month,
+  // so `new Date().getMonth()` opened the grid on a month whose prev button is disabled —
+  // stranding the student one click away from the only days the server would accept.
+  const nowMonthLA = DateTime.now().setZone(ZONE);
+  const [calMonth, setCalMonth] = useState(nowMonthLA.month - 1);
+  const [calYear, setCalYear] = useState(nowMonthLA.year);
   const [rDate, setRDate] = useState(null);
   const [slots, setSlots] = useState([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
@@ -104,10 +109,10 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
 
   const inst = meeting ? getInstructorPublic(meeting.instructor) : null;
   const instructorSlug = (meeting?.instructor || 'ryan').toLowerCase();
-  // Project meetings can't be rescheduled in place: the rebook would need ?m=project:<id>
-  // (else it drops the project track and mis-charges the essay grant), and the
-  // still-active booking would block its own week's slots via the 1/week cap. So we route
-  // them to cancel+rebook — cancel correctly frees the week, then the Projects card rebooks.
+  // Project meetings reschedule IN PLACE, via /api/rescheduleProjectMeeting — a different
+  // endpoint from every other track (see doReschedule for why bookMeeting can't do it).
+  // They also carry different timing rules: no 24-hour notice, a 2-hour floor, and a 4pm
+  // floor for a move landing today.
   const isProject = meeting?.bookingType === 'project';
 
   useEffect(() => {
@@ -118,11 +123,16 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
     const mins = meetingMinutes(meeting.start, meeting.end);
     // excludeEventId: this meeting is being MOVED, so it must not count against the
     // student's own allowance (or block its own time) while we look for a new slot.
-    fetch(`/api/getAvailableSlots?date=${formatDateStr(rDate)}&duration=${mins}&instructor=${instructorSlug}&excludeEventId=${encodeURIComponent(meeting.id)}`)
+    // ?m=project:<id> is what tells the slot endpoint to authorize against the standing
+    // plan instead of the essay grant — and, for a reschedule, to drop the 24h floor to
+    // 2h (4pm if the new slot is today). Without it a project meeting is scored against
+    // the wrong track entirely.
+    const mParam = isProject && meeting.projectPlanId ? `&m=${encodeURIComponent(`project:${meeting.projectPlanId}`)}` : '';
+    fetch(`/api/getAvailableSlots?date=${rDate.toISODate()}&duration=${mins}&instructor=${instructorSlug}&excludeEventId=${encodeURIComponent(meeting.id)}${mParam}`)
       .then((r) => r.json())
       .then((data) => { setSlots(data.slots || []); setLoadingSlots(false); })
       .catch(() => { setSlots([]); setLoadingSlots(false); });
-  }, [rDate, mode, meeting, instructorSlug]);
+  }, [rDate, mode, meeting, instructorSlug, isProject]);
 
   async function doCancel() {
     setBusy(true);
@@ -158,11 +168,43 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
   // meeting and no way back (that is how a student lost his on 2026-08-11). bookMeeting
   // now books first and releases the old event itself, so the order can't be skipped or
   // half-completed by the client, and the worst case is two meetings rather than none.
+  //
+  // A PROJECT meeting takes a different route entirely — /api/rescheduleProjectMeeting,
+  // which PATCHes the existing event and UPDATEs the one ledger row. It cannot go through
+  // bookMeeting: that path inserts the new project row before cancelling the old one, and
+  // project_meeting_bookings has a DB-level unique index on (plan_id, week_start) where
+  // active — so a move inside one Saturday-week (the common case) dies on a 23505 and the
+  // student is told they've "already booked this week". Same reason the admin panel has
+  // always used patch-and-update.
   async function doReschedule() {
     if (!slot) return;
     setBusy(true);
     setError(null);
     try {
+      if (isProject) {
+        const res = await fetch('/api/rescheduleProjectMeeting', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            eventId: meeting.id,
+            instructor: instructorSlug,
+            start: slot.start,
+            end: slot.end,
+          }),
+        });
+        const moved = await res.json();
+        // No partial-success branch here on purpose: the route rolls the calendar back if
+        // its ledger write fails, so the only outcomes are "moved, both stores agree" and
+        // "not moved". A success-with-warning would leave the panel open over a stale slot
+        // list with no signal that pressing Confirm again is a SECOND move.
+        if (!moved.success) throw new Error(moved.error || 'Couldn’t move that meeting.');
+        await refreshMeetings();
+        setMode('view');
+        setRDate(null);
+        setSlot(null);
+        setAgenda('');
+        return;
+      }
       const res = await fetch('/api/bookMeeting', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -256,7 +298,7 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
 
         {mode === 'view' && !within2 && (
           <div className="flex shrink-0 flex-col gap-2">
-            {!within24 && !isProject && (
+            {(!within24 || isProject) && (
               <button
                 type="button"
                 onClick={() => setMode('reschedule')}
@@ -301,9 +343,9 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
           Rescheduling needs 24 hours’ notice — you can still cancel.
         </p>
       )}
-      {mode === 'view' && !within2 && isProject && (
+      {mode === 'view' && within24 && !within2 && isProject && (
         <p className="mt-3 text-[11px] text-ink-faint">
-          To move a project meeting, cancel it and rebook the new time from Book.
+          Moving this today? Pick a time at least 2 hours out — same-day times start at 4:00 PM.
         </p>
       )}
 
@@ -353,7 +395,7 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
             <button
               type="button"
               onClick={() => { if (calMonth === 0) { setCalMonth(11); setCalYear((y) => y - 1); } else setCalMonth((m) => m - 1); }}
-              disabled={calYear < now.getFullYear() || (calYear === now.getFullYear() && calMonth <= now.getMonth())}
+              disabled={calYear < nowMonthLA.year || (calYear === nowMonthLA.year && calMonth <= nowMonthLA.month - 1)}
               className="flex h-8 w-8 items-center justify-center rounded-full text-ink transition active:scale-90 disabled:opacity-25"
             >
               <ChevronLeft className="h-4 w-4" strokeWidth={2.2} />
@@ -373,12 +415,19 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
             ))}
             {buildCalendarGrid(calYear, calMonth).flat().map((date, i) => {
               if (!date) return <div key={i} />;
-              const lux = DateTime.fromJSDate(date).setZone(ZONE);
-              const isPast = lux.startOf('day') < nowLA.startOf('day');
+              const lux = date;
+              const isPast = lux < nowLA.startOf('day');
               const notBookable = !inst.hoursByWeekday[lux.weekday];
-              const tooSoon = lux < nowLA.plus({ days: 1 });
+              // Day-level gate only — the exact floor (24h, or 2h/4pm for a project
+              // reschedule) is the server's call, and the slot list enforces it. Comparing
+              // a midnight against now+24h used to disable TOMORROW as well as today.
+              // Project reschedules can land today (the server applies the real 2h/4pm
+              // floor); every other track keeps the 24-hour rule exactly as before — this
+              // arm is deliberately left at its original semantics rather than tidied,
+              // because widening it would be a live behaviour change to three other tracks.
+              const tooSoon = isProject ? false : lux < nowLA.plus({ days: 1 });
               const isAvailable = !(isPast || notBookable || tooSoon);
-              const isSel = rDate && formatDateStr(date) === formatDateStr(rDate);
+              const isSel = rDate && lux.hasSame(rDate, 'day');
               return (
                 <button
                   key={i}
@@ -393,7 +442,7 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
                       : 'text-ink-faint/50'
                   }`}
                 >
-                  {date.getDate()}
+                  {date.day}
                 </button>
               );
             })}
@@ -434,18 +483,24 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
 
           {slot && (
             <div className="mt-3">
-              <div className="relative">
-                <input
-                  type="text"
-                  value={agenda}
-                  onChange={(e) => setAgenda(e.target.value.slice(0, AGENDA_MAX))}
-                  placeholder="Update agenda (optional)"
-                  className="neu-inset w-full rounded-2xl px-4 py-2.5 pr-12 text-sm text-ink outline-none placeholder:text-ink-faint focus:ring-2 focus:ring-terracotta/25"
-                />
-                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-ink-faint">
-                  {agenda.length}/{AGENDA_MAX}
-                </span>
-              </div>
+              {/* A project meeting keeps its own title and agenda — the plan's label — and
+                  the reschedule route patches only start/end. Rendering the box for one
+                  would take input and silently drop it, so it is hidden rather than
+                  wired up: moving a session is a change of TIME, not a re-titling. */}
+              {!isProject && (
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={agenda}
+                    onChange={(e) => setAgenda(e.target.value.slice(0, AGENDA_MAX))}
+                    placeholder="Update agenda (optional)"
+                    className="neu-inset w-full rounded-2xl px-4 py-2.5 pr-12 text-sm text-ink outline-none placeholder:text-ink-faint focus:ring-2 focus:ring-terracotta/25"
+                  />
+                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-ink-faint">
+                    {agenda.length}/{AGENDA_MAX}
+                  </span>
+                </div>
+              )}
               {error && <p className="mt-2 text-sm font-medium text-terracotta-deep">{error}</p>}
               <button
                 type="button"

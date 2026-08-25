@@ -5,10 +5,9 @@ import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
 import { getSeniorByEmail, cancelBookingByEventId, cancelOneoffByEventId } from '@/lib/seniors';
 import { cancelProjectBookingByEventId } from '@/lib/projectMeetings';
-import { setBookingToken, sheetIdFromPortalUrl } from '@/lib/bookingTokens';
-
-const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
-const MASTER_TAB = '👩‍🎓 All Data';
+import { setBookingToken } from '@/lib/bookingTokens';
+import { fetchOwnedEvent } from '@/lib/rescheduleTarget';
+import { resolveCheckinStudent } from '@/lib/checkinIdentity';
 
 function getServiceAuth() {
   return new google.auth.GoogleAuth({
@@ -74,7 +73,27 @@ export async function POST(request) {
 
     const authClient = getServiceAuth();
     const calendar = google.calendar({ version: 'v3', auth: authClient });
-    const sheets = google.sheets({ version: 'v4', auth: authClient });
+
+    // ── OWNERSHIP GATE ───────────────────────────────────────────────────────
+    // Before this existed the route deleted whatever `eventId` the body named,
+    // on the instructor's calendar, behind nothing but a bare Clerk session — and
+    // then restored a booking token to the CALLER's row. Any signed-in student or
+    // parent could delete someone else's meeting and be handed a free one for it.
+    // Resolve the caller from the session (never from body.studentName, which
+    // would let an attacker pass the victim's name straight through the title
+    // fallback), then refuse anything that isn't theirs.
+    //
+    // A resolver failure is non-fatal and degrades SAFELY: without a verified name
+    // only extendedProperties.private.studentEmail — portal provenance, written by
+    // bookMeeting — can establish ownership. Hand-made instructor events simply
+    // stop being self-cancellable until the roster read recovers.
+    const target = await resolveCheckinStudent();
+    const callerName = target.error ? null : target.studentName;
+
+    const owned = await fetchOwnedEvent(calendar, instructor, eventId, email, callerName);
+    if (!owned) {
+      return Response.json({ error: 'Meeting not found' }, { status: 404 });
+    }
 
     await calendar.events.delete({
       calendarId: instructor.calendarId,
@@ -89,18 +108,11 @@ export async function POST(request) {
     await cancelOneoffByEventId(eventId);
     const wasProject = await cancelProjectBookingByEventId(eventId);
 
-    // Locate the student's master row (col J = email) and portal id (col G) in
-    // ONE read, so the token restore below can't fail on a separate lookup after
-    // the event is already gone.
-    const masterRes = await sheets.spreadsheets.values.get({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${MASTER_TAB}!G:J`,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
-
-    const rows = masterRes.data.values || [];
-    const rowIndex = rows.findIndex(r => r[3] === email) + 1;
-    const cancelSheetId = rowIndex > 0 ? sheetIdFromPortalUrl(rows[rowIndex - 1][0]) : null;
+    // The caller's own master row + portal id, from the SAME session-resolved
+    // lookup the ownership gate used — no second read, and no chance of the gate
+    // and the token restore disagreeing about who this is.
+    const rowIndex = target.error ? 0 : target.studentRowIndex;
+    const cancelSheetId = target.error ? null : target.studentSheetId;
 
     // Token logic:
     //  - Seniors: NO token — the per-week cap is recounted from live calendar events,
@@ -131,7 +143,7 @@ export async function POST(request) {
     }
 
     try {
-      await sendCancellationEmail(instructor, studentName, meetingTitle, meetingStart);
+      await sendCancellationEmail(instructor, callerName || studentName, meetingTitle, meetingStart);
     } catch (emailErr) {
       console.error('Failed to send cancellation email:', emailErr);
     }

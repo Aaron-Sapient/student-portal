@@ -1,0 +1,920 @@
+/* ============================================================================
+   The public proposal surface — its own material, scoped to .proposal-root.
+
+   WHY A SEPARATE SCOPE. The portal (.portal-root) is claymorphic terracotta on
+   cream: a v1-era look the product is leaving, and a look that fights this
+   page's job. This surface is white paper. No cards, no wells, no shadows in
+   the reading column: the only structural marks are hairlines and space. Every
+   token below is declared on .proposal-root and nothing here touches
+   .portal-root, so the two can diverge without either re-theming the other.
+
+   WHY WHITE AND NOT A TABLE. The previous pass rendered the comparison as a
+   filled table on a tinted ground with a rail of accent chips over it, and the
+   verdict was that it read as density rather than as a decision. Three things
+   caused that and all three are structural: a fill behind every answer, a rule
+   between every pair of answers, and accent spent on an instrument. So the
+   ground is #fff, the only divider is a hairline above each service, and the
+   accent appears on exactly two kinds of thing — the Choose controls and
+   links. Nothing decorative may borrow it.
+
+   THREE-BLOCK THEME CONTRACT (same shape the omnibar uses). Bare .proposal-root
+   carries the COMPLETE light palette — no color's only definition lives inside
+   a media query. The dark block overrides values only. There is no explicit
+   theme toggle on this surface (a family gets one link, not a settings panel),
+   so prefers-color-scheme is the whole story.
+
+   CONTRAST, computed from these hexes rather than eyeballed (scratchpads/
+   student-portal/proposal-contrast.mjs, re-run 2026-08-24 against the white
+   ground). Light on #fff: ink 17.79:1, ink-2 7.18:1, ink-3 4.92:1, accent
+   7.18:1, white on the accent fill 7.18:1. Dark on #0d0e10: ink 17.09:1, ink-2
+   8.96:1, ink-3 6.58:1, accent 8.61:1, accent-ink on the fill 8.38:1. Every one
+   clears 4.5:1, so ink-3 is safe for real text and not just chrome.
+   ============================================================================ */
+
+.proposal-root {
+  /* ground / surfaces */
+  --pp-ground: #ffffff;
+  --pp-card: #ffffff;
+  --pp-line: rgba(18, 20, 23, 0.12);
+  --pp-line-strong: rgba(18, 20, 23, 0.26);
+
+  /* ink */
+  --pp-ink: #16181b;
+  --pp-ink-2: #53585e;
+  --pp-ink-3: #6c7178;
+
+  /* the one accent: links and the Choose control. Nothing decorative is ever
+     allowed to borrow it, so accent on this page always means "this is the
+     thing that will take you somewhere". */
+  --pp-accent: #2f4bc4;
+  --pp-accent-ink: #ffffff;
+
+  --pp-track: 0;
+  --pp-lh: 1.65;
+
+  color-scheme: light;
+  min-height: 100vh;
+  background: var(--pp-ground);
+  color: var(--pp-ink);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    sans-serif;
+  font-size: 16px;
+  letter-spacing: var(--pp-track);
+  /* tabular figures: every total on this page sits in a column beside another
+     total, and proportional digits make two four-digit prices look unequal. */
+  font-feature-settings: "tnum" 1;
+  -webkit-font-smoothing: antialiased;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* The canvas behind the page (iOS overscroll included) has to match, or the
+   rubber-band reveals a white band under a dark page. */
+html:has(.proposal-root) {
+  background: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  html:has(.proposal-root) {
+    background: #0d0e10;
+  }
+  .proposal-root {
+    --pp-ground: #0d0e10;
+    --pp-card: #0d0e10;
+    --pp-line: rgba(255, 255, 255, 0.13);
+    --pp-line-strong: rgba(255, 255, 255, 0.28);
+
+    --pp-ink: #f1f1f0;
+    --pp-ink-2: #adb1b6;
+    --pp-ink-3: #9297a0;
+
+    --pp-accent: #93a9ff;
+    --pp-accent-ink: #0d1024;
+
+    /* Light type on a dark ground is tuned FOR the dark rendering rather than
+       inherited: tracking and leading both open up. */
+    --pp-track: 0.008em;
+    --pp-lh: 1.75;
+
+    color-scheme: dark;
+  }
+}
+
+/* ── page frame ───────────────────────────────────────────────────────────── */
+
+.proposal-root .pp-page {
+  margin: 0 auto;
+  width: 100%;
+  max-width: 68rem;
+  padding: 2.5rem 1rem 2rem;
+}
+@media (min-width: 720px) {
+  .proposal-root .pp-page {
+    padding: 4rem 2rem 4rem;
+  }
+}
+
+.proposal-root .pp-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.proposal-root a {
+  color: inherit;
+  text-decoration: none;
+}
+.proposal-root .pp-link {
+  color: var(--pp-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+.proposal-root a:focus-visible,
+.proposal-root select:focus-visible {
+  outline: 2px solid var(--pp-accent);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+/* ── hero ─────────────────────────────────────────────────────────────────── */
+
+/* The wordmark is "Admissions | Partners" with the PIPE carrying the emphasis
+   (AP-Counseling CLAUDE.md, canonical). On the brand's own surfaces that
+   emphasis is terracotta; this page is deliberately off that palette, so the
+   pipe keeps its role by weight and darkness instead of by hue. Painting it in
+   this page's accent would invent a second brand color, and the accent here is
+   reserved for things you can click. */
+.proposal-root .pp-mark {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--pp-ink-3);
+}
+.proposal-root .pp-mark i {
+  font-style: normal;
+  color: var(--pp-ink);
+}
+
+/* Deliberately smaller than a tier total. The name of the family is who the
+   page is for; the three figures are what the page is ABOUT, and on a surface
+   whose whole job is a comparison the largest type has to be the thing being
+   compared. Measured against the total's own clamp at both ends: 21px vs 27px
+   at 390, 35px vs 46px at 1440. */
+.proposal-root .pp-title {
+  margin: 0.7rem 0 0;
+  font-size: clamp(1.35rem, 5.4vw, 2.2rem);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+.proposal-root .pp-meta {
+  margin: 0.5rem 0 0;
+  font-size: 14.5px;
+  color: var(--pp-ink-3);
+}
+
+/* One sentence, and the only prose above the comparison. */
+.proposal-root .pp-lead {
+  margin: 1.2rem 0 0;
+  max-width: 54ch;
+  font-size: 16px;
+  line-height: var(--pp-lh);
+  color: var(--pp-ink-2);
+}
+
+/* Expired / enrolled: a different CLAIM, not a louder one. It gets a hairline
+   box so it reads as a stamp on the document rather than as another sentence,
+   with no fill and no color swap. */
+.proposal-root .pp-status {
+  display: inline-block;
+  max-width: 54ch;
+  margin-top: 1.2rem;
+  border: 1px solid var(--pp-line-strong);
+  border-radius: 12px;
+  padding: 0.6rem 0.95rem;
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--pp-ink-2);
+}
+.proposal-root .pp-status b {
+  font-weight: 650;
+  color: var(--pp-ink);
+}
+
+/* ── the tier header ──────────────────────────────────────────────────────── */
+
+.proposal-root .pp-compare {
+  margin-top: 2.5rem;
+}
+
+/* Sticky, but only once it gets there. The row sits AFTER the hero in normal
+   flow, so the page opens on a name and a sentence; it pins itself to the top
+   only when the reader has scrolled past them, which is exactly when the
+   answers below stop being self-labelling. The hairline is a box-shadow so
+   pinning cannot change the row's height by a pixel.
+
+   The negative inline margin is the page's own padding, so the white backdrop
+   reaches the edges of the column instead of leaving two gutters where text
+   scrolls past unblanked. */
+.proposal-root .pp-tiers {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: repeat(var(--pp-cols, 3), minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-inline: -1rem;
+  padding: 0.8rem 1rem 0.85rem;
+  background: var(--pp-ground);
+  box-shadow: 0 1px 0 var(--pp-line);
+}
+@media (min-width: 720px) {
+  .proposal-root .pp-tiers {
+    margin-inline: -2rem;
+    padding: 1.1rem 2rem 1.25rem;
+    gap: 1.5rem;
+  }
+}
+
+.proposal-root .pp-tier {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+/* Measured, not guessed: at 390px a column is (390 − 2×16 page − 2×8 gap) / 3 ≈
+   114px, and "COMPREHENSIVE" is thirteen caps. 10px at 0.05em fits it on one
+   line; 11px at 0.1em wrapped it to "COMPREHENSIV / E". */
+.proposal-root .pp-tier-name {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--pp-ink-3);
+}
+@media (min-width: 720px) {
+  .proposal-root .pp-tier-name {
+    font-size: 11px;
+    letter-spacing: 0.12em;
+  }
+}
+
+/* The largest type on the page, by construction. Seven glyphs ("$18,400") at
+   3.83em of tabular width have to fit a 114px column at 390px, which caps the
+   phone size at ~28px; the desktop clamp runs to 48px. */
+.proposal-root .pp-tier-total {
+  margin: 0.1rem 0 0;
+  font-size: clamp(1.5rem, 7vw, 2.4rem);
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: var(--pp-ink);
+}
+@media (min-width: 720px) {
+  .proposal-root .pp-tier-total {
+    font-size: clamp(2.1rem, 3.2vw, 3rem);
+  }
+}
+
+.proposal-root .pp-tiers-note {
+  margin: 0.9rem auto 0;
+  max-width: 52ch;
+  text-align: center;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--pp-ink-3);
+}
+
+/* The one accent object. Below 980 the header carries a name and a figure only
+   and these move to the dock, where a thumb is. */
+.proposal-root .pp-choose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3em;
+  min-height: 44px;
+  padding: 0 1.2rem;
+  border-radius: 999px;
+  background: var(--pp-accent);
+  color: var(--pp-accent-ink);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  transition: filter 0.16s ease, transform 0.16s ease;
+}
+@media (hover: hover) {
+  .proposal-root .pp-choose:hover {
+    filter: brightness(1.08);
+  }
+}
+.proposal-root .pp-choose:active {
+  transform: scale(0.985);
+}
+.proposal-root .pp-tiers .pp-choose {
+  display: none;
+}
+@media (min-width: 980px) {
+  .proposal-root .pp-tiers .pp-choose {
+    display: inline-flex;
+    margin-top: 0.85rem;
+  }
+}
+
+/* ── the three slots ──────────────────────────────────────────────────────── */
+
+/* Hidden without JS: a picker that cannot pick is a lie, and with JS off every
+   service is already shown, which is the honest superset. */
+.proposal-root .pp-slots {
+  display: none;
+}
+:root[data-pp-js] .proposal-root .pp-slots {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  margin-top: 2rem;
+}
+@media (max-width: 559px) {
+  :root[data-pp-js] .proposal-root .pp-slots {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.4rem;
+  }
+}
+
+.proposal-root .pp-slots-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--pp-ink-3);
+  margin-right: 0.25rem;
+}
+
+/* A real <select>, minimally styled: the native control keeps its keyboard
+   behaviour, its platform picker on a phone, and its own theme-correct arrow,
+   none of which an appearance:none rebuild gets for free. */
+.proposal-root .pp-slot {
+  max-width: 100%;
+  min-height: 44px;
+  padding: 0 0.6rem;
+  border: 1px solid var(--pp-line-strong);
+  border-radius: 10px;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: var(--pp-ink);
+  cursor: pointer;
+}
+
+/* ── one section per service ──────────────────────────────────────────────── */
+
+/* No row label, no grid lines, no zebra, no box. A hairline above, a glyph, the
+   service name once, and the answers centred under the totals they belong to. */
+.proposal-root .pp-svc {
+  border-top: 1px solid var(--pp-line);
+  margin-top: 2rem;
+  padding-top: 2rem;
+  text-align: center;
+}
+@media (min-width: 720px) {
+  .proposal-root .pp-svc {
+    margin-top: 2.75rem;
+    padding-top: 2.75rem;
+  }
+}
+
+.proposal-root .pp-svc-icon {
+  display: block;
+  width: 22px;
+  height: 22px;
+  margin: 0 auto;
+  color: var(--pp-ink-3);
+}
+
+.proposal-root .pp-svc-name {
+  margin: 0.65rem 0 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--pp-ink-2);
+}
+/* The add-on marker: a service the family is being offered on top of the
+   package, rather than one the package includes by definition. */
+.proposal-root .pp-tag {
+  margin-left: 0.45rem;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  color: var(--pp-ink-3);
+}
+
+.proposal-root .pp-svc-cols {
+  display: grid;
+  grid-template-columns: repeat(var(--pp-cols, 3), minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-top: 1.1rem;
+}
+@media (min-width: 720px) {
+  .proposal-root .pp-svc-cols {
+    gap: 1.5rem;
+    margin-top: 1.35rem;
+  }
+}
+
+.proposal-root .pp-answer {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--pp-ink);
+  overflow-wrap: break-word;
+  text-wrap: balance;
+}
+@media (min-width: 720px) {
+  .proposal-root .pp-answer {
+    font-size: 15px;
+    line-height: 1.55;
+  }
+}
+/* "Not included" is a real answer and belongs on the page, but it is the one
+   answer that should never out-shout an answer that says yes. The word itself
+   carries the meaning; the colour only ranks it. */
+.proposal-root .pp-answer[data-tone='off'] {
+  color: var(--pp-ink-3);
+}
+
+/* With JS on, an unpicked service is out of the comparison; with JS off the
+   attribute is never set and every service stands. */
+:root[data-pp-js] .proposal-root .pp-svc:not([data-on]) {
+  display: none;
+}
+
+.proposal-root .pp-more {
+  margin: 2.25rem 0 0;
+  border-top: 1px solid var(--pp-line);
+  padding-top: 1.75rem;
+  text-align: center;
+  font-size: 14px;
+}
+
+/* ── the phone dock ───────────────────────────────────────────────────────── */
+
+/* Same column template as the header and the answers, so the leftmost control
+   and the leftmost total are one object. */
+.proposal-root .pp-dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(var(--pp-cols, 3), minmax(0, 1fr));
+  gap: 0.5rem;
+  padding: 0.55rem 1rem calc(0.6rem + env(safe-area-inset-bottom));
+  background: color-mix(in srgb, var(--pp-ground) 92%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: 0 -1px 0 0 var(--pp-line);
+}
+@media (min-width: 980px) {
+  .proposal-root .pp-dock {
+    display: none;
+  }
+}
+/* The dock covers whatever is scrolled under it. */
+@media (max-width: 979px) {
+  .proposal-root .pp-page {
+    padding-bottom: 6.5rem;
+  }
+}
+
+/* "Choose Comprehensive" does not fit a 114px column on one line, and three
+   buttons that all say "Choose" have nothing to tell them apart. Two lines: the
+   verb small above, the tier name under it. */
+.proposal-root .pp-choose--dock {
+  flex-direction: column;
+  gap: 0;
+  min-height: 48px;
+  padding: 0.3rem 0.4rem;
+  border-radius: 12px;
+}
+.proposal-root .pp-choose-verb {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.78;
+}
+.proposal-root .pp-choose-name {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+/* ── the letter ───────────────────────────────────────────────────────────── */
+
+/* The rules under the comparison run the full width of the page, and the prose
+   is measured inside them. A 66ch max-width on the SECTION drew a hairline that
+   stopped two thirds of the way across a full-width layout, which reads as a
+   broken rule rather than as a divider. */
+.proposal-root .pp-letter {
+  margin-top: 4rem;
+  border-top: 1px solid var(--pp-line);
+  padding-top: 1.25rem;
+}
+.proposal-root .pp-letter > *,
+.proposal-root .pp-footer > * {
+  max-width: 66ch;
+}
+.proposal-root .pp-letter-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--pp-ink-3);
+}
+.proposal-root .pp-section {
+  margin-top: 2.25rem;
+}
+.proposal-root .pp-h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.012em;
+  color: var(--pp-ink);
+  break-after: avoid;
+}
+.proposal-root .pp-h3 {
+  margin: 1.35rem 0 0;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--pp-ink);
+  break-after: avoid;
+}
+.proposal-root .pp-h2 + .pp-h3 {
+  margin-top: 0.9rem;
+}
+.proposal-root .pp-letter p {
+  margin: 0.8rem 0 0;
+  font-size: 16px;
+  line-height: var(--pp-lh);
+  color: var(--pp-ink-2);
+}
+.proposal-root .pp-list {
+  margin: 0.6rem 0 0;
+  padding-left: 1.1rem;
+  list-style: disc;
+}
+.proposal-root .pp-list li {
+  margin-top: 0.35rem;
+  font-size: 16px;
+  line-height: var(--pp-lh);
+  color: var(--pp-ink-2);
+}
+.proposal-root .pp-list li::marker {
+  color: var(--pp-ink-3);
+}
+.proposal-root .pp-steps {
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.proposal-root .pp-steps > li {
+  margin-top: 1.25rem;
+  border-left: 1px solid var(--pp-line-strong);
+  padding-left: 1.1rem;
+  break-inside: avoid;
+}
+.proposal-root .pp-steps > li .pp-h3 {
+  margin-top: 0;
+}
+
+.proposal-root .pp-footer {
+  margin-top: 3rem;
+  border-top: 1px solid var(--pp-line);
+  padding-top: 1.25rem;
+}
+.proposal-root .pp-footer p {
+  margin: 0.35rem 0 0;
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--pp-ink-2);
+}
+.proposal-root .pp-footer-custom {
+  margin-top: 1.1rem !important;
+}
+.proposal-root .pp-footer-contact {
+  margin-top: 1.1rem !important;
+  font-size: 13.5px !important;
+  color: var(--pp-ink-3) !important;
+}
+
+/* ── standalone states (not-found, error) ─────────────────────────────────── */
+
+.proposal-root .pp-standalone {
+  margin: 0 auto;
+  display: flex;
+  min-height: 100vh;
+  width: 100%;
+  max-width: 36rem;
+  flex-direction: column;
+  justify-content: center;
+  padding: 4rem 1.25rem;
+}
+.proposal-root .pp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0 1.4rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--pp-accent);
+  color: var(--pp-accent-ink);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.proposal-root .pp-btn:focus-visible {
+  outline: 2px solid var(--pp-accent);
+  outline-offset: 3px;
+}
+
+/* ── motion ───────────────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  /* Not a blanket kill: hover and press still resolve visibly (the control
+     brightens), only the travel is cut. */
+  .proposal-root .pp-choose {
+    transition: none;
+  }
+  .proposal-root .pp-choose:active {
+    transform: none;
+  }
+}
+
+/* ── print ────────────────────────────────────────────────────────────────── */
+
+/* A family keeps this. Re-pin the light palette by literal value, because the
+   dark tokens above live in a prefers-color-scheme block that a dark-mode
+   browser still honors at print time. */
+@media print {
+  .proposal-root {
+    --pp-ground: #ffffff;
+    --pp-card: #ffffff;
+    --pp-line: #d6d6d4;
+    --pp-line-strong: #a9a9a6;
+    --pp-ink: #16181b;
+    --pp-ink-2: #3f4348;
+    --pp-ink-3: #5c6167;
+    --pp-accent: #2f4bc4;
+    --pp-accent-ink: #ffffff;
+    --pp-track: 0;
+    background: #ffffff !important;
+  }
+  html:has(.proposal-root) {
+    background: #ffffff;
+  }
+  .proposal-root .pp-slots,
+  :root[data-pp-js] .proposal-root .pp-slots {
+    display: none !important;
+  }
+  /* Print is the archival copy, so it carries every service rather than
+     whichever three happened to be on screen. */
+  :root[data-pp-js] .proposal-root .pp-svc:not([data-on]) {
+    display: block !important;
+  }
+  .proposal-root .pp-tiers {
+    position: static;
+    margin-inline: 0;
+    padding-inline: 0;
+    box-shadow: none;
+    border-bottom: 1px solid #d6d6d4;
+  }
+  .proposal-root .pp-tiers .pp-choose {
+    display: inline-flex;
+    margin-top: 0.6rem;
+    background: none;
+    color: #2f4bc4;
+    min-height: 0;
+    padding: 0;
+    font-size: 12px;
+  }
+  .proposal-root .pp-dock {
+    display: none !important;
+  }
+  .proposal-root .pp-page {
+    padding: 0;
+    max-width: none;
+  }
+  .proposal-root .pp-more {
+    display: none;
+  }
+  .proposal-root .pp-section,
+  .proposal-root .pp-svc,
+  .proposal-root .pp-footer {
+    break-inside: avoid;
+  }
+}
+
+/* ============================================================================
+   FIGURES (2026-08-24). The service is the unit; the tiers are rows inside it,
+   each row led by its tier mark. Rules for .pp-svc / .pp-slots / .pp-dock above
+   are the retired tier-column layout and are unreferenced by the page.
+   ============================================================================ */
+
+/* the tier marks — drawn, not typed, so the dot is the same on every platform */
+.proposal-root .pp-mark-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  width: 30px;
+  flex: 0 0 30px;
+}
+.proposal-root .pp-mark-dots i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--pp-ink);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+/* legend: the only control above the figures */
+.proposal-root .pp-legend {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  padding: 10px 0;
+  margin: 0 0 8px;
+  background: var(--pp-ground);
+  border-bottom: 1px solid var(--pp-line-strong);
+}
+.proposal-root .pp-legend-tier {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 12px 0 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--pp-ink-2);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.proposal-root .pp-legend-tier:hover { color: var(--pp-ink); }
+.proposal-root .pp-legend-tier:focus-visible { outline: 2px solid var(--pp-accent); outline-offset: 2px; }
+.proposal-root .pp-legend-tier[aria-pressed="true"] {
+  color: var(--pp-accent);
+  border-color: var(--pp-accent);
+}
+.proposal-root .pp-legend-tier[aria-pressed="true"] .pp-mark-dots i { background: var(--pp-accent); }
+
+/* the figures */
+.proposal-root .pp-figs {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+}
+@media (min-width: 720px) {
+  .proposal-root .pp-figs { grid-template-columns: 1fr 1fr; column-gap: 48px; }
+}
+@media (min-width: 1100px) {
+  .proposal-root .pp-figs { grid-template-columns: 1fr 1fr 1fr; column-gap: 56px; }
+}
+.proposal-root .pp-figs-label {
+  margin: 40px 0 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--pp-line-strong);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pp-ink-3);
+}
+.proposal-root .pp-fig {
+  padding: 22px 0 18px;
+  border-top: 1px solid var(--pp-line);
+  break-inside: avoid;
+}
+.proposal-root .pp-fig-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--pp-ink);
+}
+.proposal-root .pp-fig-glyph { display: inline-flex; width: 20px; height: 20px; color: var(--pp-ink-2); }
+.proposal-root .pp-fig-glyph svg { width: 20px; height: 20px; }
+.proposal-root .pp-fig-rows { list-style: none; margin: 0; padding: 0; }
+.proposal-root .pp-fig-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+  padding: 4px 0;
+}
+.proposal-root .pp-fig-val { display: flex; align-items: center; gap: 12px; min-width: 0; flex-wrap: wrap; }
+.proposal-root .pp-cap { font-size: 15px; line-height: 1.35; color: var(--pp-ink); }
+.proposal-root .pp-cap--words { padding: 2px 0; }
+.proposal-root .pp-cap-2 { color: var(--pp-ink-3); }
+.proposal-root .pp-cap[data-tone="off"], .proposal-root .pp-fig-row[data-tone="off"] .pp-cap { color: var(--pp-ink-3); }
+.proposal-root .pp-cap[data-tone="bonus"] .pp-cap-2 { color: var(--pp-accent); }
+
+/* cadence: a four-week strip; a filled week is a meeting */
+.proposal-root .pp-month {
+  display: inline-grid;
+  grid-template-columns: repeat(4, 22px);
+  gap: 3px;
+  flex: 0 0 auto;
+}
+.proposal-root .pp-month i {
+  height: 22px;
+  border-radius: 4px;
+  border: 1px solid var(--pp-line-strong);
+  background: transparent;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.proposal-root .pp-month i[data-on] { background: var(--pp-ink); border-color: var(--pp-ink); }
+
+/* count / presence: unit glyphs on the icon grid */
+.proposal-root .pp-units { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; flex: 0 0 auto; }
+.proposal-root .pp-unit { display: inline-flex; width: 20px; height: 20px; color: var(--pp-ink); transition: color 0.15s ease; }
+.proposal-root .pp-unit svg { width: 20px; height: 20px; }
+.proposal-root .pp-unit--off { color: var(--pp-line-strong); }
+.proposal-root .pp-unit-more { font-size: 13px; color: var(--pp-ink-3); }
+.proposal-root .pp-units[data-tone="bonus"] .pp-unit { color: var(--pp-accent); }
+
+/* the pick: the chosen tier's marks and pictures take the accent, page-wide */
+:root[data-pp-js] .proposal-root [data-compare]:not([data-pick=""]) .pp-fig-row .pp-mark-dots i,
+:root[data-pp-js] .proposal-root [data-compare]:not([data-pick=""]) .pp-fig-row .pp-month i[data-on],
+:root[data-pp-js] .proposal-root [data-compare]:not([data-pick=""]) .pp-tier .pp-mark-dots i {
+  background: var(--pp-line-strong);
+  border-color: var(--pp-line-strong);
+}
+:root[data-pp-js] .proposal-root [data-compare]:not([data-pick=""]) .pp-fig-row .pp-unit { color: var(--pp-line-strong); }
+:root[data-pp-js] .proposal-root [data-compare]:not([data-pick=""]) .pp-fig-row .pp-cap { color: var(--pp-ink-3); }
+:root[data-pp-js] .proposal-root [data-compare]:not([data-pick=""]) .pp-tier { opacity: 0.45; }
+:root[data-pp-js] .proposal-root [data-compare][data-pick="essential"] [data-pkg="essential"],
+:root[data-pp-js] .proposal-root [data-compare][data-pick="comprehensive"] [data-pkg="comprehensive"],
+:root[data-pp-js] .proposal-root [data-compare][data-pick="vip"] [data-pkg="vip"] { opacity: 1; }
+:root[data-pp-js] .proposal-root [data-compare][data-pick="essential"] [data-pkg="essential"] .pp-mark-dots i,
+:root[data-pp-js] .proposal-root [data-compare][data-pick="comprehensive"] [data-pkg="comprehensive"] .pp-mark-dots i,
+:root[data-pp-js] .proposal-root [data-compare][data-pick="vip"] [data-pkg="vip"] .pp-mark-dots i,
+:root[data-pp-js] .proposal-root [data-compare][data-pick="essential"] [data-pkg="essential"] .pp-month i[data-on],
+:root[data-pp-js] .proposal-root [data-compare][data-pick="comprehensive"] [data-pkg="comprehensive"] .pp-month i[data-on],
+:root[data-pp-js] .proposal-root [data-compare][data-pick="vip"] [data-pkg="vip"] .pp-month i[data-on] {
+  background: var(--pp-accent);
+  border-color: var(--pp-accent);
+}
+:root[data-pp-js] .proposal-root [data-compare][data-pick="essential"] [data-pkg="essential"] .pp-unit,
+:root[data-pp-js] .proposal-root [data-compare][data-pick="comprehensive"] [data-pkg="comprehensive"] .pp-unit,
+:root[data-pp-js] .proposal-root [data-compare][data-pick="vip"] [data-pkg="vip"] .pp-unit { color: var(--pp-accent); }
+:root[data-pp-js] .proposal-root [data-compare][data-pick="essential"] [data-pkg="essential"] .pp-cap,
+:root[data-pp-js] .proposal-root [data-compare][data-pick="comprehensive"] [data-pkg="comprehensive"] .pp-cap,
+:root[data-pp-js] .proposal-root [data-compare][data-pick="vip"] [data-pkg="vip"] .pp-cap { color: var(--pp-ink); }
+
+/* totals, last */
+.proposal-root .pp-compare .pp-tiers {
+  position: static;
+  margin-top: 48px;
+  padding-top: 24px;
+  border-top: 1px solid var(--pp-line-strong);
+  border-bottom: 0;
+}
+.proposal-root .pp-tier-name { display: flex; align-items: center; gap: 8px; }
+.proposal-root .pp-also { margin: 28px 0 0; font-size: 14px; color: var(--pp-ink-3); line-height: 1.6; }
+.proposal-root .pp-also-label { color: var(--pp-ink-2); }
+
+@media (prefers-reduced-motion: reduce) {
+  .proposal-root .pp-mark-dots i, .proposal-root .pp-month i, .proposal-root .pp-unit { transition: none; }
+}
+
+/* many units (ten colleges) shrink so the count and its number stay on one line */
+.proposal-root .pp-units[data-n="many"] { gap: 2px; }
+.proposal-root .pp-units[data-n="many"] .pp-unit, .proposal-root .pp-units[data-n="many"] .pp-unit svg { width: 15px; height: 15px; }
+@media (max-width: 559px) {
+  .proposal-root .pp-legend { gap: 0 2px; }
+  .proposal-root .pp-legend-tier { padding: 0 8px 0 4px; font-size: 13px; gap: 4px; }
+  .proposal-root .pp-legend-tier .pp-mark-dots { width: 24px; flex-basis: 24px; gap: 2px; }
+  .proposal-root .pp-legend-tier .pp-mark-dots i { width: 6px; height: 6px; }
+}

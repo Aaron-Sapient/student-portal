@@ -10,7 +10,13 @@ import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 // session to protect: they authenticate with a CRON_SECRET bearer instead
 // (lib/cronAuth.js requireCron, which fails closed). Without this allowlist entry
 // auth.protect() 404s them before their own guard ever runs.
-const isPublicRoute = createRouteMatcher(['/sign-in(.*)', '/sso-callback(.*)', '/parents(.*)', '/api/parentCheckin', '/write(.*)', '/api/writing/doc', '/api/writing/save', '/api/writing/tab', '/api/writing/history', '/sat(.*)', '/api/sat/init', '/api/sat/quiz', '/api/sat/submit', '/api/cron(.*)', '/api/omnibar(.*)'])
+// /proposal/<quoteId> is public on the same terms as /write: possession of the
+// unguessable package_quotes uuid IS the capability, so a family reads their
+// proposal with no account (the page is read-only and writes nothing). The
+// trailing SLASH is load-bearing: `/proposal(.*)` also matched any future path
+// merely beginning with the word (/proposals, /proposal-admin), publishing a
+// route nobody meant to publish. Only the id space under /proposal/ is public.
+const isPublicRoute = createRouteMatcher(['/sign-in(.*)', '/sso-callback(.*)', '/parents(.*)', '/api/parentCheckin', '/write(.*)', '/proposal/(.*)', '/api/writing/doc', '/api/writing/save', '/api/writing/tab', '/api/writing/history', '/sat(.*)', '/api/sat/init', '/api/sat/quiz', '/api/sat/submit', '/api/cron(.*)', '/api/omnibar(.*)'])
 
 export default clerkMiddleware(async (auth, request) => {
   if (!isPublicRoute(request)) {

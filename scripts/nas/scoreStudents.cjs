@@ -426,8 +426,19 @@ function firstJsonObject(text) {
 }
 
 // One model call (default Sonnet) via the local claude CLI (Max-plan auth — no API key billing).
+//
+// `--tools ""` disables the built-in tool set, and it is load-bearing security, not tidiness.
+// The prompt is a raw dump of six sheet tabs (CORE_RANGES), and the 🎓 Transcript grade cells are
+// STUDENT-WRITABLE via app/api/submitUpdateForm with no value whitelist — so a student can plant
+// instruction text directly into this nightly prompt. buildPrompt's `=== SECTION ===` markers are
+// cosmetic and a sheet cell can forge one. Worse, prev-score context re-injects the model's own
+// prior `insight` strings, so anything that lands there persists week over week. Without this flag
+// the call is a full coding agent with a filesystem, running unattended inside the scoring host:
+// an injected instruction could Read files and smuggle their contents out through insight/coachNote,
+// which are written to the student's 📊 Scores tab and shown to them as their Coach note. Scoring
+// needs no tools at all — the entire input arrives on stdin.
 function scoreWithClaude(prompt) {
-  const raw = execFileSync('claude', ['-p', '--model', MODEL, '--output-format', 'json'], {
+  const raw = execFileSync('claude', ['-p', '--model', MODEL, '--tools', '', '--output-format', 'json'], {
     input: prompt,
     encoding: 'utf8',
     timeout: 600000, // NAS CLI calls run 2-4min normally; 5min clipped real runs

@@ -14,6 +14,7 @@ import {
 import { ADDON_DEFS, GRADES, PACKAGES, PACKAGE_LABELS, studentNameKey } from '@/lib/pricingSchema';
 import { computeQuote, money } from '@/lib/pricingCalc';
 import { buildEmail } from '@/lib/packageEmail';
+import { proposalUrl, shortEmailText } from '@/lib/proposalLink';
 
 const SEASONS = ['summer', 'fall', 'winter', 'spring'];
 const SEASON_GRADES = ['9', '10', '11', '12'];
@@ -46,8 +47,52 @@ export function makeInitial() {
     // string — and "update" then means "whichever row currently has that
     // name", which for two students who share one is a different family's.
     sourceQuote: null,
+    // The proposal AS THE SERVER HOLDS IT, as a key (see selectionKey). The two
+    // clipboard buttons hand out a link to the SERVER's copy, so they have to
+    // go quiet the moment this form stops matching it — otherwise a tier is
+    // edited, the link is copied, and the family opens the version from before
+    // the edit while the builder on screen shows the one they never saw. Null
+    // until a save or a load produces a baseline.
+    lastSaved: null,
   };
 }
+
+// The proposal itself, lifted out of the form: exactly what a save persists as
+// `selection`, and nothing that is merely the form's identity (sourceQuote,
+// lastSaved). One function so the live memo below and the saved-state baseline
+// can never be built two different ways.
+export function selectionOf(f) {
+  return {
+    firstName: f.firstName,
+    lastName: f.lastName,
+    grade: f.grade,
+    gender: f.gender,
+    discountExpires: f.discountExpires,
+    seasons: f.seasons,
+    discounts: { referral: f.referral, sibling: f.sibling, custom: (Number(f.customPct) || 0) / 100 },
+    services: f.services,
+    bonuses: f.bonuses,
+    // Undefined for anything built here (no control writes it yet), which
+    // normalizeSelectedPackages reads as all three tiers — unchanged
+    // behaviour. Present only on a reopened proposal that carried one.
+    selectedPackages: f.selectedPackages,
+  };
+}
+
+// Key-order-independent JSON. A stored selection whose add-on keys arrived in a
+// different order than ADDON_DEFS lists them is the SAME proposal, and a plain
+// stringify would call it an edit and disable the link until a pointless save.
+function sortKeys(v) {
+  if (Array.isArray(v)) return v.map(sortKeys);
+  if (v && typeof v === 'object') {
+    return Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortKeys(v[k])]));
+  }
+  return v;
+}
+export function keyOf(selection) {
+  return JSON.stringify(sortKeys(selection));
+}
+const selectionKey = (f) => keyOf(selectionOf(f));
 
 // The inverse of the `state` memo below: a saved proposal's `selection` blob
 // back into the form's shape, so "Open in builder" on the Saved tab reopens a
@@ -75,7 +120,7 @@ export function fromSelection(sel, sourceQuote = null) {
   const keepExpiry =
     /^\d{4}-\d{2}-\d{2}$/.test(storedExpiry) &&
     storedExpiry >= DateTime.now().setZone(ZONE).toISODate();
-  return {
+  const next = {
     ...base,
     firstName: sel.firstName || '',
     lastName: sel.lastName || '',
@@ -95,6 +140,18 @@ export function fromSelection(sel, sourceQuote = null) {
     // three-option one with VIP back on the table the day that control ships.
     selectedPackages: sel.selectedPackages,
   };
+  // The baseline the clipboard buttons compare against: this form as loaded,
+  // NOT the stored blob — the load normalises (missing add-on keys default in),
+  // so comparing against the blob would report an edit nobody made and disable
+  // the link permanently.
+  //
+  // The one normalisation that genuinely changes the offer is the refreshed
+  // expiry: `keepExpiry` false means the saved row's deadline has passed, so
+  // the row and this form now describe different proposals, and the link would
+  // hand the family a page that says it expired. A null baseline reads as
+  // unsaved, which is exactly right — the fix is to save.
+  next.lastSaved = keepExpiry ? selectionKey(next) : null;
+  return next;
 }
 
 function CountInput({ value, onChange }) {
@@ -171,6 +228,9 @@ export default function PackageBuilder({ config, form, setForm }) {
   const setF = setForm;
   const { refresh } = useDevData();
   const [copied, setCopied] = useState(false);
+  // What the last plain-text copy was, so link and short-email each confirm
+  // themselves rather than sharing one anonymous "Copied."
+  const [textCopied, setTextCopied] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [savedLabel, setSavedLabel] = useState('Saved.');
@@ -183,24 +243,7 @@ export default function PackageBuilder({ config, form, setForm }) {
   const setSel = (bucket) => (pkg, key, value) =>
     setF((s) => ({ ...s, [bucket]: { ...s[bucket], [pkg]: { ...s[bucket][pkg], [key]: value } } }));
 
-  const state = useMemo(
-    () => ({
-      firstName: f.firstName,
-      lastName: f.lastName,
-      grade: f.grade,
-      gender: f.gender,
-      discountExpires: f.discountExpires,
-      seasons: f.seasons,
-      discounts: { referral: f.referral, sibling: f.sibling, custom: (Number(f.customPct) || 0) / 100 },
-      services: f.services,
-      bonuses: f.bonuses,
-      // Undefined for anything built here (no control writes it yet), which
-      // normalizeSelectedPackages reads as all three tiers — unchanged
-      // behaviour. Present only on a reopened proposal that carried one.
-      selectedPackages: f.selectedPackages,
-    }),
-    [f]
-  );
+  const state = useMemo(() => selectionOf(f), [f]);
 
   const quote = useMemo(() => computeQuote(state, config), [state, config]);
   const email = useMemo(() => buildEmail(state, config), [state, config]);
@@ -224,6 +267,28 @@ export default function PackageBuilder({ config, form, setForm }) {
     }
   };
 
+  // The saved row this form is editing. The proposal LINK is that row's id, so
+  // both buttons below stay disabled until a save has produced one — a link to
+  // an id that does not exist yet is the one thing worse than no link.
+  const quoteId = f.sourceQuote?.id || null;
+  // ...and a link to a row that no longer says what is on screen is the second
+  // worst. The page renders from the SAVED selection, so an unsaved edit here
+  // is invisible in the link: same url, older proposal, no signal to either
+  // side. Both clipboard buttons wait for the save that makes them agree.
+  const unsaved = useMemo(() => selectionKey(f) !== f.lastSaved, [f]);
+  const linkReady = !!quoteId && !unsaved;
+  const linkHint = quoteId && unsaved ? 'Save to refresh the link' : undefined;
+
+  const copyText = async (text, label) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setTextCopied(label);
+      setTimeout(() => setTextCopied(''), 1800);
+    } catch (e) {
+      alert('Copy failed: ' + e.message);
+    }
+  };
+
   // `intent` is undefined on the first attempt: the server then checks whether
   // a proposal for this student name already exists and answers 409 with it,
   // writing nothing. That answer opens the prompt below, and the user's choice
@@ -235,6 +300,11 @@ export default function PackageBuilder({ config, form, setForm }) {
     // the collision check rather than overwriting the row it came from.
     const source =
       f.sourceQuote && f.sourceQuote.nameKey === studentNameKey(studentName) ? f.sourceQuote.id : undefined;
+    // The baseline is what this request SENDS, captured before the await. Read
+    // off the form afterwards instead and an edit made while the save was in
+    // flight would be recorded as saved, which is the very desync the two
+    // buttons below exist to catch.
+    const sentKey = keyOf(state);
     setSaving(true);
     setSaved(false);
     try {
@@ -264,10 +334,15 @@ export default function PackageBuilder({ config, form, setForm }) {
         return;
       }
       setDuplicate(null);
-      // Adopt the row this form now edits, so the NEXT save updates it.
-      if (data.quote?.id) {
-        setF((s) => ({ ...s, sourceQuote: { id: data.quote.id, nameKey: studentNameKey(studentName) } }));
-      }
+      // Adopt the row this form now edits, so the NEXT save updates it, and
+      // record what the row now holds so the link buttons come back.
+      setF((s) => ({
+        ...s,
+        ...(data.quote?.id
+          ? { sourceQuote: { id: data.quote.id, nameKey: studentNameKey(studentName) } }
+          : {}),
+        lastSaved: sentKey,
+      }));
       setSavedLabel(data.updated ? 'Updated.' : 'Saved.');
       setSaved(true);
       setTimeout(() => setSaved(false), 2200);
@@ -422,15 +497,51 @@ export default function PackageBuilder({ config, form, setForm }) {
       <Card delay={150}>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h3 className="font-display text-[15px] font-semibold text-ink">Proposal email</h3>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {copied && <span className="text-[12px] font-medium text-moss">Copied.</span>}
+            {textCopied && <span className="text-[12px] font-medium text-moss">{textCopied}</span>}
             {saved && <span className="text-[12px] font-medium text-moss">{savedLabel}</span>}
             <GhostButton onClick={() => save()} disabled={saving}>
               {saving ? 'Saving…' : 'Save proposal'}
             </GhostButton>
+            <GhostButton
+              onClick={() => copyText(proposalUrl(quoteId), 'Link copied.')}
+              disabled={!linkReady}
+              title={linkHint}
+            >
+              Copy proposal link
+            </GhostButton>
+            <GhostButton
+              onClick={() =>
+                copyText(
+                  shortEmailText({
+                    id: quoteId,
+                    firstName: f.firstName,
+                    selectedPackages: f.selectedPackages,
+                    gender: f.gender,
+                  }),
+                  'Email copied.'
+                )
+              }
+              disabled={!linkReady}
+              title={linkHint}
+            >
+              Copy short email
+            </GhostButton>
             <PillButton onClick={copy}>Copy for Gmail</PillButton>
           </div>
         </div>
+        {!quoteId ? (
+          <p className="mb-3 text-[12px] leading-snug text-ink-faint">
+            Save the proposal to get its link. The link is the saved row&rsquo;s id, so it only
+            exists once there is a row.
+          </p>
+        ) : unsaved ? (
+          <p className="mb-3 text-[12px] leading-snug text-terracotta-deep">
+            Save to refresh the link. The proposal page renders the SAVED proposal, so the link
+            and the short email would send the version from before these edits.
+          </p>
+        ) : null}
         <div className="neu-inset max-h-[28rem] overflow-y-auto rounded-2xl p-4">
           {email.blocks.map((b, i) => {
             if (b.kind === 'spacer') return <div key={i} className="h-3" />;

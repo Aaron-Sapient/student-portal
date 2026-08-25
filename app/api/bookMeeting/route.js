@@ -1,5 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
+import { sheetSafe } from '@/lib/sheetSafe';
+import { resolveCheckinStudent } from '@/lib/checkinIdentity';
 import nodemailer from 'nodemailer';
 import { DateTime } from 'luxon';
 import { getInstructor, validateInstructorHours } from '@/lib/instructors';
@@ -97,12 +99,25 @@ export async function POST(request) {
 
   try {
     const body = await request.json();
-    const { start, end, duration, studentName, agenda, isReschedule, instructor: instructorSlug, m, excludeEventId } = body;
+    const { start, end, duration, agenda, isReschedule, instructor: instructorSlug, m, excludeEventId } = body;
     const instructor = getInstructor(instructorSlug);
+
+    // The student's name is resolved from the SESSION, never from body.studentName.
+    // It is not cosmetic: it becomes the calendar event title, it is the key the
+    // CheckinForm agenda write matches on (below), and resolveRescheduleTarget uses
+    // it as the title fallback when deciding whether an event is yours. Taken from
+    // the body, a signed-in student could pass another student's name and clobber
+    // that student's agenda cell — or widen their own reschedule exclusion onto
+    // someone else's hand-made meeting. Same cell the client used to echo
+    // (🔎 Overview!B2, via validateBooking), so honest callers see no change.
+    // All three callers are student-facing portal pages, so failing closed is right.
+    const target = await resolveCheckinStudent();
+    if (target.error) return target.error;
+    const studentName = target.studentName;
     // Deep-linked project-meeting booking (?m=project:<id> → carried in the POST body).
     const projectPlanId = String(m || '').startsWith('project:') ? String(m).slice('project:'.length) : null;
 
-    if (!start || !end || !duration || !studentName) {
+    if (!start || !end || !duration) {
       return Response.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
@@ -442,7 +457,8 @@ export async function POST(request) {
           spreadsheetId: MASTER_SHEET_ID,
           range: `${checkinTab}!${agendaCol}${sheetRow}`,
           valueInputOption: 'USER_ENTERED',
-          requestBody: { values: [[agendaTrimmed]] },
+          // student-typed free text (the optional Agenda field) — never let it parse as a formula
+          requestBody: { values: [[sheetSafe(agendaTrimmed)]] },
         });
       }
     }

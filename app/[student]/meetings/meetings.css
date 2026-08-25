@@ -1,0 +1,555 @@
+/* ── /[student]/meetings — the meetings LOG as a scan surface ────────────────
+   Desktop-first (1440 primary, 768 secondary, 390 must merely not break): two
+   counselors scanning a 144-row log during and between sessions. So the list is
+   a ROW GRID, not a stack of cards:
+
+     Date | Project | Agenda | Homework | Status
+
+   Delineation is hairlines + spacing + type hierarchy — no boxes, no clay. The
+   loudest text in a row is the AGENDA (what we did), because that is the thing
+   the eye hunts for; the date numeral is the scan spine beside it. Project is
+   deliberately quiet, homework is measure-limited prose, status is a positional
+   encoding (which of four segments is filled) readable straight down the column.
+
+   ALIGNMENT ACROSS ROWS is its own constraint (~/.claude/lessons/frontend.md,
+   2026-08-24): every row shares ONE track list via --mtg-cols, and every flexible
+   track is minmax(0, Nfr) — a bare `1fr` floors at min-content, so one long
+   unbroken word in one row would widen that row's track only and drag the whole
+   column out of true. The per-cell --mtg-pt-* values below are the measured
+   first-baseline offsets that put each column's first line on one baseline.
+
+   All colors come from .portal-root tokens (globals.css). No new palette. */
+
+.mtg-log {
+  /* one track list, shared by the column header and every row */
+  --mtg-cols: 7.5rem 9rem minmax(0, 1.15fr) minmax(0, 1fr) 14rem;
+  --mtg-gap: 1.5rem;
+  /* the row/header bleed, shared so both boxes resolve identical tracks */
+  --mtg-inset: 0.75rem;
+  /* first-baseline offsets, MEASURED over CDP at 1440 and tuned until the five
+     columns' first baselines agree to <0.5px (see the harness in
+     scratchpads/student-portal/meetings-v2/). Do not eyeball these. */
+  --mtg-pt-date: 0.1rem;
+  --mtg-pt-project: 0.53rem;
+  --mtg-pt-agenda: 0.2rem;
+  --mtg-pt-hw: 0.28rem;
+  --mtg-pt-status: 0.3rem;
+  /* Two weights of line, deliberately different:
+     --mtg-rule is the row divider. It is decoration/grouping, not a control
+       boundary, so it sits below 3:1 on purpose (1.42 light / 1.67 dark) —
+       144 of these at control strength would out-shout the agenda.
+     --mtg-edge is a CONTROL boundary and does meet 3:1 (3.03 light / 4.63 dark). */
+  --mtg-rule: color-mix(in srgb, var(--color-ink) 18%, transparent);
+  --mtg-edge: color-mix(in srgb, var(--color-ink) 50%, transparent);
+}
+
+/* ── header ─────────────────────────────────────────────────────────────── */
+
+.mtg-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem 1.25rem;
+  margin-bottom: 1.5rem;
+}
+.mtg-head-text { flex: 1 1 18rem; min-width: 0; }
+.mtg-eyebrow {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
+}
+.mtg-title {
+  font-family: var(--font-display), Georgia, serif;
+  font-size: clamp(1.75rem, 1.2rem + 1.6vw, 2.5rem);
+  font-weight: 600;
+  line-height: 1.1;
+  color: var(--color-ink);
+  margin-top: 0.15rem;
+}
+.mtg-title .mtg-klass { color: var(--color-ink-faint); }
+.mtg-count {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+  font-size: 0.875rem;
+  color: var(--color-ink-soft);
+}
+.mtg-count a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  font-weight: 600;
+  color: var(--color-terracotta-deep);
+}
+
+.mtg-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 0;
+  border-radius: 999px;
+  padding: 0.6rem 1.05rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  min-height: 2.75rem;
+  color: var(--color-paper);
+  background: var(--color-terracotta-deep);
+  box-shadow: 0 1px 2px rgba(44, 38, 32, 0.16);
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.1s ease;
+}
+.mtg-new:hover { filter: brightness(1.06); }
+.mtg-new:active { transform: scale(0.97); }
+.mtg-new:disabled { opacity: 0.6; cursor: default; }
+
+.mtg-error {
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-terracotta-deep);
+}
+
+/* ── column header (desktop only — the labels live HERE, once, instead of
+      being repeated at content size inside every row) ────────────────────── */
+
+.mtg-cols {
+  display: none;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  grid-template-columns: var(--mtg-cols);
+  gap: var(--mtg-gap);
+  /* Same box model as .mtg-row (see below) — otherwise the header's fr tracks
+     resolve against a different available width and the labels sit a few px off
+     the columns they name. Alignment BETWEEN adjacent containers is its own
+     constraint, not a side effect of both being correct internally. */
+  margin-inline: calc(var(--mtg-inset) * -1);
+  padding: 0.55rem var(--mtg-inset) 0.5rem;
+  background: var(--color-cream);
+  border-bottom: 1px solid var(--color-ink-faint);
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
+}
+.mtg-cols .mtg-col-status { text-align: right; }
+
+/* ── one meeting = one row ──────────────────────────────────────────────── */
+
+.mtg-row {
+  position: relative;
+  display: grid;
+  gap: 0.55rem var(--mtg-gap);
+  margin-inline: calc(var(--mtg-inset) * -1);
+  padding: 1.05rem var(--mtg-inset) 1.15rem;
+  border-bottom: 1px solid var(--mtg-rule);
+  align-items: start;
+  transition: background-color 0.12s ease;
+  /* stacked order at the narrowest width: date+agenda first, then project,
+     then homework, then status (the DOM keeps the desktop/table order). */
+  grid-template-areas:
+    'date'
+    'agenda'
+    'project'
+    'hw'
+    'status';
+}
+.mtg-row:hover { background: color-mix(in srgb, var(--color-ink) 3.5%, transparent); }
+/* The focus bar is a ::before, not a border-left: a border would shrink the row's
+   content box and knock its tracks out of step with the header and every other row. */
+.mtg-row.is-focused {
+  background: color-mix(in srgb, var(--color-terracotta) 7%, transparent);
+}
+.mtg-row.is-focused::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--color-terracotta);
+}
+
+.mtg-c-date { grid-area: date; }
+.mtg-c-project { grid-area: project; }
+.mtg-c-agenda { grid-area: agenda; min-width: 0; }
+.mtg-c-hw { grid-area: hw; min-width: 0; }
+.mtg-c-status { grid-area: status; }
+
+/* ── date rail ──────────────────────────────────────────────────────────── */
+
+.mtg-datehead { display: flex; align-items: baseline; gap: 0.5rem; }
+.mtg-day {
+  font-family: var(--font-display), Georgia, serif;
+  font-size: 1.75rem;
+  font-weight: 600;
+  line-height: 0.92;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink);
+}
+.mtg-when {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  color: var(--color-ink-soft);
+}
+.mtg-datefield {
+  display: block;
+  width: 100%;
+  margin-top: 0.3rem;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-ink-soft);
+  padding: 1px 3px;
+  margin-left: -3px;
+  border-radius: 5px;
+}
+.mtg-datefield::-webkit-calendar-picker-indicator { display: none; }
+.mtg-datefield:hover { background: color-mix(in srgb, var(--color-ink) 6%, transparent); }
+
+.mtg-who { margin-top: 0.45rem; }
+.mtg-who-ro {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
+}
+
+/* ── project (quiet by design: it groups, it doesn't announce) ───────────── */
+
+.mtg-project textarea,
+.mtg-project-ro {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1.4;
+  color: var(--color-ink-soft);
+}
+
+/* ── agenda: the loudest text in the row ────────────────────────────────── */
+
+.mtg-agenda textarea,
+.mtg-agenda-ro {
+  font-size: 1.0625rem;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--color-ink);
+}
+
+/* ── homework: long prose, measure-limited, never the widest thing here ─── */
+
+.mtg-hw textarea,
+.mtg-hw-ro {
+  font-size: 0.9375rem;
+  font-weight: 400;
+  line-height: 1.55;
+  color: var(--color-ink-soft);
+  max-width: 62ch;
+}
+
+/* shared field mechanics: a textarea that looks like text until you touch it */
+.mtg-field {
+  display: block;
+  width: 100%;
+  border: 0;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  font-family: inherit;
+  padding: 2px 6px;
+  margin-left: -6px;
+  border-radius: 7px;
+  color: inherit;
+  transition: background-color 0.12s ease;
+}
+/* A placeholder that renders like content makes an empty cell look filled — the
+   worst possible lie on a scan surface. Italic + no uppercasing separates it from
+   every real value in the column, while the colour still clears 4.5:1. */
+.mtg-field::placeholder {
+  color: var(--color-ink-soft);
+  opacity: 1;
+  font-style: italic;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.mtg-field:not([readonly]):hover { background: color-mix(in srgb, var(--color-ink) 6%, transparent); }
+.mtg-field:focus-visible,
+.mtg-datefield:focus-visible,
+.mtg-pct:focus-visible {
+  outline: 2px solid var(--color-terracotta);
+  outline-offset: 1px;
+  background: color-mix(in srgb, var(--color-ink) 5%, transparent);
+}
+.mtg-field[readonly] { cursor: default; }
+.mtg-text-ro { white-space: pre-wrap; }
+.mtg-empty { color: var(--color-ink-soft); }
+
+.mtg-more {
+  display: inline-block;
+  margin-top: 0.15rem;
+  border: 0;
+  background: transparent;
+  padding: 2px 4px;
+  margin-left: -4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-terracotta-deep);
+  cursor: pointer;
+  border-radius: 5px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.mtg-more:hover { background: color-mix(in srgb, var(--color-ink) 6%, transparent); }
+.mtg-more:focus-visible { outline: 2px solid var(--color-terracotta); outline-offset: 1px; }
+
+/* ── status: a segmented control whose FILLED POSITION is the encoding ──── */
+
+.mtg-c-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.4rem;
+}
+
+.mtg-seg {
+  display: flex;
+  width: 100%;
+  border: 1px solid var(--mtg-edge);
+  border-radius: 8px;
+  overflow: hidden;
+  background: transparent;
+}
+.mtg-seg button {
+  flex: 1 1 0;
+  position: relative;
+  min-height: 30px;
+  padding: 0 5px;
+  border: 0;
+  border-left: 1px solid var(--mtg-edge);
+  background: transparent;
+  font: inherit;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.mtg-seg button:first-child { border-left: 0; }
+/* expand the hit area to the 44px floor without changing the visible mark */
+.mtg-seg button::after {
+  content: '';
+  position: absolute;
+  inset: -7px 0;
+}
+.mtg-seg button:hover { background: color-mix(in srgb, var(--color-ink) 6%, transparent); color: var(--color-ink); }
+.mtg-seg button[aria-pressed='true'] {
+  background: var(--color-sand);
+  color: var(--color-ink);
+  font-weight: 700;
+}
+.mtg-seg button:focus-visible { outline: 2px solid var(--color-terracotta); outline-offset: -2px; z-index: 1; }
+
+.mtg-seg--who {
+  width: fit-content;
+  border: 0;
+  border-radius: 0;
+  gap: 2px;
+  overflow: visible;
+}
+.mtg-seg--who button {
+  min-height: 24px;
+  border-left: 0;
+  border-radius: 6px;
+  font-size: 0.625rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0 7px;
+}
+.mtg-seg--who button::after { inset: -10px 0; }
+
+.mtg-status-ro {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
+}
+
+.mtg-statusline {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  width: 100%;
+}
+.mtg-pctwrap {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
+  border-bottom: 1px solid var(--mtg-edge);
+  padding-bottom: 1px;
+}
+.mtg-pct {
+  width: 2.4rem;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--color-ink);
+  border-radius: 4px;
+  padding: 1px 2px;
+}
+.mtg-pct::placeholder { color: var(--color-ink-soft); opacity: 1; }
+.mtg-pctsign { font-size: 0.6875rem; font-weight: 600; color: var(--color-ink-soft); }
+
+.mtg-savestate {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.1rem;
+  height: 1.1rem;
+}
+.mtg-savestate-err { font-size: 0.6875rem; font-weight: 700; color: var(--color-terracotta-deep); }
+
+.mtg-void {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  width: 1.6rem;
+  height: 1.6rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+}
+.mtg-void::after { content: ''; position: absolute; inset: -10px; }
+.mtg-void:hover { color: var(--color-terracotta-deep); background: color-mix(in srgb, var(--color-ink) 7%, transparent); }
+.mtg-void:focus-visible { outline: 2px solid var(--color-terracotta); outline-offset: 1px; }
+
+.mtg-empty-list {
+  padding: 3rem 0;
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--color-ink-soft);
+}
+
+/* ── mobile only: the stack needs the labels the column header carries on
+      desktop. They stay smaller and quieter than the content they label. ── */
+
+.mtg-inline-label {
+  display: block;
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
+  margin-bottom: 0.1rem;
+}
+
+/* iOS force-zooms a focused input under 16px, which wrecks the layout — so the
+   editable fields go up to 16px exactly where that applies, and nowhere else. */
+@media (max-width: 719px) {
+  .mtg-field,
+  .mtg-pct { font-size: 1rem; }
+  .mtg-agenda textarea { font-size: 1.0625rem; }
+  .mtg-seg button { min-height: 44px; }
+  .mtg-seg--who button { min-height: 32px; }
+  /* the stacked layout has room, so the touch floor is met with real pixels */
+  .mtg-more { display: inline-flex; align-items: center; min-height: 44px; padding: 0 10px; margin-left: -10px; }
+}
+
+/* ── 768: secondary. Date and status become rails; agenda still leads. ──── */
+
+@media (min-width: 720px) {
+  .mtg-row {
+    grid-template-columns: 6.5rem minmax(0, 1fr) 12rem;
+    grid-template-areas:
+      'date agenda  status'
+      'date project status'
+      'date hw      status';
+    gap: 0.4rem 1.25rem;
+  }
+  .mtg-c-status { justify-content: flex-start; }
+  .mtg-inline-label { display: none; }
+  .mtg-hw textarea,
+  .mtg-hw-ro { max-width: 58ch; }
+}
+
+/* ── 1040+: primary. The full-width scan grid. ──────────────────────────── */
+
+@media (min-width: 1040px) {
+  .mtg-cols { display: grid; }
+  .mtg-row {
+    grid-template-columns: var(--mtg-cols);
+    grid-template-areas: 'date project agenda hw status';
+    gap: var(--mtg-gap);
+    padding-top: 1.15rem;
+    padding-bottom: 1.25rem;
+  }
+  .mtg-c-date { padding-top: var(--mtg-pt-date); }
+  .mtg-c-project { padding-top: var(--mtg-pt-project); }
+  .mtg-c-agenda { padding-top: var(--mtg-pt-agenda); }
+  .mtg-c-hw { padding-top: var(--mtg-pt-hw); }
+  .mtg-c-status { padding-top: var(--mtg-pt-status); }
+  .mtg-when { letter-spacing: 0.1em; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mtg-row,
+  .mtg-field,
+  .mtg-seg button,
+  .mtg-new { transition: none; }
+}
+
+/* ── read-only status rail ──────────────────────────────────────────────── */
+
+.mtg-pct-ro {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink-soft);
+}
+
+/* ── dark mode ──────────────────────────────────────────────────────────── */
+/* Light-on-dark type is tuned FOR the dark rendering rather than inherited: the
+   prose gets a touch more leading and tracking (light glyphs on a dark ground
+   bloom and read tighter than they measure), and the primary button flips to
+   dark ink because --color-terracotta-deep INVERTS to a LIGHT tint in this
+   theme (globals.css) and would be unreadable as a fill. Measured:
+   paper on #a8492a = 5.46 (light) · #19191b on #d4734f = 5.32 (dark). */
+@media (prefers-color-scheme: dark) {
+  .mtg-new {
+    background: var(--color-terracotta);
+    color: var(--color-cream);
+  }
+  .mtg-agenda textarea,
+  .mtg-agenda-ro {
+    line-height: 1.5;
+    letter-spacing: 0.006em;
+  }
+  .mtg-hw textarea,
+  .mtg-hw-ro {
+    line-height: 1.6;
+    letter-spacing: 0.008em;
+  }
+}
+
+.mtg-when-my { display: block; margin-top: 0.28rem; }

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { DateTime } from 'luxon';
 import { useDevData } from '@/app/developer/(panel)/DevDataContext';
 import { studentNameKey } from '@/lib/pricingSchema';
+import { proposalUrl, shortEmailText } from '@/lib/proposalLink';
 import {
   Badge,
   Card,
@@ -34,6 +35,30 @@ function htmlToText(html) {
     .replace(/&amp;/g, '&')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+// Copies one string and says which one it copied. Shared by the list rows and
+// the detail panel so a "Copied." with no subject can never appear beside two
+// different copy buttons.
+function CopyButton({ text, label, children, className = '' }) {
+  const [done, setDone] = useState(false);
+  return (
+    <GhostButton
+      className={className}
+      onClick={async (e) => {
+        e.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(text);
+          setDone(true);
+          setTimeout(() => setDone(false), 1600);
+        } catch (err) {
+          alert('Copy failed: ' + err.message);
+        }
+      }}
+    >
+      {done ? label : children}
+    </GhostButton>
+  );
 }
 
 // One saved proposal, opened. The panel shows `email_html` — the record stored
@@ -128,6 +153,20 @@ function QuoteDetail({ id, onBack, onOpenInBuilder }) {
                 Open in builder
               </GhostButton>
             )}
+            <CopyButton text={proposalUrl(quote.id)} label="Link copied.">
+              Copy proposal link
+            </CopyButton>
+            <CopyButton
+              text={shortEmailText({
+                id: quote.id,
+                firstName: quote.selection?.firstName || (quote.student_name || '').split(' ')[0],
+                selectedPackages: quote.selection?.selectedPackages,
+                gender: quote.selection?.gender,
+              })}
+              label="Email copied."
+            >
+              Copy short email
+            </CopyButton>
             {html && <PillButton onClick={copy}>Copy for Gmail</PillButton>}
           </div>
         )}
@@ -204,31 +243,45 @@ export default function SavedQuotes({ onOpenInBuilder }) {
         <EmptyNote>No saved proposals yet — build one and hit “Save proposal.”</EmptyNote>
       ) : (
         <div>
+          {/* The row is a div wrapping two controls rather than one big button:
+              the copy control has to be its own <button>, and a button inside a
+              button is invalid markup that browsers resolve unpredictably. */}
           {quotes.map((q) => (
-            <button
+            <div
               key={q.id}
-              type="button"
-              onClick={() => setOpenId(q.id)}
-              className="group flex w-full items-center justify-between gap-3 border-t border-sand py-3 text-left first:border-t-0 active:scale-[0.995]"
+              className="group flex w-full items-center gap-2 border-t border-sand py-3 first:border-t-0"
             >
-              <div className="min-w-0">
-                <p className="truncate text-[14px] font-semibold text-ink transition-colors group-hover:text-terracotta-deep">
-                  {q.student_name || 'Untitled'}
-                </p>
-                <p className="mt-0.5 text-[11px] font-medium text-ink-faint">
-                  {/* created_at stays the first save, so an in-place update
-                      would otherwise leave the row looking untouched. */}
-                  {q.updated_at ? `Updated ${stamp(q.updated_at)}` : stamp(q.created_at)}
-                  {q.created_by ? ` · ${q.created_by}` : ''}
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                {q.grade && <Badge tone="muted">{q.grade}th</Badge>}
-                <span aria-hidden className="text-[13px] text-ink-faint transition-colors group-hover:text-terracotta-deep">
-                  ›
-                </span>
-              </div>
-            </button>
+              <button
+                type="button"
+                onClick={() => setOpenId(q.id)}
+                className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left active:scale-[0.995]"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-[14px] font-semibold text-ink transition-colors group-hover:text-terracotta-deep">
+                    {q.student_name || 'Untitled'}
+                  </p>
+                  <p className="mt-0.5 text-[11px] font-medium text-ink-faint">
+                    {/* created_at stays the first save, so an in-place update
+                        would otherwise leave the row looking untouched. */}
+                    {q.updated_at ? `Updated ${stamp(q.updated_at)}` : stamp(q.created_at)}
+                    {q.created_by ? ` · ${q.created_by}` : ''}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {q.grade && <Badge tone="muted">{q.grade}th</Badge>}
+                  <span aria-hidden className="text-[13px] text-ink-faint transition-colors group-hover:text-terracotta-deep">
+                    ›
+                  </span>
+                </div>
+              </button>
+              <CopyButton
+                text={proposalUrl(q.id)}
+                label="Copied."
+                className="shrink-0 px-3 py-1.5 text-[12px]"
+              >
+                Copy link
+              </CopyButton>
+            </div>
           ))}
         </div>
       )}

@@ -4,11 +4,13 @@ import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
 import { listBlocksForBooking, isDateBlocked, blockedWindowsForDate } from '@/lib/blocks';
 import { getSeniorByEmail, loadSeniorBookingState, canBookOnDate } from '@/lib/seniors';
-import { resolveRescheduleTarget } from '@/lib/rescheduleTarget';
+import { resolveRescheduleTarget, fetchOwnedEvent } from '@/lib/rescheduleTarget';
 import {
   loadProjectPlanForBooking,
   loadProjectBookingsForPlan,
   canBookProjectOnDate,
+  projectSourceUnlocked,
+  projectRescheduleFloor,
 } from '@/lib/projectMeetings';
 
 function getServiceAuth() {
@@ -87,7 +89,12 @@ export async function GET(request) {
 
   const requestedDate = DateTime.fromISO(dateStr, { zone: 'America/Los_Angeles' });
   const now = DateTime.now().setZone('America/Los_Angeles');
-  const earliestAllowed = now.plus({ days: 1 });
+  // BRANCH-LOCAL, deliberately a `let`. The 24-hour advance rule is the default for every
+  // track; a project-meeting RESCHEDULE lowers it to 2 hours (plus a 4pm floor if the new
+  // slot lands today) — see app/api/rescheduleProjectMeeting. Relaxing this variable in
+  // place, rather than per-branch, would hand 2-hour slots to seniors, standard students
+  // and ART as well, and bookMeeting would then refuse the very times this list offered.
+  let earliestAllowed = now.plus({ days: 1 });
 
   try {
     const authClient = getServiceAuth();
@@ -102,6 +109,11 @@ export async function GET(request) {
     const replacingEventId = await resolveRescheduleTarget(
       calendar, instructor, excludeEventId, sessionClaims.email, null, now
     );
+    // Set by the project branch below when a project meeting is being moved on <24h
+    // notice — a case resolveRescheduleTarget correctly refuses, so it needs its own
+    // handle. Used for the same two jobs as replacingEventId: relaxing the floor, and
+    // stopping the event from blocking its own new time.
+    let movingEventId = null;
 
     // Project-meeting gate (deep-linked ?m=project:<id>): authorize this date against
     // the standing plan + 1/week ledger. Else the senior essay gate. (One or the other —
@@ -113,7 +125,31 @@ export async function GET(request) {
       if (!plan || plan.teacher !== instructor.slug) {
         return Response.json({ slots: [], recommendations: [], unavailable: true });
       }
-      const bookings = await loadProjectBookingsForPlan(projectPlanId, now);
+      // Is this a RESCHEDULE of a project meeting on THIS plan? The answer is taken from
+      // the event itself, never from the client's `m` — keying it off `m` would let a
+      // student who happens to hold any project plan claim the relaxed timing while
+      // actually moving a standard or essay meeting. `replacingEventId` above was
+      // resolved with the default 24-hour notice, which a same-day move fails by design,
+      // so it is re-resolved here without that check and the 2-hour source lock applied
+      // instead. Both floors are re-enforced server-side in rescheduleProjectMeeting;
+      // this only decides what the calendar SHOWS.
+      if (excludeEventId) {
+        const ev = await fetchOwnedEvent(calendar, instructor, excludeEventId, sessionClaims.email, null);
+        const ext = ev?.extendedProperties?.private || {};
+        // `dateTime` only — an all-day event's zoneless `date` would parse in the server's
+        // zone (UTC) and land on the previous LA day. Project meetings are always timed.
+        const evStart = DateTime.fromISO(ev?.start?.dateTime || '').setZone('America/Los_Angeles');
+        if (ext.bookingType === 'project' && ext.projectPlanId === projectPlanId
+            && projectSourceUnlocked(evStart, now)) {
+          movingEventId = ev.id;
+          // Same helper the write path uses, so what is OFFERED and what is ACCEPTED
+          // cannot disagree — see lib/projectMeetingsCore.
+          earliestAllowed = projectRescheduleFloor(requestedDate, now);
+        }
+      }
+      // The moved booking must not trip its own plan's 1/week cap — otherwise every day
+      // in its own week reads "week-booked" and the student sees an empty calendar.
+      const bookings = await loadProjectBookingsForPlan(projectPlanId, now, movingEventId);
       if (!canBookProjectOnDate(plan, requestedDate, instructor.slug, duration, bookings, now).ok) {
         return Response.json({ slots: [], recommendations: [], unavailable: true });
       }
@@ -155,7 +191,7 @@ export async function GET(request) {
       .filter(e => e.status !== 'cancelled')
       // The meeting being rescheduled must not block its own replacement — otherwise
       // its current time (and anything overlapping it) is missing from the new day.
-      .filter(e => !replacingEventId || e.id !== replacingEventId)
+      .filter(e => e.id !== replacingEventId && e.id !== movingEventId)
       .map(e => ({
         start: DateTime.fromISO(e.start.dateTime || e.start.date),
         end: DateTime.fromISO(e.end.dateTime || e.end.date),

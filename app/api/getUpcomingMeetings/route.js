@@ -202,9 +202,15 @@ return (res.data.items || [])
         end: e.end.dateTime || e.end.date,
         description: e.description || '',
         instructor: isArt ? 'ART' : instructorName,
-        // Surfaced so the reschedule UI can route project meetings to cancel+rebook
-        // (a bare rebook drops ?m=project:<id> and mis-charges the essay grant).
+        // Surfaced so the reschedule UI can tell the tracks apart: a project meeting
+        // moves in place via /api/rescheduleProjectMeeting (patch + ledger UPDATE),
+        // every other track goes through bookMeeting's book-then-release path.
         bookingType: fromExt.bookingType || null,
+        // The plan a project meeting belongs to. Written by bookMeeting on every project
+        // event since the track shipped (1b05988), so there is no legacy-orphan class.
+        // The reschedule route re-verifies it server-side; this is only how the client
+        // knows which endpoint to call.
+        projectPlanId: fromExt.projectPlanId || null,
       };
     });
 }
