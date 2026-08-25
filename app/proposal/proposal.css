@@ -744,6 +744,18 @@ html:has(.proposal-root) {
   width: 30px;
   flex: 0 0 30px;
 }
+.proposal-root .pp-mark-letter {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--pp-ink);
+  justify-content: center;
+  transition: color 0.15s ease;
+}
+.proposal-root .pp-legend-tier[aria-pressed="true"] .pp-mark-letter { color: var(--pp-accent); }
+.proposal-root .pp-num { font-size: 22px; font-weight: 700; line-height: 1; color: var(--pp-ink); font-variant-numeric: tabular-nums; margin-left: 2px; }
+.proposal-root .pp-units[data-tone="bonus"] .pp-num { color: var(--pp-accent); }
+.proposal-root .pp-units[data-tone="off"] .pp-num { color: var(--pp-ink-3); }
 .proposal-root .pp-mark-dots i {
   width: 7px;
   height: 7px;
@@ -866,6 +878,7 @@ html:has(.proposal-root) {
 
 /* the pick: the chosen tier's marks and pictures take the accent, page-wide */
 :root[data-pp-js] .proposal-root [data-compare]:not([data-pick=""]) .pp-fig-row .pp-mark-dots i,
+:root[data-pp-js] .proposal-root [data-compare]:not([data-pick=""]) .pp-fig-row .pp-mark-letter,
 :root[data-pp-js] .proposal-root [data-compare]:not([data-pick=""]) .pp-fig-row .pp-month i[data-on],
 :root[data-pp-js] .proposal-root [data-compare]:not([data-pick=""]) .pp-tier .pp-mark-dots i {
   background: var(--pp-line-strong);

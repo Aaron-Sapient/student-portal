@@ -18,7 +18,7 @@ import { Figure, TierMark } from './figures';
 //
 // THE SHAPE OF THE PAGE. The data is a matrix (services × tiers) and the page
 // refuses to be one. Each SERVICE is a figure; the offered tiers are rows
-// inside it, marked ● / ●● / ●●● (the AirPods quick-start encoding), and the
+// inside it, marked E / C / V, and the
 // row's answer is whatever a person reads fastest for THAT service: a month
 // with the meetings drawn on it, five little glyphs for five colleges, a glyph
 // present or absent for included-or-not, and otherwise the line itself. No

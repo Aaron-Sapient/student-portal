@@ -1,7 +1,6 @@
 // One FIGURE per service: the service is the unit, the offered tiers are rows
-// inside it, and each row carries its tier MARK (one, two or three dots — the
-// AirPods quick-start encoding for press count, borrowed because it needs no
-// legend after the first glance) followed by the answer.
+// inside it, and each row carries its tier MARK (E / C / V) followed by the
+// answer.
 //
 // What the answer looks like is decided per service by one test: would a
 // person read it faster as a picture than as the sentence? A cadence is faster
@@ -18,7 +17,7 @@
 import { PACKAGE_LABELS } from '@/lib/pricingSchema'
 
 // Tier mark: fixed per package, not per position among the offered tiers, so a
-// two-tier proposal still shows Comprehensive as ●● — the family may have seen
+// two-tier proposal still shows Comprehensive as C — the family may have seen
 // the three-tier version elsewhere and the marks must mean the same thing.
 export const TIER_DOTS = { essential: 1, comprehensive: 2, vip: 3 }
 
@@ -71,13 +70,14 @@ export function figureKind(row) {
 
 /* ── the marks ──────────────────────────────────────────────────────────── */
 
+export const TIER_LETTER = { essential: 'E', comprehensive: 'C', vip: 'V' }
 export function TierMark({ pkg }) {
-  const n = TIER_DOTS[pkg] || 1
+  // E / C / V — the shorthand the family already knows from the call. (The
+  // earlier ●/●●/●●● took the AirPods analogy literally; a letter is legible
+  // without a legend and does not need counting.)
   return (
-    <span className="pp-mark-dots" aria-hidden="true">
-      {Array.from({ length: n }, (_, i) => (
-        <i key={i} />
-      ))}
+    <span className="pp-mark-dots pp-mark-letter" aria-hidden="true">
+      {TIER_LETTER[pkg] || 'E'}
     </span>
   )
 }
@@ -111,21 +111,19 @@ function Cadence({ cell }) {
 }
 
 function Count({ cell, glyph }) {
+  // The numeral is the figure. Rows of unit glyphs stop being countable past
+  // four (subitizing), so "10" was already carrying the value; the glyphs were
+  // texture. One glyph keeps the service's icon on the row.
   const n = countOf(cell)
   if (!n) return <Words cell={cell} />
   return (
     <>
-      <span className="pp-units" role="img" aria-label={cell.text} data-tone={cell.tone} data-n={n > 6 ? 'many' : undefined}>
-        {Array.from({ length: Math.min(n, 12) }, (_, i) => (
-          <span key={i} className="pp-unit">
-            {glyph}
-          </span>
-        ))}
-        {n > 12 ? <span className="pp-unit-more">+{n - 12}</span> : null}
+      <span className="pp-units" role="img" aria-label={cell.text} data-tone={cell.tone}>
+        <span className="pp-unit">{glyph}</span>
+        <span className="pp-num">{n}</span>
       </span>
       <span className="pp-cap" data-tone={cell.tone}>
-        {n}
-        {cell.tone === 'bonus' ? <span className="pp-cap-2"> · free bonus</span> : null}
+        {cell.tone === 'bonus' ? <span className="pp-cap-2">free bonus</span> : null}
       </span>
     </>
   )
