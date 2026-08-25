@@ -1,4 +1,5 @@
 import { google } from 'googleapis';
+import { sheetSafe } from '@/lib/sheetSafe';
 import { DateTime } from 'luxon';
 import { requireDeveloper } from '@/lib/developerAuth';
 import { getSupabaseClient, WRITTEN_REPORTS } from '@/lib/supabase';
@@ -208,7 +209,7 @@ export async function PATCH(request) {
       spreadsheetId: MASTER_SHEET_ID,
       range: `${REPORTS_TAB}!${col}${rowIndex}`,
       valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [[value || '']] },
+      requestBody: { values: [[sheetSafe(value || '')]] },
     });
 
     // Best-effort mirror the field edit to Supabase written_reports (keyed on

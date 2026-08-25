@@ -1,5 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
-import { google } from 'googleapis';
+import { sheetSafe } from '@/lib/sheetSafe';
+import { resolveCheckinStudent } from '@/lib/checkinIdentity';
 import { DateTime } from 'luxon';
 import { listBlocksForBooking, isDateBlocked } from '@/lib/blocks';
 import { setBookingToken, resolveStudentSheetId } from '@/lib/bookingTokens';
@@ -8,15 +9,6 @@ const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
 const CHECKIN_TAB = 'A_CheckinForm';
 
-function getServiceAuth() {
-  return new google.auth.GoogleAuth({
-    credentials: {
-      client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-      private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-    },
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
-}
 
 export async function POST(request) {
   const { sessionClaims } = await auth();
@@ -26,8 +18,6 @@ export async function POST(request) {
   try {
     const body = await request.json();
     const {
-      studentRowIndex,
-      studentName,
       taskUpdates,         // [{ task, status }]
       upcomingDeadlines,
       questionsCategory,
@@ -35,8 +25,12 @@ export async function POST(request) {
       responsePreference,
     } = body;
 
-    const authClient = getServiceAuth();
-    const sheets = google.sheets({ version: 'v4', auth: authClient });
+    // Identity comes from the SESSION, never the body — see lib/checkinIdentity.js.
+    // body.studentRowIndex / .studentName are deliberately no longer read.
+    const target = await resolveCheckinStudent();
+    if (target.error) return target.error;
+    // Overview!B2 verbatim — see the ⚠ note in lib/checkinIdentity.js.
+    const { studentRowIndex, studentName, sheets } = target;
 
     const now = new Date().toISOString();
 
@@ -64,13 +58,13 @@ export async function POST(request) {
       insertDataOption: 'INSERT_ROWS',
       requestBody: {
         values: [[
-          now,                        // A: Timestamp
-          studentName || '',          // B: Name
-          taskUpdatesString,          // C: Task Updates (concatenated)
-          upcomingDeadlines || '',    // D: Upcoming Deadlines
-          questionsCategory || '',    // E: Questions Category
-          questionsText || '',        // F: Questions Text
-          responsePreference || '',   // G: Response Preference
+          now,                                   // A: Timestamp (server-generated)
+          studentName || '',                     // B: Name (server-resolved; matched raw downstream — do NOT sheetSafe)
+          sheetSafe(taskUpdatesString),          // C: Task Updates (concatenated)
+          sheetSafe(upcomingDeadlines || ''),    // D: Upcoming Deadlines
+          sheetSafe(questionsCategory || ''),    // E: Questions Category
+          sheetSafe(questionsText || ''),        // F: Questions Text
+          sheetSafe(responsePreference || ''),   // G: Response Preference
           '',                         // H: Agenda (filled by bookMeeting)
           '',                         // I: Routing Reason (filled below)
           '',                         // J: Booking Decision (filled below)
@@ -131,7 +125,7 @@ export async function POST(request) {
         requestBody: {
           valueInputOption: 'USER_ENTERED',
           data: [
-            { range: `${CHECKIN_TAB}!I${sheetRow}`, values: [[reason || '']] },
+            { range: `${CHECKIN_TAB}!I${sheetRow}`, values: [[sheetSafe(reason || '')]] },
             { range: `${CHECKIN_TAB}!J${sheetRow}`, values: [[decision]] },
           ],
         },

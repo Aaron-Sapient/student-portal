@@ -1,5 +1,4 @@
 import { auth } from '@clerk/nextjs/server';
-import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import Anthropic from '@anthropic-ai/sdk';
 import { triggerReportGeneration } from '@/lib/generateReport';
@@ -8,20 +7,13 @@ import { getProjectRows, toLADate } from '@/lib/projects';
 import { sendMeetingGrantedEmail } from '@/lib/checkinEmails';
 import { getSeniorBySheetId, createCheckinGrant } from '@/lib/seniors';
 import { setBookingToken, resolveStudentSheetId } from '@/lib/bookingTokens';
+import { sheetSafe } from '@/lib/sheetSafe';
+import { resolveCheckinStudent, buildGradeWriteData } from '@/lib/checkinIdentity';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
 const CHECKIN_TAB = 'CheckinForm';
 
-function getServiceAuth() {
-  return new google.auth.GoogleAuth({
-    credentials: {
-      client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-      private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-    },
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
-}
 
 // Convert letter grade to GPA points
 function gradeToPoints(grade) {
@@ -93,11 +85,7 @@ export async function POST(request) {
   try {
     const body = await request.json();
     const {
-      grades,           // [{ rowOffset, grade }]
-      studentSheetId,
-      gradesRange,
-      studentRowIndex,
-      studentName,
+      grades,           // [{ rowOffset, grade }] — VALUES only; every range is recomputed
       classes,          // [{ name, grade, rowOffset }] — need names for snapshot
       testsAndDeadlines,
       actionItemStatuses, // [{ task, status }]
@@ -106,6 +94,19 @@ export async function POST(request) {
       selfRating,
       responsePreference,
     } = body;
+
+    // WHO this check-in is for is resolved from the SESSION, never from the body.
+    // body.studentSheetId / .studentRowIndex / .studentName / .gradesRange are
+    // deliberately no longer read: the client used to echo them back from the GET,
+    // which let any signed-in user name another student's sheet and rows and write
+    // through the service account. The GET side already resolved off the session
+    // email; this makes the POST agree. See lib/checkinIdentity.js.
+    const target = await resolveCheckinStudent();
+    if (target.error) return target.error;
+    // studentName is Overview!B2 VERBATIM — the spelling every existing CheckinForm
+    // row was written with, which downstream code matches exactly. See the ⚠ note
+    // in lib/checkinIdentity.js before changing it.
+    const { studentSheetId, studentRowIndex, studentName, gradeYear, sheets } = target;
 
     // Seniors do a record-only weekly check-in: it's the deterministic prerequisite
     // that unlocks their booking for the week (no Claude eval, no token, no Ryan
@@ -132,19 +133,15 @@ export async function POST(request) {
     }
     const isSenior = seniorLookupOk ? !!seniorRow : body.senior === true;
 
-    const authClient = getServiceAuth();
-    const sheets = google.sheets({ version: 'v4', auth: authClient });
-
     // ── 1. Write grades back to student Transcript tab ──────────────────────
-    if (grades?.length && gradesRange && studentSheetId) {
-      const rangeMatch = gradesRange.match(/^(.+)!([A-Z]+)(\d+):([A-Z]+)(\d+)$/);
-      if (rangeMatch) {
-        const [, tab, col, startRow] = rangeMatch;
-        const startRowNum = parseInt(startRow);
-        const gradeData = grades.map(({ rowOffset, grade }) => ({
-          range: `${tab}!${col}${startRowNum + rowOffset}`,
-          values: [[grade || '']],
-        }));
+    // The student supplies the grade VALUES; every target range is recomputed
+    // server-side from their own resolved sheet + grade year, and each rowOffset
+    // is bounds-checked against that grid. A client-supplied A1 range used to be
+    // half of an arbitrary-write primitive — it is no longer read.
+    if (grades?.length) {
+      const gradeData = buildGradeWriteData(gradeYear, grades)
+        .map((d) => ({ ...d, values: [[sheetSafe(d.values[0][0] || '')]] }));
+      if (gradeData.length) {
         await sheets.spreadsheets.values.batchUpdate({
           spreadsheetId: studentSheetId,
           requestBody: { valueInputOption: 'USER_ENTERED', data: gradeData },
@@ -201,15 +198,15 @@ export async function POST(request) {
       insertDataOption: 'INSERT_ROWS',
       requestBody: {
         values: [[
-          now,                      // A: Timestamp
-          studentName || '',        // B: Name
-          gradeSnapshot,            // C: Grades (concatenated)
-          testsAndDeadlines || '',  // D: Tests & Deadlines
-          actionItemsString || '',  // E: Task Updates (concatenated)
-          questionsCategory || '',  // F: Questions/Concerns Category
-          questionsText || '',      // G: Questions/Concerns Text
-          selfRating || '',         // H: Self-Rating
-          responsePreference || '', // I: Response Preference
+          now,                                 // A: Timestamp (server-generated)
+          studentName || '',                   // B: Name (server-resolved; matched raw downstream — do NOT sheetSafe)
+          sheetSafe(gradeSnapshot),            // C: Grades (concatenated)
+          sheetSafe(testsAndDeadlines || ''),  // D: Tests & Deadlines
+          sheetSafe(actionItemsString || ''),  // E: Task Updates (concatenated)
+          sheetSafe(questionsCategory || ''),  // F: Questions/Concerns Category
+          sheetSafe(questionsText || ''),      // G: Questions/Concerns Text
+          sheetSafe(selfRating || ''),         // H: Self-Rating
+          sheetSafe(responsePreference || ''), // I: Response Preference
         ]],
       },
     });
@@ -444,7 +441,7 @@ GRADE CHANGES vs LAST CHECK-IN: ${gradeDropsText}`;
         requestBody: {
           valueInputOption: 'USER_ENTERED',
           data: [
-            { range: `${CHECKIN_TAB}!K${checkinRow}`, values: [[reason || '']] },
+            { range: `${CHECKIN_TAB}!K${checkinRow}`, values: [[sheetSafe(reason || '')]] },
             { range: `${CHECKIN_TAB}!L${checkinRow}`, values: [[decision]] },
           ],
         },

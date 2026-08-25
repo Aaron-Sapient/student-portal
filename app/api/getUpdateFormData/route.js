@@ -1,5 +1,8 @@
 import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
+// Shared with the POST side so the range the form READS and the range the submit
+// WRITES can never disagree — the POST recomputes rather than trusting the client.
+import { getCurrentSemester, getGradeRanges } from '@/lib/checkinIdentity';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -12,31 +15,6 @@ function getServiceAuth() {
     },
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
-}
-
-function getCurrentSemester() {
-  const month = new Date().getMonth() + 1;
-  if (month >= 6 && month <= 8) return 'NA';
-  if (month >= 9 && month <= 12) return 'S1';
-  return 'S2';
-}
-
-function getGradeRanges(gradeYear, semester) {
-  const gradeCol = {
-    S1: { '9th': 'H', '10th': 'H', '11th': 'S', '12th': 'S' },
-    S2: { '9th': 'K', '10th': 'K', '11th': 'V', '12th': 'V' },
-  };
-  const nameCol = { '9th': 'E', '10th': 'E', '11th': 'P', '12th': 'P' };
-  const rows = { '9th': [6, 15], '10th': [24, 33], '11th': [6, 15], '12th': [24, 33] };
-
-  const [startRow, endRow] = rows[gradeYear];
-  const nCol = nameCol[gradeYear];
-  const gCol = gradeCol[semester][gradeYear];
-
-  return {
-    namesRange: `🎓 Transcript!${nCol}${startRow}:${nCol}${endRow}`,
-    gradesRange: `🎓 Transcript!${gCol}${startRow}:${gCol}${endRow}`,
-  };
 }
 
 export async function GET() {
