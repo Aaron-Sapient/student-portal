@@ -13,6 +13,7 @@ import {
 } from '@/lib/projectMeetings';
 import { setBookingToken, getBookingToken, sheetIdFromPortalUrl } from '@/lib/bookingTokens';
 import { resolveRescheduleTarget } from '@/lib/rescheduleTarget';
+import { standingUnavailableWindows, exceedsTeachingRun, overlapsAny } from '@/lib/teachingGuardrails';
 
 // Human messages for canBookOnDate() rejection reasons (grant gates + package rules).
 const SENIOR_DENY = {
@@ -159,6 +160,38 @@ export async function POST(request) {
       return Response.json({
         error: 'This slot was just booked by someone else. Please choose another time.',
       }, { status: 409 });
+    }
+
+    // Teaching guardrails — final authority (the slot endpoints can be bypassed).
+    // Same three-site rule as the Free/Busy comment above: getAvailableSlots,
+    // getMonthAvailability and here must agree. lib/teachingGuardrails.js.
+    const candidate = { start: startTime, end: DateTime.fromISO(end).setZone('America/Los_Angeles') };
+    const dateStr = startTime.toFormat('yyyy-LL-dd');
+    if (overlapsAny(candidate, standingUnavailableWindows(instructor, dateStr))) {
+      return Response.json({ error: `${instructor.displayName} isn’t available at that time.` }, { status: 400 });
+    }
+    if (Number.isFinite(instructor.maxTeachingRunMinutes)) {
+      const dayRes = await calendar.events.list({
+        calendarId: instructor.calendarId,
+        timeMin: startTime.startOf('day').toISO(),
+        timeMax: startTime.endOf('day').toISO(),
+        singleEvents: true,
+        orderBy: 'startTime',
+      });
+      const dayEvents = (dayRes.data.items || [])
+        .filter(e => e.status !== 'cancelled')
+        .filter(e => !replacingEventId || e.id !== replacingEventId)
+        // Timed events only — an all-day event would read as a 24h run.
+        .filter(e => e.start?.dateTime)
+        .map(e => ({
+          start: DateTime.fromISO(e.start.dateTime || e.start.date),
+          end: DateTime.fromISO(e.end.dateTime || e.end.date),
+        }));
+      if (exceedsTeachingRun(instructor, candidate, dayEvents)) {
+        return Response.json({
+          error: `That time would put ${instructor.displayName} in too long a stretch of meetings. Please choose a time with a break around it.`,
+        }, { status: 409 });
+      }
     }
 
     // The booked event's ACTUAL span must equal the validated/charged length. Both

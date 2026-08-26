@@ -3,6 +3,7 @@ import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
 import { listBlocksForBooking, isDateBlocked, blockedWindowsForDate } from '@/lib/blocks';
+import { standingUnavailableWindows, exceedsTeachingRun } from '@/lib/teachingGuardrails';
 import {
   getSeniorByEmail,
   loadSeniorBookingState,
@@ -155,6 +156,7 @@ export async function GET(request) {
       .map(e => ({
         start: DateTime.fromISO(e.start.dateTime || e.start.date),
         end: DateTime.fromISO(e.end.dateTime || e.end.date),
+        timed: Boolean(e.start.dateTime),
       }));
 
     const availableDates = [];
@@ -188,6 +190,11 @@ export async function GET(request) {
         for (const slug of blockSlugs) {
           dayBusy.push(...blockedWindowsForDate(blocks, slug, dateStr));
         }
+        dayBusy.push(...standingUnavailableWindows(instructor, dateStr));
+        // Teaching-run cap sees TIMED calendar events only (lib/teachingGuardrails.js —
+        // an all-day event would read as a 24h run); the month's events are all here,
+        // and runs never chain across a night.
+        const dayEvents = busyWindows.filter(b => b.timed && b.end > cursor.startOf('day') && b.start < cursor.endOf('day'));
 
         let pointer = cursor.set({ hour: hours.start, minute: 0, second: 0, millisecond: 0 });
         const limit = cursor.set({ hour: hours.end, minute: 0, second: 0, millisecond: 0 });
@@ -196,7 +203,8 @@ export async function GET(request) {
           const slotEnd = pointer.plus({ minutes: duration });
           if (slotEnd > limit) break;
           if (pointer >= earliestAllowed) {
-            const conflict = dayBusy.some(b => pointer < b.end && slotEnd > b.start);
+            const conflict = dayBusy.some(b => pointer < b.end && slotEnd > b.start)
+              || exceedsTeachingRun(instructor, { start: pointer, end: slotEnd }, dayEvents);
             if (!conflict) {
               availableDates.push(dateStr);
               break;

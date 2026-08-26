@@ -3,6 +3,7 @@ import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
 import { listBlocksForBooking, isDateBlocked, blockedWindowsForDate } from '@/lib/blocks';
+import { standingUnavailableWindows, exceedsTeachingRun, teachingRunMinutes } from '@/lib/teachingGuardrails';
 import { getSeniorByEmail, loadSeniorBookingState, canBookOnDate } from '@/lib/seniors';
 import { resolveRescheduleTarget } from '@/lib/rescheduleTarget';
 import {
@@ -48,20 +49,28 @@ function generateSlots(dateStr, durationMinutes, instructor) {
   return slots;
 }
 
-function scoreSlots(availableSlots, busyWindows) {
+// Recommendation order. Used to give +100 to back-to-back slots, which steered students
+// into stacking the day solid (Fri 2026-08-28: 4:00–8:00 with no break). For capped
+// instructors the SHORTEST resulting teaching run ranks first; ties keep slot order.
+// Instructors WITHOUT a cap (Ryan) keep the original consolidate-the-day ranking.
+function scoreSlots(availableSlots, calendarEvents, busyWindows, instructor) {
+  if (!Number.isFinite(instructor.maxTeachingRunMinutes)) {
+    return availableSlots.map(slot => {
+      const slotStart = DateTime.fromISO(slot.start);
+      const slotEnd = DateTime.fromISO(slot.end);
+      let score = 0;
+      const isBackToBack = busyWindows.some(busy =>
+        slotStart.equals(busy.end) || slotEnd.equals(busy.start)
+      );
+      if (isBackToBack) score += 100;
+      score += busyWindows.length;
+      return { ...slot, score };
+    });
+  }
+  const gap = Number.isFinite(instructor.teachingRunGapMinutes) ? instructor.teachingRunGapMinutes : 15;
   return availableSlots.map(slot => {
-    const slotStart = DateTime.fromISO(slot.start);
-    const slotEnd = DateTime.fromISO(slot.end);
-    let score = 0;
-
-    const isBackToBack = busyWindows.some(busy =>
-      slotStart.equals(busy.end) || slotEnd.equals(busy.start)
-    );
-    if (isBackToBack) score += 100;
-
-    score += busyWindows.length;
-
-    return { ...slot, score };
+    const candidate = { start: DateTime.fromISO(slot.start), end: DateTime.fromISO(slot.end) };
+    return { ...slot, score: -teachingRunMinutes(candidate, calendarEvents, gap) };
   });
 }
 
@@ -159,22 +168,32 @@ export async function GET(request) {
       .map(e => ({
         start: DateTime.fromISO(e.start.dateTime || e.start.date),
         end: DateTime.fromISO(e.end.dateTime || e.end.date),
+        timed: Boolean(e.start.dateTime),
       }));
+
+    // TIMED calendar events alone feed the teaching-run cap: blocks and standing gaps are
+    // time OFF, not teaching, and an all-day event (`start.date`, parsed zoneless) would
+    // read as a 24h run bleeding into the neighbouring day. All-day events still block
+    // by overlap via busyWindows. Captured before the exclusion-only windows merge.
+    const calendarEvents = busyWindows.filter(w => w.timed);
 
     // Merge any partial-time blocks for this date so their windows filter out slots.
     for (const slug of blockSlugs) {
       busyWindows.push(...blockedWindowsForDate(blocks, slug, dateStr));
     }
+    // Standing per-weekday gaps (lib/teachingGuardrails.js) exclude slots the same way.
+    busyWindows.push(...standingUnavailableWindows(instructor, dateStr));
 
     const candidates = generateSlots(dateStr, duration, instructor);
     const available = candidates.filter(slot => {
       const slotStart = DateTime.fromISO(slot.start);
       const slotEnd = DateTime.fromISO(slot.end);
       if (slotStart < earliestAllowed) return false;
-      return !busyWindows.some(busy => slotStart < busy.end && slotEnd > busy.start);
+      if (busyWindows.some(busy => slotStart < busy.end && slotEnd > busy.start)) return false;
+      return !exceedsTeachingRun(instructor, { start: slotStart, end: slotEnd }, calendarEvents);
     });
 
-    const scored = scoreSlots(available, busyWindows);
+    const scored = scoreSlots(available, calendarEvents, busyWindows, instructor);
     const recommendations = [...scored]
       .sort((a, b) => b.score - a.score)
       .slice(0, 3);
