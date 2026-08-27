@@ -11,7 +11,10 @@ import {
   loadProjectPlanForBooking, loadProjectBookingsForPlan, canBookProjectOnDate, recordProjectBooking,
   cancelProjectBookingByEventId,
 } from '@/lib/projectMeetings';
-import { setBookingToken, getBookingToken, sheetIdFromPortalUrl } from '@/lib/bookingTokens';
+import { setBookingToken, getBookingToken } from '@/lib/bookingTokens';
+import {
+  studentByEmail, recordStandardBooking, attachCalendarEvent, cancelStandardBookingByEventId,
+} from '@/lib/bookings';
 import { resolveRescheduleTarget } from '@/lib/rescheduleTarget';
 import { standingUnavailableWindows, exceedsTeachingRun, overlapsAny } from '@/lib/teachingGuardrails';
 
@@ -40,21 +43,17 @@ const PROJECT_DENY = {
   'week-booked': 'You’ve already booked this week’s project meeting.',
 };
 
-const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
-const MASTER_TAB = '👩‍🎓 All Data';
-const RYAN_CHECKIN_TAB = 'CheckinForm';
-const AARON_CHECKIN_TAB = 'A_CheckinForm';
-
+// Calendar-only. The Sheets scope and every Master/CheckinForm read+write left this
+// route on 2026-08-27 (zero-Google sweep, Package C): identity comes from Supabase
+// `students`, the booking record is Supabase `bookings`, and the agenda lives on that
+// row instead of a CheckinForm cell.
 function getServiceAuth() {
   return new google.auth.GoogleAuth({
     credentials: {
       client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
       private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
     },
-    scopes: [
-      'https://www.googleapis.com/auth/calendar',
-      'https://www.googleapis.com/auth/spreadsheets',
-    ],
+    scopes: ['https://www.googleapis.com/auth/calendar'],
   });
 }
 
@@ -98,12 +97,24 @@ export async function POST(request) {
 
   try {
     const body = await request.json();
-    const { start, end, duration, studentName, agenda, isReschedule, instructor: instructorSlug, m, excludeEventId } = body;
+    const { start, end, duration, agenda, isReschedule, instructor: instructorSlug, m, excludeEventId } = body;
     const instructor = getInstructor(instructorSlug);
+
+    // The student's name is resolved from the SESSION, never from body.studentName.
+    // It is not cosmetic: it becomes the calendar event title, and
+    // resolveRescheduleTarget uses it as the title fallback when deciding whether an
+    // event is yours. Taken from the body, a signed-in student could widen their own
+    // reschedule exclusion onto someone else's hand-made meeting. The roster row is
+    // also the identity every gate below keys on (sheet id, ART eligibility), so a
+    // caller with no roster row fails closed — all callers are student-facing pages.
+    const roster = await studentByEmail(email);
+    if (!roster) return Response.json({ error: 'Student not found' }, { status: 404 });
+    const studentName = String(roster.name || '').trim();
+
     // Deep-linked project-meeting booking (?m=project:<id> → carried in the POST body).
     const projectPlanId = String(m || '').startsWith('project:') ? String(m).slice('project:'.length) : null;
 
-    if (!start || !end || !duration || !studentName) {
+    if (!start || !end || !duration) {
       return Response.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
@@ -125,7 +136,6 @@ export async function POST(request) {
 
     const authClient = getServiceAuth();
     const calendar = google.calendar({ version: 'v3', auth: authClient });
-    const sheets = google.sheets({ version: 'v4', auth: authClient });
 
     // A reschedule is ONE request: book the replacement, then release the old meeting
     // below. The client cannot be trusted to make the second half of the call — if it
@@ -273,24 +283,19 @@ export async function POST(request) {
     // POST could swap a differently-tracked event into a standard one — a swap,
     // not amplification; tightening that means verifying the old event's
     // bookingType here).
+    // Identity is the Supabase roster row resolved above (was Master col G/BC).
+    const isStandardTrack = !senior && !projectPlanId;
     let standardSheetId = null;
-    if (!senior && !projectPlanId) {
-      const masterRes = await sheets.spreadsheets.values.get({
-        spreadsheetId: MASTER_SHEET_ID,
-        range: `${MASTER_TAB}!A:BD`,
-        valueRenderOption: 'UNFORMATTED_VALUE',
-      });
-      const masterRows = masterRes.data.values || [];
-      const studentRow = masterRows.find((r) => r[9] === email); // col J = email
-      standardSheetId = sheetIdFromPortalUrl(studentRow?.[6]);   // col G = portal URL
+    if (isStandardTrack) {
+      standardSheetId = roster.student_sheet_id || null;
       if (!standardSheetId) {
         return Response.json({ error: 'No booking authorization found. Please complete your weekly check-in first.' }, { status: 403 });
       }
       if (!replacingEventId) {
         const token = await getBookingToken(standardSheetId, instructor.slug);
         if (instructor.slug === 'art') {
-          const isART = studentRow[54] === 'TRUE' || studentRow[54] === true; // col BC
-          if (!isART) {
+          // students.art_eligible is a real boolean (the Master col BC 'TRUE' string is gone).
+          if (roster.art_eligible !== true) {
             return Response.json({ error: 'Not part of the Advanced Research Team.' }, { status: 403 });
           }
           if (token) {
@@ -332,28 +337,73 @@ export async function POST(request) {
       ? `Zoom: ${instructor.zoomLink}\nAgenda: ${agendaTrimmed}`
       : `Zoom: ${instructor.zoomLink}`;
 
-    const eventRes = await calendar.events.insert({
-      calendarId: instructor.calendarId,
-      requestBody: {
-        summary: eventTitle,
-        description: eventDescription,
-        start: { dateTime: start, timeZone: 'America/Los_Angeles' },
-        end: { dateTime: end, timeZone: 'America/Los_Angeles' },
-        extendedProperties: {
-          private: {
-            source: 'student-portal',
-            studentEmail: email,
-            type: duration,
-            instructor: instructor.slug,
-            bookingType: projectPlanId ? 'project' : senior ? 'senior' : instructor.slug === 'art' ? 'art' : 'standard',
-            // Plan id on the event so getUpcomingMeetings can identify a project meeting
-            // (the reschedule UI routes those to cancel+rebook, never a bare-rebook that
-            // would drop the project track and mis-charge the essay grant).
-            ...(projectPlanId ? { projectPlanId } : {}),
+    // Standard/ART: the RECORD is written FIRST (Supabase `bookings`), the event
+    // second. Ruling 2026-08-27 (.claude/CLAUDE.md §Data (d)): Calendar is the one
+    // accepted dependency, but a Calendar outage must degrade scheduling, never data.
+    // An insert failure here 500s cleanly — nothing has been created anywhere yet.
+    // (Senior/project keep their event-then-ledger order: their ledgers key on
+    // calendar_event_id NOT NULL, so a row without an event would be uncancellable.)
+    let bookingRow = null;
+    if (isStandardTrack) {
+      bookingRow = await recordStandardBooking({
+        studentSheetId: standardSheetId,
+        studentId: roster.id,
+        studentEmail: email,
+        instructor: instructor.slug === 'art' ? 'aaron' : instructor.slug,
+        track: instructor.slug === 'art' ? 'art' : 'standard',
+        calendarId: instructor.calendarId,
+        start, end,
+        minutes: seniorMins,
+        agenda: agendaTrimmed || null,
+      });
+    }
+
+    let eventRes = null;
+    let calendarSyncPending = false;
+    try {
+      eventRes = await calendar.events.insert({
+        calendarId: instructor.calendarId,
+        requestBody: {
+          summary: eventTitle,
+          description: eventDescription,
+          start: { dateTime: start, timeZone: 'America/Los_Angeles' },
+          end: { dateTime: end, timeZone: 'America/Los_Angeles' },
+          extendedProperties: {
+            private: {
+              source: 'student-portal',
+              studentEmail: email,
+              type: duration,
+              instructor: instructor.slug,
+              bookingType: projectPlanId ? 'project' : senior ? 'senior' : instructor.slug === 'art' ? 'art' : 'standard',
+              // Plan id on the event so getUpcomingMeetings can identify a project meeting
+              // (the reschedule UI routes those to cancel+rebook, never a bare-rebook that
+              // would drop the project track and mis-charge the essay grant).
+              ...(projectPlanId ? { projectPlanId } : {}),
+              // The record's own id, so a hand-edited or orphaned event can always be
+              // traced back to its row (scripts/reconcileBookings.cjs).
+              ...(bookingRow ? { bookingId: bookingRow.id } : {}),
+            },
           },
         },
-      },
-    });
+      });
+    } catch (calErr) {
+      if (!bookingRow) throw calErr; // senior/project: nothing recorded yet → 500 as before
+      // The booking EXISTS (the row is the truth). The event is pending; the
+      // reconcile script enumerates rows with calendar_event_id null and pushes them.
+      console.error(`bookMeeting: Calendar insert failed — booking ${bookingRow.id} recorded with calendar sync pending:`, calErr?.message || calErr);
+      calendarSyncPending = true;
+    }
+
+    const eventId = eventRes?.data?.id || null;
+    if (bookingRow && eventId) {
+      try {
+        await attachCalendarEvent(bookingRow.id, eventId);
+      } catch (attachErr) {
+        // Loud, not fatal: the event and the row both exist; the reconcile script's
+        // bookingId extendedProperty match re-attaches it.
+        console.error(`bookMeeting: could not attach event ${eventId} to booking ${bookingRow.id}:`, attachErr?.message || attachErr);
+      }
+    }
 
     // Project booking: record on its own ledger. If the write fails, delete the
     // just-created event so we never leave an un-accounted booking (same rollback
@@ -361,7 +411,7 @@ export async function POST(request) {
     if (projectPlan) {
       try {
         await recordProjectBooking(projectPlan, {
-          eventId: eventRes.data.id,
+          eventId,
           dt: startTime,
           minutes: seniorMins,
           studentSheetId: projectPlan.student_sheet_id,
@@ -369,7 +419,7 @@ export async function POST(request) {
       } catch (ledgerErr) {
         console.error('Project booking ledger write failed — rolling back event:', ledgerErr);
         try {
-          await calendar.events.delete({ calendarId: instructor.calendarId, eventId: eventRes.data.id });
+          await calendar.events.delete({ calendarId: instructor.calendarId, eventId });
         } catch (delErr) {
           console.error('Failed to roll back orphaned event:', delErr);
         }
@@ -390,13 +440,13 @@ export async function POST(request) {
       try {
         if (seniorOneoffId) {
           if (seniorOneoffRehydratedFrom) {
-            await reconsumeOneoff(seniorOneoffId, seniorOneoffRehydratedFrom, eventRes.data.id);
+            await reconsumeOneoff(seniorOneoffId, seniorOneoffRehydratedFrom, eventId);
           } else {
-            await consumeOneoff(seniorOneoffId, eventRes.data.id);
+            await consumeOneoff(seniorOneoffId, eventId);
           }
         } else {
           await recordBooking(seniorGrant, {
-            eventId: eventRes.data.id,
+            eventId,
             teacher: instructor.slug,
             dt: startTime,
             minutes: seniorMins,
@@ -406,7 +456,7 @@ export async function POST(request) {
       } catch (ledgerErr) {
         console.error('Senior booking ledger write failed — rolling back event:', ledgerErr);
         try {
-          await calendar.events.delete({ calendarId: instructor.calendarId, eventId: eventRes.data.id });
+          await calendar.events.delete({ calendarId: instructor.calendarId, eventId });
         } catch (delErr) {
           console.error('Failed to roll back orphaned event:', delErr);
         }
@@ -423,7 +473,8 @@ export async function POST(request) {
       try {
         await calendar.events.delete({ calendarId: instructor.calendarId, eventId: replacingEventId });
       } catch (delErr) {
-        const gone = delErr?.code === 404 || delErr?.response?.status === 404;
+        const gone = delErr?.code === 404 || delErr?.response?.status === 404
+          || delErr?.code === 410 || delErr?.response?.status === 410;
         if (!gone) {
           console.error('Reschedule: old event could not be deleted:', delErr);
           staleMeetingLeft = true;
@@ -436,6 +487,7 @@ export async function POST(request) {
         await cancelBookingByEventId(replacingEventId);
         await cancelOneoffByEventId(replacingEventId);
         await cancelProjectBookingByEventId(replacingEventId);
+        await cancelStandardBookingByEventId(replacingEventId);
       } catch (ledgerErr) {
         console.error('Reschedule: old ledger rows could not be released:', ledgerErr);
       }
@@ -445,40 +497,16 @@ export async function POST(request) {
     // consumed it). ART stores the booking instant; everyone else 'no'.
     // Seniors are count-based and project meetings have their OWN ledger (above)
     // — neither holds a token. Authoritative Supabase write; throws on failure →
-    // surfaces as a 500 (the event exists either way and the state is visible).
+    // surfaces as a 500 (the booking row exists either way and the state is visible).
     // Keyed on the VERIFIED replacingEventId, not the client's isReschedule flag:
     // a forged flag with no real meeting to move must not keep the token alive.
-    if (!replacingEventId && !senior && !projectPlanId && standardSheetId) {
+    if (!replacingEventId && isStandardTrack && standardSheetId) {
       const tokenValue = instructor.tokenIsTimestamp ? new Date().toISOString() : 'no';
       await setBookingToken({ studentSheetId: standardSheetId, slug: instructor.slug, value: tokenValue });
     }
 
-    // Write agenda back to the appropriate CheckinForm tab.
-    // Ryan's tab: col J. Aaron's tab: col H. Skip for project meetings — there's no
-    // check-in row to attach to, and a name-match write could clobber an unrelated row.
-    if (agendaTrimmed && !projectPlanId) {
-      const checkinTab = instructor.slug === 'aaron' ? AARON_CHECKIN_TAB : RYAN_CHECKIN_TAB;
-      const agendaCol = instructor.slug === 'aaron' ? 'H' : 'J';
-      const checkinRes = await sheets.spreadsheets.values.get({
-        spreadsheetId: MASTER_SHEET_ID,
-        range: `${checkinTab}!A:J`,
-        valueRenderOption: 'UNFORMATTED_VALUE',
-      });
-      const checkinRows = checkinRes.data.values || [];
-      let lastMatchIndex = -1;
-      checkinRows.forEach((r, i) => {
-        if (r[1] === studentName) lastMatchIndex = i;
-      });
-      if (lastMatchIndex > -1) {
-        const sheetRow = lastMatchIndex + 1;
-        await sheets.spreadsheets.values.update({
-          spreadsheetId: MASTER_SHEET_ID,
-          range: `${checkinTab}!${agendaCol}${sheetRow}`,
-          valueInputOption: 'USER_ENTERED',
-          requestBody: { values: [[agendaTrimmed]] },
-        });
-      }
-    }
+    // The agenda used to be written back to the CheckinForm tab (col J / H) by an exact
+    // name match. It now lives on the bookings row (`agenda`), written above.
 
     try {
       await sendBookingEmail(instructor, studentName, email, duration, start, agendaTrimmed, isReschedule);
@@ -488,12 +516,20 @@ export async function POST(request) {
 
     // staleMeeting: the replacement is booked but the old event outlived the delete —
     // the student must be told to cancel it, not shown a bare success.
+    // calendarSyncPending: the booking is recorded but the calendar event could not be
+    // created (Calendar outage) — the meeting IS booked; the event follows via reconcile.
     // agenda: the value we ACTUALLY used, defaults included. The confirmation screen
     // builds the student's own "Add to Google/Apple Calendar" copy from it, so echoing it
     // back is what keeps her saved event ("… 45min: ACT Reading") identical to the
     // teacher's — it was reading only what she typed, so a defaulted agenda was on
     // Ryan's copy and missing from hers.
-    return Response.json({ success: true, staleMeeting: staleMeetingLeft, agenda: agendaTrimmed });
+    return Response.json({
+      success: true,
+      staleMeeting: staleMeetingLeft,
+      calendarSyncPending,
+      bookingId: bookingRow?.id || null,
+      agenda: agendaTrimmed,
+    });
 
   } catch (err) {
     console.error('bookMeeting error:', err);
