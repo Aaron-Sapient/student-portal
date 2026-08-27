@@ -1,18 +1,24 @@
 import { requireParent } from '@/lib/identity'
-import { listStudentFiles } from '@/lib/studentFiles'
+import { listDocumentsFor, studentIdFromSheetId } from '@/lib/studentFiles'
 
+// GET /api/parent/files?student=<sheetId> — the selected child's documents.
+// requireParent validates the child against the parent's own children; the list
+// itself is intersected with what canAccess would allow (guardians link), so the
+// selector carries no authority on its own. Parents view; only the student edits —
+// editable rows render read-only through /api/files/<id>.
 export async function GET(request) {
-  const { child, sheets, error } = await requireParent(request)
+  const { email, child, error } = await requireParent(request)
   if (error) return error
-
-  const payload = await listStudentFiles(sheets, child.sheetId, {
-    // HTML files proxy through the parent-scoped drive route, which re-validates
-    // the child on every fetch.
-    driveProxyBase: `/api/parent/files/drive?student=${child.sheetId}&`,
-    // Parents can't edit — editable files render the child's canonical version
-    // read-only (new tab), so they're presented as ordinary reports.
-    editableUrlBase: `/api/parent/files/editable?student=${child.sheetId}&`,
-    editableInteractive: false,
-  })
-  return Response.json(payload)
+  try {
+    const student = await studentIdFromSheetId(child.sheetId)
+    const files = student ? await listDocumentsFor(email, { studentId: student.id }) : []
+    return Response.json({
+      studentName: student?.name || child.name || '',
+      files,
+      counts: { portal: files.length },
+    })
+  } catch (err) {
+    console.error('parent/files GET error:', err)
+    return Response.json({ error: 'Load failed' }, { status: 502 })
+  }
 }
