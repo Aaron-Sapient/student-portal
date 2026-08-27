@@ -14,6 +14,7 @@ import {
 import { setBookingToken, getBookingToken } from '@/lib/bookingTokens';
 import {
   studentByEmail, recordStandardBooking, attachCalendarEvent, cancelStandardBookingByEventId,
+  pendingBookingsForInstructorDay,
 } from '@/lib/bookings';
 import { resolveRescheduleTarget } from '@/lib/rescheduleTarget';
 import { standingUnavailableWindows, exceedsTeachingRun, overlapsAny } from '@/lib/teachingGuardrails';
@@ -149,6 +150,32 @@ export async function POST(request) {
       }, { status: 409 });
     }
 
+    const dateStr = startTime.toFormat('yyyy-LL-dd');
+    const endLA = DateTime.fromISO(end).setZone('America/Los_Angeles');
+
+    // Bookings recorded while Calendar was down carry calendar_event_id null — they
+    // exist only in Postgres until reconcile pushes them, so events.list cannot see
+    // them at all. Both checks below (the slot conflict window and the teaching-run
+    // cap) read Calendar, so without this union a pending booking is invisible to
+    // its own slot: the next student books straight over it, and it never counts
+    // against the 3.5h run. Read once, used by both.
+    // Fails OPEN, loudly: a Postgres blip must not block every booking, and the hole
+    // it leaves is exactly the one that existed before this guard.
+    let pendingDay = [];
+    try {
+      const pendingRows = await pendingBookingsForInstructorDay({
+        instructor: instructor.slug,
+        calendarId: instructor.calendarId,
+        dateISO: dateStr,
+      });
+      pendingDay = pendingRows.map((r) => ({
+        start: DateTime.fromISO(r.start_time).setZone('America/Los_Angeles'),
+        end: DateTime.fromISO(r.end_time).setZone('America/Los_Angeles'),
+      }));
+    } catch (pendErr) {
+      console.error('bookMeeting: pending-booking read failed (conflict + run checks see Calendar only):', pendErr?.message || pendErr);
+    }
+
     // Double-check slot is still free
     const conflictCheck = await calendar.events.list({
       calendarId: instructor.calendarId,
@@ -166,7 +193,10 @@ export async function POST(request) {
     const conflicts = (conflictCheck.data.items || [])
       .filter(e => e.status !== 'cancelled')
       .filter(e => !replacingEventId || e.id !== replacingEventId);
-    if (conflicts.length > 0) {
+    // A pending row has no event id, so it can never BE the meeting being replaced
+    // (resolveRescheduleTarget resolves against Calendar) — no exclusion applies.
+    const pendingConflicts = pendingDay.filter(p => p.start < endLA && p.end > startTime);
+    if (conflicts.length > 0 || pendingConflicts.length > 0) {
       return Response.json({
         error: 'This slot was just booked by someone else. Please choose another time.',
       }, { status: 409 });
@@ -175,8 +205,7 @@ export async function POST(request) {
     // Teaching guardrails — final authority (the slot endpoints can be bypassed).
     // Same three-site rule as the Free/Busy comment above: getAvailableSlots,
     // getMonthAvailability and here must agree. lib/teachingGuardrails.js.
-    const candidate = { start: startTime, end: DateTime.fromISO(end).setZone('America/Los_Angeles') };
-    const dateStr = startTime.toFormat('yyyy-LL-dd');
+    const candidate = { start: startTime, end: endLA };
     if (overlapsAny(candidate, standingUnavailableWindows(instructor, dateStr))) {
       return Response.json({ error: `${instructor.displayName} isn’t available at that time.` }, { status: 400 });
     }
@@ -188,15 +217,20 @@ export async function POST(request) {
         singleEvents: true,
         orderBy: 'startTime',
       });
-      const dayEvents = (dayRes.data.items || [])
-        .filter(e => e.status !== 'cancelled')
-        .filter(e => !replacingEventId || e.id !== replacingEventId)
-        // Timed events only — an all-day event would read as a 24h run.
-        .filter(e => e.start?.dateTime)
-        .map(e => ({
-          start: DateTime.fromISO(e.start.dateTime || e.start.date),
-          end: DateTime.fromISO(e.end.dateTime || e.end.date),
-        }));
+      // Same { start, end } DateTime shape exceedsTeachingRun expects; the pending
+      // rows are appended so a calendar-invisible booking still lengthens the run.
+      const dayEvents = [
+        ...(dayRes.data.items || [])
+          .filter(e => e.status !== 'cancelled')
+          .filter(e => !replacingEventId || e.id !== replacingEventId)
+          // Timed events only — an all-day event would read as a 24h run.
+          .filter(e => e.start?.dateTime)
+          .map(e => ({
+            start: DateTime.fromISO(e.start.dateTime || e.start.date),
+            end: DateTime.fromISO(e.end.dateTime || e.end.date),
+          })),
+        ...pendingDay,
+      ];
       if (exceedsTeachingRun(instructor, candidate, dayEvents)) {
         return Response.json({
           error: `That time would put ${instructor.displayName} in too long a stretch of meetings. Please choose a time with a break around it.`,
@@ -469,7 +503,18 @@ export async function POST(request) {
     // (recoverable, both visible on the meetings card) rather than "no meeting at all" —
     // which is exactly what cost a student his meeting on 2026-08-11.
     let staleMeetingLeft = false;
-    if (replacingEventId) {
+    let oldMeetingKept = false;
+    if (replacingEventId && calendarSyncPending) {
+      // The replacement event does NOT exist — the Calendar insert failed and only the
+      // ROW was written. Deleting the old event here would take the student's meeting
+      // off the calendar and put nothing in its place, which is the same "no meeting at
+      // all" outcome the book-first ordering above exists to prevent. So the old
+      // meeting is left whole, event AND ledger rows: reconcile pushes the pending row,
+      // and the old one is cancelled deliberately afterwards.
+      oldMeetingKept = true;
+      staleMeetingLeft = true;
+      console.error(`bookMeeting: reschedule while Calendar was unavailable — old event ${replacingEventId} kept (new booking ${bookingRow?.id || '(none)'} is calendar-sync pending).`);
+    } else if (replacingEventId) {
       try {
         await calendar.events.delete({ calendarId: instructor.calendarId, eventId: replacingEventId });
       } catch (delErr) {
@@ -523,9 +568,14 @@ export async function POST(request) {
     // back is what keeps her saved event ("… 45min: ACT Reading") identical to the
     // teacher's — it was reading only what she typed, so a defaulted agenda was on
     // Ryan's copy and missing from hers.
+    // oldMeetingKept: a reschedule whose replacement event could not be created — the
+    // old meeting was deliberately NOT released, so the student still has the original
+    // on the calendar. Reported separately from staleMeeting (which means the delete
+    // was attempted and failed) so a caller can tell "we chose not to" from "we tried".
     return Response.json({
       success: true,
       staleMeeting: staleMeetingLeft,
+      oldMeetingKept,
       calendarSyncPending,
       bookingId: bookingRow?.id || null,
       agenda: agendaTrimmed,

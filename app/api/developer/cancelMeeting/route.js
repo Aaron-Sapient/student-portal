@@ -4,6 +4,7 @@ import { getInstructor } from '@/lib/instructors';
 import { sendStudentCancellationEmail } from '@/lib/studentEmails';
 import { cancelBookingByEventId, cancelOneoffByEventId } from '@/lib/seniors';
 import { cancelProjectBookingByEventId } from '@/lib/projectMeetings';
+import { cancelStandardBookingByEventId } from '@/lib/bookings';
 import { setBookingToken, sheetIdFromPortalUrl } from '@/lib/bookingTokens';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
@@ -45,6 +46,19 @@ export async function POST(request) {
     await cancelBookingByEventId(eventId);
     await cancelOneoffByEventId(eventId);
     const wasProject = await cancelProjectBookingByEventId(eventId);
+
+    // The standard/ART RECORD (Supabase `bookings`) — the fourth ledger, and the one
+    // this route forgot. Without it a dev-panel cancel deleted the calendar event and
+    // left status='active', so getUpcomingMeetings (which reads the ledger, not
+    // Calendar) kept rendering the meeting to the student forever.
+    // Guarded like the student route: the event is ALREADY deleted by this point, so
+    // an unreadable/missing table must log rather than 500 a cancel that half-happened
+    // — scripts/reconcileBookings.cjs closes the row on its next pass.
+    try {
+      await cancelStandardBookingByEventId(eventId);
+    } catch (recordErr) {
+      console.error(`developer cancelMeeting: bookings cancel failed for event ${eventId} (event already deleted; reconcile will close the row):`, recordErr?.message || recordErr);
+    }
 
     // Restore the student's booking token. Lookup by studentEmail (admin is logged in,
     // not the student — so we cannot use sessionClaims.email like the student-facing route does).

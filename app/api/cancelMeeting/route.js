@@ -104,7 +104,17 @@ export async function POST(request) {
     }
     const callerName = roster?.name ? String(roster.name).trim() : null;
 
-    const record = await standardBookingByEventId(eventId);
+    // Guarded exactly like the roster read above, and for the same reason: three of
+    // the four tracks (senior, project, hand-made) have NO row here, so an
+    // unreadable `bookings` table — the 42P01 a not-yet-applied migration returns —
+    // must read as "no standard record" and fall through to event provenance, not
+    // 500 every cancel on every track.
+    let record = null;
+    try {
+      record = await standardBookingByEventId(eventId);
+    } catch (recordErr) {
+      console.error('cancelMeeting: bookings read failed (treating as no standard record):', recordErr?.message || recordErr);
+    }
     let owned = false;
     if (record) {
       owned = !!roster && record.student_sheet_id === roster.student_sheet_id;
@@ -119,7 +129,17 @@ export async function POST(request) {
     // (Aaron deleted it by hand — the reconcile direction exists for exactly that),
     // that is fine: the row was the truth and now says cancelled. Any OTHER Calendar
     // failure re-activates the row so the two never disagree, and surfaces as a 500.
-    const cancelledRow = await cancelStandardBookingByEventId(eventId);
+    // Same guard, one asymmetry that is deliberate: when the read above DID return a
+    // row, a failure to cancel it is real news and still throws — nothing destructive
+    // has run yet, so a 500 here leaves the event and the row agreeing. Only the
+    // "there is no standard record" case (including an unreadable table) is swallowed.
+    let cancelledRow = null;
+    try {
+      cancelledRow = await cancelStandardBookingByEventId(eventId);
+    } catch (cancelErr) {
+      if (record) throw cancelErr;
+      console.error('cancelMeeting: bookings cancel failed with no readable record (treating as no standard record):', cancelErr?.message || cancelErr);
+    }
     try {
       await calendar.events.delete({
         calendarId: instructor.calendarId,
@@ -144,10 +164,15 @@ export async function POST(request) {
     await cancelOneoffByEventId(eventId);
     const wasProject = await cancelProjectBookingByEventId(eventId);
 
-    // The caller's own sheet id, from the SAME session-resolved lookup the
-    // ownership gate used — no second read, and no chance of the gate and the
-    // token restore disagreeing about who this is.
-    const cancelSheetId = roster?.student_sheet_id || null;
+    // The caller's own sheet id. The roster row is the first source (the SAME
+    // session-resolved lookup the ownership gate used — no second read, no chance of
+    // the gate and the token restore disagreeing about who this is), but the roster
+    // read is guarded and can come back null while the cancel still succeeds through
+    // event provenance. That path used to skip the token restore in silence: the
+    // student lost the meeting AND the grant, with nothing said. The booking row
+    // carries the same id and was verified against this caller, so fall back to it.
+    const cancelSheetId = roster?.student_sheet_id || record?.student_sheet_id
+      || cancelledRow?.student_sheet_id || null;
 
     // Token logic:
     //  - Seniors: NO token — the per-week cap is recounted from live calendar events,
@@ -156,8 +181,17 @@ export async function POST(request) {
     //  - Real cancel + standard tracking: restore token to the meeting's original duration ('15min' / '30min')
     //    — from the RECORD when there is one; the client's `duration` only for legacy events with no row.
     //  - Real cancel + timestamp tracking (ART): clear the column so weekly check sees no booking.
+    // null = no restore was owed (senior / project / a reschedule holding its token);
+    // false = one WAS owed and did not happen, which the client is told about rather
+    // than being handed a bare success.
+    let tokenRestored = null;
     const senior = await getSeniorByEmail(email);
-    if (cancelSheetId && !senior && !wasProject) {
+    const restoreOwed = !senior && !wasProject;
+    if (!cancelSheetId && restoreOwed) {
+      tokenRestored = false;
+      console.error(`cancelMeeting: TOKEN NOT RESTORED for ${email} (${instructor.slug}) — the cancel succeeded but no student sheet id could be resolved (roster read failed and no bookings row matched); re-grant manually.`);
+    }
+    if (cancelSheetId && restoreOwed) {
       let newValue = null;
       if (instructor.tokenIsTimestamp) {
         if (!isReschedule) newValue = '';
@@ -173,7 +207,9 @@ export async function POST(request) {
         // recovers a lost token.
         try {
           await setBookingToken({ studentSheetId: cancelSheetId, slug: instructor.slug, value: newValue });
+          tokenRestored = true;
         } catch (tokenErr) {
+          tokenRestored = false;
           console.error(`cancelMeeting: TOKEN RESTORE FAILED for ${email} (${instructor.slug} → ${JSON.stringify(newValue)}) — re-grant manually:`, tokenErr?.message || tokenErr);
         }
       }
@@ -185,7 +221,13 @@ export async function POST(request) {
       console.error('Failed to send cancellation email:', emailErr);
     }
 
-    return Response.json({ success: true, bookingId: cancelledRow?.id || null });
+    // tokenRestored is present ONLY when a restore was owed and did not land — a
+    // silently-lost grant is the one failure a student cannot see for themselves.
+    return Response.json({
+      success: true,
+      bookingId: cancelledRow?.id || null,
+      ...(tokenRestored === false ? { tokenRestored: false } : {}),
+    });
 
   } catch (err) {
     console.error('cancelMeeting error:', err);

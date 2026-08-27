@@ -63,7 +63,12 @@ export async function POST(request) {
   if (!body?.filename || typeof body?.html !== 'string') {
     return Response.json({ error: 'Missing filename or html' }, { status: 400 })
   }
-  const ctx = await resolve(new Request(`${request.url}?file=${encodeURIComponent(body.filename)}`))
+  // Built through URL, not string concatenation: `${request.url}?file=…` appends a
+  // SECOND '?' whenever the POST url already carries a query string, and the whole
+  // param list silently stops parsing.
+  const resolveUrl = new URL(request.url)
+  resolveUrl.searchParams.set('file', body.filename)
+  const ctx = await resolve(new Request(resolveUrl.toString()))
   if (ctx.error) return ctx.error
   if (!ctx.access.write) return Response.json({ error: 'Read only' }, { status: 403 })
   try {

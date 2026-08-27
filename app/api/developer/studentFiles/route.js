@@ -19,6 +19,18 @@ export async function GET(request) {
   const sheetId = new URL(request.url).searchParams.get('sheetId');
   if (!sheetId) return Response.json({ error: 'Missing sheetId' }, { status: 400 });
 
+  // Supabase now backs BOTH halves of this payload (the roster check and the
+  // documents), so an unconfigured client throws before either read. Main degraded
+  // to an empty list rather than 500ing the Students-tab folder modal; keep that —
+  // the modal renders "no documents" instead of "Load failed" on a local env with no
+  // service key.
+  try {
+    getSupabaseClient();
+  } catch (cfgErr) {
+    console.warn('developer/studentFiles: Supabase not configured — returning an empty file list:', cfgErr?.message || cfgErr);
+    return Response.json({ studentName: '', files: [], counts: { portal: 0 } });
+  }
+
   try {
     const student = await studentIdFromSheetId(sheetId);
     if (!student) return Response.json({ error: 'Unknown student' }, { status: 404 });

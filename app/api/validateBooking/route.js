@@ -25,25 +25,34 @@ function mostRecentSaturdayLA() {
 
 // Ryan's monthly meeting cap. One row per student, kept fresh by the reconcile
 // cron (scripts/backfillCheckinSummary.cjs) and mirrored on cap lifts by
-// admin/grantBooking. Returns { used, allowed } or null. Fails OPEN (null) on a
-// read error or a missing row: a cap read must never block a valid token.
+// admin/grantBooking.
+//
+// TWO failure modes, deliberately split — the Sheets version this replaced threw on
+// a read error and returned "no cap" only when the row was absent, and collapsing
+// them meant an outage silently handed every capped student unlimited meetings:
+//   • read error  → THROW. The route's catch 500s, the student sees an error and
+//     retries. Failing closed is right: nothing here is worth over-granting for.
+//   • missing / capless row → null + a warn. That is a real, expected state (a
+//     student with no cap set), and enforcement is correctly skipped.
+// Returns { used, allowed } or null.
 async function loadRyanCap(studentSheetId) {
-  try {
-    const { data, error } = await getSupabaseClient()
-      .from(MEETING_CAP_SUMMARY)
-      .select('meetings_used, meetings_allowed')
-      .eq('student_sheet_id', studentSheetId)
-      .limit(1);
-    if (error) throw new Error(error.message);
-    const row = data?.[0];
-    if (!row || row.meetings_allowed === null || row.meetings_allowed === undefined) return null;
-    const allowed = Number(row.meetings_allowed);
-    if (!Number.isFinite(allowed)) return null;
-    return { used: Number(row.meetings_used) || 0, allowed };
-  } catch (e) {
-    console.error('validateBooking: cap read failed (not enforcing):', e?.message || e);
+  const { data, error } = await getSupabaseClient()
+    .from(MEETING_CAP_SUMMARY)
+    .select('meetings_used, meetings_allowed')
+    .eq('student_sheet_id', studentSheetId)
+    .limit(1);
+  if (error) throw new Error(`meeting cap read failed: ${error.message}`);
+  const row = data?.[0];
+  if (!row || row.meetings_allowed === null || row.meetings_allowed === undefined) {
+    console.warn(`validateBooking: no meeting cap row for ${studentSheetId} — not enforcing.`);
     return null;
   }
+  const allowed = Number(row.meetings_allowed);
+  if (!Number.isFinite(allowed)) {
+    console.warn(`validateBooking: meeting cap row for ${studentSheetId} has a non-numeric meetings_allowed (${JSON.stringify(row.meetings_allowed)}) — not enforcing.`);
+    return null;
+  }
+  return { used: Number(row.meetings_used) || 0, allowed };
 }
 
 export async function GET(request) {

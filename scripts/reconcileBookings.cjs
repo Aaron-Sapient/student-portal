@@ -2,14 +2,29 @@
  * reconcileBookings.cjs — Google Calendar → Supabase `bookings` (the reconcile direction).
  *
  *   node scripts/reconcileBookings.cjs --dry-run              # DEFAULT: report the diff, no writes
- *   node scripts/reconcileBookings.cjs --write                # apply time changes + hand-deletions to `bookings`
+ *   node scripts/reconcileBookings.cjs --write                # apply time changes + hand-deletions + discovered rows
  *   node scripts/reconcileBookings.cjs --write --push-pending # ALSO create events for rows whose calendar sync is pending
+ *
+ * ⚠ NOT SCHEDULED. There is no cron entry for this script anywhere yet — it runs only
+ * when a human runs it. The cadence suggestion at the bottom is a suggestion.
  *
  * Why this exists (review F9 / plan §2 amendment): Aaron hand-edits events outside
  * the portal — drags them to a new time, deletes them. Without a Calendar→Postgres
  * pass, `bookings` drifts exactly as project_meeting_bookings did. This script is
  * that pass, for the `bookings` ledger ONLY (the senior/project ledgers keep their
  * own reschedule/cancel routes).
+ *
+ * TWO passes, and the second is the one that closes the hole:
+ *   1. ROW-DRIVEN (below) — every active row is checked against its event. This can
+ *      only ever see meetings that ALREADY have a row.
+ *   2. CALENDAR-DRIVEN (the discovery pass) — every qualifying event in a rolling
+ *      window (7 days back → 90 days forward) that has NO row gets one, stamped
+ *      source='reconcile'. Without it, a meeting Aaron or Ryan creates by hand on the
+ *      calendar — an anticipated case, supabase/bookings.sql:20 — never gets a row,
+ *      and getUpcomingMeetings reads the ledger, so the student never sees it. The
+ *      qualification + matching rules are shared with scripts/backfillBookings.cjs
+ *      via scripts/lib/bookingDiscovery.cjs; ambiguous and unmatched events are
+ *      PRINTED, never inserted.
  *
  * For every ACTIVE `bookings` row:
  *   • calendar_event_id set → events.get by id.
@@ -35,8 +50,13 @@ const path = require('path');
 const { google } = require('googleapis');
 const { createClient } = require('@supabase/supabase-js');
 const { DateTime } = require('luxon');
+const { discoverBookings, printDiscoveryReport } = require('./lib/bookingDiscovery.cjs');
 
 const ZONE = 'America/Los_Angeles';
+// The discovery window. Backwards far enough to catch a meeting created on the day
+// (or a few days before) it happened; forwards past the booking horizon.
+const DISCOVER_BACK_DAYS = 7;
+const DISCOVER_FORWARD_DAYS = 90;
 
 function loadEnv() {
   const env = fs.readFileSync(path.join(__dirname, '..', '.env.local'), 'utf8');
@@ -48,6 +68,7 @@ const sameInstant = (a, b) => DateTime.fromISO(a).toMillis() === DateTime.fromIS
 async function main() {
   const WRITE = process.argv.includes('--write');
   const PUSH = process.argv.includes('--push-pending');
+  const VERBOSE = process.argv.includes('--verbose');
   if (WRITE && process.argv.includes('--dry-run')) throw new Error('pick one: --write or --dry-run');
   const get = loadEnv();
   const CALS = { aaron: get('GOOGLE_CALENDAR_ID_AARON'), ryan: get('GOOGLE_CALENDAR_ID_RYAN') };
@@ -113,7 +134,36 @@ async function main() {
   console.log(`errors: ${report.errors.length}`);
   for (const e of report.errors) console.log(`  booking=${e.id} event=${e.event} ${e.error}`);
 
+  // ── Pass 2: Calendar → Postgres discovery ────────────────────────────────
+  // The row-driven pass above is blind to any meeting with no row. This one walks
+  // the calendars instead, so a hand-created meeting becomes a real booking the
+  // student can see. Shared rules with backfillBookings (scripts/lib/bookingDiscovery).
+  const dSince = now.minus({ days: DISCOVER_BACK_DAYS }).startOf('day');
+  const dUntil = now.plus({ days: DISCOVER_FORWARD_DAYS }).endOf('day');
+  let discovered = { rows: [], ambiguous: [], unmatched: [], counts: {}, otherCreators: {} };
+  try {
+    discovered = await discoverBookings({
+      calendar, sb, cals: CALS, saEmail: get('GOOGLE_SERVICE_ACCOUNT_EMAIL'),
+      since: dSince, until: dUntil, verbose: VERBOSE, source: 'reconcile',
+      requireBookingsTable: true,
+    });
+    printDiscoveryReport(
+      `discovery (Calendar → bookings)  window ${dSince.toISODate()} → ${dUntil.toISODate()}`,
+      discovered
+    );
+  } catch (dErr) {
+    console.error('\ndiscovery pass failed (row-driven results above still stand):', dErr?.message || dErr);
+  }
+
   if (!WRITE) { console.log('\n(dry-run: nothing written)'); return; }
+
+  if (discovered.rows.length) {
+    const { data: ins, error: iErr } = await sb.from('bookings')
+      .upsert(discovered.rows, { onConflict: 'calendar_event_id', ignoreDuplicates: true })
+      .select('id');
+    if (iErr) console.error('discovery insert failed:', iErr.message);
+    else console.log(`discovered + inserted ${(ins || []).length} row(s) (duplicates ignored: ${discovered.rows.length - (ins || []).length})`);
+  }
 
   for (const u of updates) {
     const { error: uErr } = await sb.from('bookings').update(u.patch).eq('id', u.id).eq('status', 'active');

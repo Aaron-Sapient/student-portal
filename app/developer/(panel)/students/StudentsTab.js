@@ -86,7 +86,7 @@ const TONE = {
   muted: 'bg-ink-faint/[0.12] text-ink-soft',
 };
 
-// ── Folder modal: a student's files (essays + Drive + local), admin-scoped ────
+// ── Folder modal: a student's documents (in-app essays + portal-native rows) ──
 function FilesModal({ student, onClose }) {
   const [state, setState] = useState({ loading: true });
   const [query, setQuery] = useState('');
@@ -97,7 +97,7 @@ function FilesModal({ student, onClose }) {
       .then((r) => r.json().then((d) => ({ ok: r.ok, d })))
       .then(({ ok, d }) => {
         if (!alive) return;
-        setState(ok && !d.error ? { files: d.files || [], drive: d.drive } : { error: d.error || 'Load failed' });
+        setState(ok && !d.error ? { files: d.files || [] } : { error: d.error || 'Load failed' });
       })
       .catch(() => alive && setState({ error: 'Load failed' }));
     return () => {
@@ -167,8 +167,8 @@ function FilesModal({ student, onClose }) {
   );
 }
 
-// One file row — essays (in-app markdown) get the pen icon and a tab count; Drive
-// and local reports get the document icon. Both open in a new tab.
+// One file row — essays (in-app markdown) get the pen icon and a tab count;
+// portal-native documents and reports get the document icon. Both open in a new tab.
 function FileRow({ file: f }) {
   const essay = f.source === 'writing';
   return (
