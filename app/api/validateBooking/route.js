@@ -60,12 +60,17 @@ export async function GET(request) {
     if (!sheetIdMatch) return Response.json({ error: 'No student sheet found' }, { status: 404 });
     const studentSheetId = sheetIdMatch[1];
 
-    const nameRes = await sheets.spreadsheets.values.get({
-      spreadsheetId: studentSheetId,
-      range: '🔎 Overview!B2',
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
-    const studentName = nameRes.data.values?.[0]?.[0] || '';
+    // Non-fatal (mirrors lib/checkinIdentity.js): a sheet with no 🔎 Overview
+    // tab used to throw here, BEFORE the project-track branch below that needs no
+    // check-in at all, so a project-track student could never book. Roster name
+    // is the fallback.
+    const nameRes = await sheets.spreadsheets.values
+      .get({ spreadsheetId: studentSheetId, range: '🔎 Overview!B2', valueRenderOption: 'UNFORMATTED_VALUE' })
+      .catch((err) => {
+        console.error('[validateBooking] Overview read failed:', err?.message);
+        return { data: { values: [] } };
+      });
+    const studentName = nameRes.data.values?.[0]?.[0] || String(studentRow[0] ?? '').trim();
 
     // Project-meeting path (deep-linked ?m=project:<id>) — a standing weekly track,
     // authorized PURELY by the plan (no check-in / senior gate). Resolved FIRST so a

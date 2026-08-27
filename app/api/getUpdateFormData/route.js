@@ -47,21 +47,22 @@ export async function GET() {
     const studentSheetId = sheetIdMatch[1];
 
     // 3. Get student name and grade year in parallel
-    const [overviewRes, nameRes] = await Promise.all([
-      sheets.spreadsheets.values.get({
-        spreadsheetId: studentSheetId,
-        range: '🔎 Overview!C4',
-        valueRenderOption: 'UNFORMATTED_VALUE',
-      }),
-      sheets.spreadsheets.values.get({
-        spreadsheetId: studentSheetId,
-        range: '🔎 Overview!B2',
-        valueRenderOption: 'UNFORMATTED_VALUE',
-      }),
+    // Non-fatal by design (mirrors lib/checkinIdentity.js): a sheet with no
+    // 🔎 Overview tab used to 500 the whole form load; now the grade is unknown
+    // (the skip path below handles it) and the name falls back to the roster.
+    const optionalCell = (range) =>
+      sheets.spreadsheets.values
+        .get({ spreadsheetId: studentSheetId, range, valueRenderOption: 'UNFORMATTED_VALUE' })
+        .then((r) => r.data.values?.[0]?.[0])
+        .catch((err) => {
+          console.error('[getUpdateFormData] Overview read failed:', range, err?.message);
+          return undefined;
+        });
+    const [gradeYear, overviewName] = await Promise.all([
+      optionalCell('🔎 Overview!C4'),
+      optionalCell('🔎 Overview!B2'),
     ]);
-
-    const gradeYear = overviewRes.data.values?.[0]?.[0];
-    const studentName = nameRes.data.values?.[0]?.[0] || '';
+    const studentName = overviewName || String(studentRow[0] ?? '').trim();
     const semester = getCurrentSemester();
 
     // Skip Q1 for MS/summer but still show Q2+Q3

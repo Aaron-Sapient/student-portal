@@ -162,6 +162,14 @@ export async function GET() {
       // One read serves both — see studentName / currentYear below.
       range: "'🔎 Overview'!B2:C4",
       valueRenderOption: 'UNFORMATTED_VALUE',
+    }).catch((err) => {
+      // Non-fatal, same contract as lib/checkinIdentity.js: a sheet with no
+      // 🔎 Overview tab (obsolete template, essays-only students — Ryan Koo,
+      // 2026-08-26) degrades to the roster name and "not a senior". Before this
+      // guard the rejection escaped Promise.all and the whole home payload
+      // failed, which blanked every booking card on the Meetings tab.
+      console.error('[home-data] Overview read failed:', err?.message)
+      return { data: { values: [] } }
     }),
     getStudentScores(sheets, studentSheetId, gradeFromClass(studentRow[1])),
     // Data-sufficiency gate per the `transcript` flag (Sheets today). On a read
@@ -202,7 +210,7 @@ export async function GET() {
   // Colleges tab, not here). Computed below once activeProjects is built.
   let progress = null
 
-  const studentName = nameRes.data.values?.[0]?.[0] || ''
+  const studentName = nameRes.data.values?.[0]?.[0] || masterName || ''
   console.log('Student name:', studentName)
 
   console.log('7. Project rows found:', projectRows.length)
