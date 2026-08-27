@@ -3,18 +3,21 @@ import { google } from 'googleapis';
 // Shared with the POST side so the range the form READS and the range the submit
 // WRITES can never disagree — the POST recomputes rather than trusting the client.
 import { getCurrentSemester, getGradeRanges } from '@/lib/checkinIdentity';
+import { getStudentByEmail, getStudentProfile, studentDisplay } from '@/lib/identity';
 
-const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
-const MASTER_TAB = '👩‍🎓 All Data';
-
-function getServiceAuth() {
-  return new google.auth.GoogleAuth({
+// The transcript grid (🎓 Transcript on the STUDENT sheet) is still read from
+// Sheets below — that domain's Supabase reader (lib/transcript.js) is the §4
+// sweep's job, not this route's. Built lazily, AFTER the skip gate, so the
+// summer / MS / unknown-year path never touches Google at all.
+function getStudentSheetsClient() {
+  const authClient = new google.auth.GoogleAuth({
     credentials: {
       client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
       private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
     },
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
+  return google.sheets({ version: 'v4', auth: authClient });
 }
 
 export async function GET() {
@@ -23,46 +26,27 @@ export async function GET() {
   if (!email) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const authClient = getServiceAuth();
-    const sheets = google.sheets({ version: 'v4', auth: authClient });
+    // 1. Identity from Supabase `students` (record of truth, ruling 2026-08-27).
+    //    No Master read — the old A:AY scan is gone, and with it the row index the
+    //    client used to echo back. The POST (lib/checkinIdentity.js
+    //    resolveCheckinStudent) derives its own write target from the session and
+    //    never trusted that echo, so `studentRowIndex` is kept in the payload
+    //    shape as null only so the client's pass-through keeps working.
+    const student = await getStudentByEmail(email);
+    if (!student) return Response.json({ error: 'Student not found' }, { status: 404 });
 
-    // 1. Find student row in master sheet
-    const masterRes = await sheets.spreadsheets.values.get({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${MASTER_TAB}!A:AY`,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
+    const studentSheetId = student.student_sheet_id;
+    if (!studentSheetId) return Response.json({ error: 'No student sheet found' }, { status: 404 });
+    const lastSubmitted = student.last_ryan_checkin ?? null; // was Master AY
+    const studentRowIndex = null;
 
-    const rows = masterRes.data.values || [];
-    const studentRow = rows.find(r => r[9] === email); // col J = index 9
-    if (!studentRow) return Response.json({ error: 'Student not found' }, { status: 404 });
-
-    const studentSheetUrl = studentRow[6]; // col G = index 6
-    const lastSubmitted = studentRow[50] || null; // col AY = index 50
-    const studentRowIndex = rows.indexOf(studentRow) + 1;
-
-    // 2. Extract student sheet ID from URL
-    const sheetIdMatch = studentSheetUrl?.match(/\/d\/([a-zA-Z0-9-_]+)/);
-    if (!sheetIdMatch) return Response.json({ error: 'No student sheet found' }, { status: 404 });
-    const studentSheetId = sheetIdMatch[1];
-
-    // 3. Get student name and grade year in parallel
-    // Non-fatal by design (mirrors lib/checkinIdentity.js): a sheet with no
-    // 🔎 Overview tab used to 500 the whole form load; now the grade is unknown
-    // (the skip path below handles it) and the name falls back to the roster.
-    const optionalCell = (range) =>
-      sheets.spreadsheets.values
-        .get({ spreadsheetId: studentSheetId, range, valueRenderOption: 'UNFORMATTED_VALUE' })
-        .then((r) => r.data.values?.[0]?.[0])
-        .catch((err) => {
-          console.error('[getUpdateFormData] Overview read failed:', range, err?.message);
-          return undefined;
-        });
-    const [gradeYear, overviewName] = await Promise.all([
-      optionalCell('🔎 Overview!C4'),
-      optionalCell('🔎 Overview!B2'),
-    ]);
-    const studentName = overviewName || String(studentRow[0] ?? '').trim();
+    // 2. Name + grade year from the 🔎 Overview mirror (student_profiles), degraded
+    //    to students.name / students.grade when the profile row is missing — never
+    //    fatal. A sheet with no 🔎 Overview tab used to 500 the whole form load
+    //    (Ryan Koo, 2026-08-26); now the grade is simply unknown and the skip path
+    //    below handles it.
+    const profile = await getStudentProfile(studentSheetId);
+    const { studentName, currentYear: gradeYear } = studentDisplay(student, profile);
     const semester = getCurrentSemester();
 
     // Skip Q1 for MS/summer but still show Q2+Q3
@@ -78,8 +62,9 @@ export async function GET() {
       });
     }
 
-    // 4. Get class names and grades
+    // 3. Get class names and grades (student sheet — see getStudentSheetsClient)
     const { namesRange, gradesRange } = getGradeRanges(gradeYear, semester);
+    const sheets = getStudentSheetsClient();
 
     const [namesRes, gradesRes] = await Promise.all([
       sheets.spreadsheets.values.get({
