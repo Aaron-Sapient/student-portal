@@ -1,103 +1,225 @@
-import { DateTime } from 'luxon';
+'use client';
+
 import {
-  CalendarDays,
+  CalendarCheck,
   CheckCircle2,
   CircleAlert,
   CircleDashed,
   FileText,
-  Landmark,
   Video,
 } from 'lucide-react';
-import { Bar, Eyebrow, Halo } from '@/app/(portal)/neu';
-import { ZONE } from '@/app/(portal)/portalUtils';
+import { Bar, Halo } from '@/app/(portal)/neu';
+import { GaugeCluster } from '@/app/(portal)/homeSections';
 
-/* Demo-only sections. Everything here is presentational and takes its values
-   from app/demo/demoData.js — no hooks, no fetch, no client state. The score
-   gauge and the movement chart are NOT re-authored here: /demo renders the real
-   GaugeCluster and ScoreReadout so the room is looking at the actual product. */
+/* Demo-only sections. Presentational, no hooks, no fetch: every value arrives
+   as plain JSON already formatted by app/demo/demoData.js, which is what lets
+   the sidebar switch sections with nothing to load and nothing to flash.
 
-/* ── Masthead ───────────────────────────────────────────────────────────── */
+   Card titles are real headings, not all-caps kickers over a heading. The
+   heading level is honest too: h1 in the sidebar identity, h2 per section, h3
+   per card, so the outline reads correctly to a screen reader. */
 
-export function Masthead({ student, today, note }) {
+/* ── Shared shells ──────────────────────────────────────────────────────── */
+
+export function SectionHead({ title, sub }) {
   return (
-    <header className="portal-rise" style={{ animationDelay: '0ms' }}>
-      <div className="flex flex-wrap items-end justify-between gap-x-10 gap-y-6">
-        <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-ink-faint">
-            {today.toFormat('cccc, LLLL d')}
-          </p>
-          <h1 className="mt-2 font-display text-[3.1rem] font-semibold leading-[1.02] tracking-tight text-ink">
-            Here’s how <span className="text-terracotta">{student.first}</span> is doing.
-          </h1>
-        </div>
-
-        {/* Who this is, at a glance — the room's orientation, in data rather
-            than in a sentence explaining the page. */}
-        <dl className="flex shrink-0 flex-wrap items-start gap-x-9 gap-y-4 border-l border-ink-faint/20 pl-9">
-          {[
-            ['Student', student.name],
-            ['Year', `${student.year} · Class of ${student.gradYear}`],
-            ['Counselor', student.counselor],
-            ['Essay coach', student.essayCoach],
-          ].map(([k, v]) => (
-            <div key={k}>
-              <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-faint">
-                {k}
-              </dt>
-              <dd className="mt-1 text-[15px] font-semibold text-ink">{v}</dd>
-            </div>
-          ))}
-        </dl>
-      </div>
-
-      {/* The human voice. Same treatment as the student portal's CoachCard: a
-          quiet serif line behind a terracotta rule, never a card. */}
-      <p className="mt-8 max-w-[74ch] border-l-2 border-terracotta/40 pl-5 font-display text-[17px] leading-relaxed text-ink-soft">
-        {note}
-      </p>
+    <header className="mb-8">
+      <h2 className="font-display text-[2.5rem] font-semibold leading-[1.05] tracking-tight text-ink">
+        {title}
+      </h2>
+      {sub && <p className="mt-3 max-w-[68ch] text-[16px] leading-relaxed text-ink-soft">{sub}</p>}
     </header>
   );
 }
 
-/* ── The application ────────────────────────────────────────────────────── */
-
-export function ApplicationCluster({ application, delay = 0 }) {
+function Card({ title, sub, aside, children, className = '' }) {
   return (
-    <section className="portal-rise neu-raised rounded-[2.5rem] p-7" style={{ animationDelay: `${delay}ms` }}>
-      <Eyebrow>Application progress</Eyebrow>
-      <div className="mt-5 flex items-center gap-5">
-        <Halo rings={[{ value: application.overall, className: 'text-terracotta' }]} size={124} stroke={11}>
-          <p className="font-display text-3xl font-semibold leading-none text-ink">
-            {Math.round(application.overall * 100)}
-            <span className="text-lg text-ink-soft">%</span>
-          </p>
-          <p className="mt-1 text-[9px] font-semibold uppercase tracking-[0.15em] text-ink-faint">
-            overall
-          </p>
-        </Halo>
-        <div className="flex min-w-0 flex-1 flex-col gap-4">
-          {application.streams.map((s) => (
-            <div key={s.key}>
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.11em] text-ink-faint">
-                  {s.label}
-                </span>
-                <span className="shrink-0 font-display text-base font-semibold leading-none text-ink">
-                  {Math.round(s.value * 100)}%
-                </span>
-              </div>
-              <div className="mt-2 flex">
-                <Bar value={s.value} fillClassName={s.fill} />
-              </div>
-            </div>
-          ))}
+    <section className={`neu-raised rounded-[2.5rem] p-7 ${className}`}>
+      {(title || aside) && (
+        <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
+          {title && (
+            <h3 className="font-display text-[1.3rem] font-semibold leading-snug text-ink">
+              {title}
+            </h3>
+          )}
+          {aside && <span className="text-[13px] font-medium text-ink-soft">{aside}</span>}
         </div>
-      </div>
+      )}
+      {sub && <p className="mt-1.5 max-w-[68ch] text-[14px] leading-relaxed text-ink-soft">{sub}</p>}
+      <div className={title || sub ? 'mt-5' : ''}>{children}</div>
     </section>
   );
 }
 
-/* ── The list ───────────────────────────────────────────────────────────── */
+function GroupRule({ label, tone, note }) {
+  return (
+    <div className="mb-1 mt-6 first:mt-0">
+      <div className="flex items-center gap-3">
+        <span className={`text-[13px] font-bold uppercase tracking-[0.14em] ${tone}`}>{label}</span>
+        <span className="h-px flex-1 bg-ink-faint/25" />
+      </div>
+      {note && <p className="mt-1.5 text-[13px] leading-relaxed text-ink-soft">{note}</p>}
+    </div>
+  );
+}
+
+function StatusDot({ on, onLabel, offLabel }) {
+  const Icon = on ? CheckCircle2 : CircleDashed;
+  return (
+    <span
+      className={`flex shrink-0 items-center gap-2 text-[13px] font-semibold ${
+        on ? 'text-moss' : 'text-ink-soft'
+      }`}
+    >
+      <Icon className="h-[18px] w-[18px]" strokeWidth={2.2} />
+      {on ? onLabel : offLabel}
+    </span>
+  );
+}
+
+/* ── The read, with a chart that argues the same thing the copy does ────────
+   The product's own ScoreReadout plots the DELTA between check-ins around a
+   zero baseline. On real climbing data that renders as threads hovering near
+   "no change", with the extracurricular line visibly descending at the right
+   edge because the last jump was smaller than the one before it. Under a
+   headline claiming the student is ahead of schedule, the widest element on the
+   board reads as deceleration. The scores climb 61 to 78; the transform hides
+   it. So the demo plots the SCORE, one line, endpoints labelled directly.
+   The shipped component is left alone; this is a demo-only replacement. */
+
+function ScoreTrajectory({ points }) {
+  if (!points || points.length < 2) return null;
+  const values = points.map((p) => p.value);
+  const lo = Math.floor((Math.min(...values) - 6) / 5) * 5;
+  const hi = Math.ceil((Math.max(...values) + 6) / 5) * 5;
+  const x = (i) => 6 + (i / (points.length - 1)) * 88;
+  const y = (v) => 88 - ((v - lo) / (hi - lo)) * 76;
+  const first = points[0];
+  const last = points[points.length - 1];
+
+  return (
+    <figure className="mt-6">
+      <div className="neu-inset relative rounded-2xl px-4 pb-9 pt-5" style={{ height: 210 }}>
+        <svg
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+          className="absolute inset-x-4 inset-y-5 h-[calc(100%-3.5rem)] w-[calc(100%-2rem)]"
+          role="img"
+          aria-label={`Overall Choice Score rising from ${first.value} on ${first.label} to ${last.value} on ${last.label}.`}
+        >
+          <polyline
+            points={points.map((p, i) => `${x(i)},${y(p.value)}`).join(' ')}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={3.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+            className="text-terracotta"
+          />
+          {points.map((p, i) => (
+            <circle
+              key={p.label}
+              cx={x(i)}
+              cy={y(p.value)}
+              r={2.2}
+              vectorEffect="non-scaling-stroke"
+              className="fill-terracotta"
+            />
+          ))}
+        </svg>
+
+        {/* Endpoints are labelled on the line itself, so the chart needs no
+            axis and no legend to be read from across a room. */}
+        <span
+          className="absolute font-display text-[1.05rem] font-semibold leading-none text-ink-soft"
+          style={{ left: '1rem', top: `calc(${y(first.value)}% + 0.1rem)` }}
+        >
+          {first.value}
+        </span>
+        <span
+          className="absolute font-display text-[1.6rem] font-semibold leading-none text-ink"
+          style={{ right: '1rem', top: `calc(${y(last.value)}% - 1.1rem)` }}
+        >
+          {last.value}
+        </span>
+        <span className="absolute bottom-3 left-4 text-[12px] font-semibold text-ink-soft">
+          {first.label}
+        </span>
+        <span className="absolute bottom-3 right-4 text-[12px] font-semibold text-ink-soft">
+          {last.label}
+        </span>
+      </div>
+      <figcaption className="mt-3 text-[13px] text-ink-soft">
+        Overall Choice Score at each of the last {points.length} check-ins, out of 100.
+      </figcaption>
+    </figure>
+  );
+}
+
+function WeeklyRead({ insight, trajectory }) {
+  return (
+    <section className="neu-raised rounded-[2.5rem] p-7">
+      <h3 className="font-display text-[1.3rem] font-semibold leading-snug text-ink">
+        This week’s read
+      </h3>
+      <p className="mt-3 max-w-[68ch] font-display text-[17px] leading-relaxed text-ink-soft">
+        {insight}
+      </p>
+      <ScoreTrajectory points={trajectory} />
+    </section>
+  );
+}
+
+/* ── 1. Overview ────────────────────────────────────────────────────────── */
+
+export function Overview({ data }) {
+  const m = data.nextMeeting;
+  return (
+    <>
+      <SectionHead title={`Here’s how ${data.student.first} is doing.`} />
+
+      {/* The human voice, as a pull quote rather than a stripe-bordered
+          callout. Weight and measure do the work a coloured left border was
+          doing before. */}
+      <p className="mb-8 max-w-[66ch] font-display text-[1.35rem] font-normal leading-[1.5] text-ink-soft">
+        {data.coachNote}
+      </p>
+
+      <div className="row-tie grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <div className="card-hero card-fill lg:col-span-5">
+          <GaugeCluster scores={data.scores} />
+        </div>
+        <div className="lg:col-span-7">
+          <WeeklyRead insight={data.scores.latest.insight} trajectory={data.trajectory} />
+        </div>
+      </div>
+
+      {/* 78 of what? The product never has to answer that, because a student
+          checking their own standing already knows. A parent seeing the number
+          once, from across a room, does not. */}
+      <p className="mt-5 max-w-[76ch] text-[15px] leading-relaxed text-ink-soft">
+        The Choice Score is out of 100. It weighs academics, activities and leadership against
+        the schools actually on {data.student.first}’s list, and it is up{' '}
+        {data.scores.latest.overall - data.scores.prev.overall} points since the last check-in.
+      </p>
+
+      {/* A pointer, not a second copy: the meeting lives in Meetings. */}
+      <p className="mt-7 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[15px] text-ink-soft">
+        <CalendarCheck
+          className="relative top-[3px] h-[18px] w-[18px] shrink-0 text-terracotta-deep"
+          strokeWidth={2.1}
+        />
+        <span>
+          Next up, <span className="font-semibold text-ink">{m.kind.toLowerCase()} with {m.who}</span>,{' '}
+          {m.dayLabel} at {m.timeLabel}.
+        </span>
+      </p>
+    </>
+  );
+}
+
+/* ── 2. College list ────────────────────────────────────────────────────── */
 
 const RANGE_TONE = {
   Reach: 'text-terracotta-deep',
@@ -106,271 +228,332 @@ const RANGE_TONE = {
 };
 
 function SchoolRow({ school }) {
+  /* One line on the wide surface this page is built for. Below that the fixed
+     meta columns add up to more than the row has, and the school name is the
+     column that gives, collapsing to a single letter. So the meta drops to its
+     own line and the name keeps its width. `lg:contents` puts the four meta
+     cells back into the row's own flex context at desktop width, so there is
+     one markup path rather than two. */
   return (
-    <li className="flex items-center gap-5 py-3">
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center">
-        {school.confirmed ? (
-          <CheckCircle2 className="h-[18px] w-[18px] text-moss" strokeWidth={2.2} />
-        ) : (
-          <CircleDashed className="h-[18px] w-[18px] text-ink-faint" strokeWidth={2.2} />
-        )}
-      </span>
-      <span className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink">
+    <li className="py-3.5 lg:flex lg:items-center lg:gap-4">
+      <span className="block truncate text-[16px] font-semibold text-ink lg:min-w-0 lg:flex-1">
         {school.name}
       </span>
-      <span className="w-14 shrink-0 text-right text-[11px] font-bold uppercase tracking-[0.1em] text-ink-faint">
-        {school.term}
-      </span>
-      <span className="flex w-40 shrink-0 items-center gap-3">
-        <Bar value={school.pct} />
-        <span className="w-9 shrink-0 text-right text-[12px] font-semibold text-ink-soft">
-          {Math.round(school.pct * 100)}%
+      <span className="mt-1.5 flex items-center gap-4 lg:mt-0 lg:contents">
+        <span className="w-[10rem] shrink-0 text-[13px] font-semibold text-ink-soft">
+          {school.term}
+        </span>
+        <span className="w-[5.5rem] shrink-0 text-[13px] font-medium text-ink-soft">
+          Due {school.due}
+        </span>
+        <span className="flex w-[7.5rem] shrink-0 items-center gap-2.5">
+          <Bar value={school.pct} />
+          <span className="w-10 shrink-0 text-right text-[13px] font-semibold text-ink-soft">
+            {Math.round(school.pct * 100)}%
+          </span>
+        </span>
+        <span className="w-[6.5rem] shrink-0">
+          <StatusDot on={school.confirmed} onLabel="Confirmed" offLabel="Deciding" />
         </span>
       </span>
     </li>
   );
 }
 
-export function CollegeList({ colleges, delay = 0 }) {
+export function Colleges({ data }) {
+  const c = data.colleges;
   return (
-    <section className="portal-rise neu-raised rounded-[2.5rem] p-7" style={{ animationDelay: `${delay}ms` }}>
-      <div className="flex flex-wrap items-baseline justify-between gap-4">
-        <Eyebrow>The list</Eyebrow>
-        <div className="flex items-baseline gap-7">
-          {[
-            [colleges.onList, 'on the list'],
-            [colleges.confirmed, 'confirmed'],
-            [colleges.goal, 'list goal'],
-          ].map(([n, label]) => (
-            <span key={label} className="flex items-baseline gap-2">
-              <span className="font-display text-xl font-semibold leading-none text-ink">{n}</span>
-              <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-faint">
-                {label}
-              </span>
-            </span>
-          ))}
+    <>
+      <SectionHead
+        title={`${data.student.first}’s college list`}
+        sub={`${c.onList} schools, ${c.confirmed} confirmed. Reach, target and likely, with the supplemental essay for each one tracked on its own bar.`}
+      />
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <div className="lg:col-span-8">
+          <Card>
+            {c.groups.map((g) => (
+              <div key={g.range}>
+                <GroupRule label={g.range} tone={RANGE_TONE[g.range]} note={g.note} />
+                <ul className="divide-y divide-ink-faint/15">
+                  {g.schools.map((s) => (
+                    <SchoolRow key={s.name} school={s} />
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </Card>
+        </div>
+        <div className="lg:col-span-4">
+          <ApplicationCard application={data.application} />
         </div>
       </div>
+    </>
+  );
+}
 
-      {/* Hairline-divided rows, not a card per school: eleven cards would cost
-          eleven times the real estate to say the same eleven things. */}
-      <div className="mt-5 space-y-5">
-        {colleges.groups.map((g) => (
-          <div key={g.range}>
-            <div className="flex items-center gap-3">
-              <Landmark className={`h-4 w-4 ${RANGE_TONE[g.range]}`} strokeWidth={2.1} />
-              <span
-                className={`text-[11px] font-bold uppercase tracking-[0.16em] ${RANGE_TONE[g.range]}`}
-              >
-                {g.range}
+function ApplicationCard({ application }) {
+  return (
+    <section className="neu-raised rounded-[2.5rem] p-7">
+      <div className="flex items-baseline justify-between gap-4">
+        <h3 className="font-display text-[1.3rem] font-semibold leading-snug text-ink">
+          Application progress
+        </h3>
+        <span className="font-display text-[1.6rem] font-semibold leading-none text-ink">
+          {Math.round(application.overall * 100)}%
+        </span>
+      </div>
+      <div className="mt-4 flex">
+        <Bar value={application.overall} />
+      </div>
+      <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
+        Round 1 opens the supplemental essays, which is where most of the remaining work sits.
+      </p>
+      <div className="mt-6 flex flex-col gap-4 border-t border-ink-faint/20 pt-5">
+        {application.streams.map((st) => (
+          <div key={st.key}>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[13px] font-semibold text-ink-soft">{st.label}</span>
+              <span className="shrink-0 font-display text-base font-semibold leading-none text-ink">
+                {Math.round(st.value * 100)}%
               </span>
-              <span className="h-px flex-1 bg-ink-faint/20" />
             </div>
-            <ul className="mt-1 divide-y divide-ink-faint/15">
-              {g.schools.map((s) => (
-                <SchoolRow key={s.name} school={s} />
-              ))}
-            </ul>
+            <div className="mt-2 flex">
+              <Bar value={st.value} fillClassName={st.fill} />
+            </div>
           </div>
         ))}
       </div>
-      <p className="mt-5 text-[12px] text-ink-faint">
-        Percentages are supplemental-essay completion for that school.
-      </p>
     </section>
   );
 }
 
-/* ── Meetings ───────────────────────────────────────────────────────────── */
+/* ── 3. Meetings ────────────────────────────────────────────────────────── */
 
 const HW = {
   done: { icon: CheckCircle2, label: 'Homework done', cls: 'text-moss' },
   partly: { icon: CircleDashed, label: 'Partly done', cls: 'text-terracotta-deep' },
 };
 
-export function Meetings({ next, sessions, today, delay = 0 }) {
+export function Meetings({ data }) {
+  const m = data.nextMeeting;
   return (
-    <section className="portal-rise neu-raised rounded-[2.5rem] p-7" style={{ animationDelay: `${delay}ms` }}>
-      <Eyebrow>Meetings</Eyebrow>
+    <>
+      <SectionHead
+        title="Every meeting, logged"
+        sub="Forty five minutes a week with Aaron on the writing, plus a strategy session with Ryan each month. What was covered and what was assigned is written down after every one."
+      />
 
-      {/* Next up — the one forward-looking thing on the board, so it gets the
-          only filled surface in the card. */}
-      <div className="neu-inset mt-4 flex items-center gap-5 rounded-[1.6rem] p-5">
-        <span className="neu-chip flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-terracotta">
-          <Video className="h-6 w-6" strokeWidth={1.9} />
+      {/* Next up is its own card rather than a card nested inside the log. */}
+      <section className="neu-raised mb-6 flex flex-wrap items-center gap-x-8 gap-y-5 rounded-[2.5rem] p-7">
+        <span className="neu-chip flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl text-terracotta">
+          <Video className="h-7 w-7" strokeWidth={1.9} />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-faint">
-            Next up
-          </p>
-          <p className="mt-1 font-display text-[1.2rem] font-semibold leading-snug text-ink">
-            {next.kind} with {next.with}
-          </p>
-          <p className="mt-1 text-[13px] text-ink-soft">{next.agenda}</p>
+          <h3 className="font-display text-[1.6rem] font-semibold leading-snug text-ink">
+            {m.kind} with {m.who}
+          </h3>
+          <p className="mt-1 text-[15px] text-ink-soft">{m.agenda}</p>
         </div>
         <div className="shrink-0 text-right">
-          <p className="font-display text-[1.2rem] font-semibold leading-none text-ink">
-            {next.when.toFormat('ccc, LLL d')}
+          <p className="font-display text-[1.4rem] font-semibold leading-none text-ink">
+            {m.dayLabel}
           </p>
-          <p className="mt-1.5 text-[12px] font-semibold text-ink-soft">
-            {next.when.toFormat('h:mm a')} · {next.minutes} min
+          <p className="mt-2 text-[14px] font-semibold text-ink-soft">
+            {m.timeLabel}, {m.minutes} minutes
           </p>
+        </div>
+      </section>
+
+      <Card title="Recent sessions" aside={`${data.sessions.length} logged this term`}>
+        <ul className="divide-y divide-ink-faint/15">
+          {data.sessions.map((s) => {
+            const hw = HW[s.homework] || HW.partly;
+            const Icon = hw.icon;
+            return (
+              <li key={s.id} className="flex items-start gap-6 py-4">
+                <span className="w-20 shrink-0 pt-1 text-[13px] font-bold uppercase tracking-[0.08em] text-ink-soft">
+                  {s.dateLabel}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[16px] font-semibold text-ink">
+                    {s.topic}
+                    <span className="ml-2.5 text-[13px] font-medium text-ink-soft">
+                      with {s.who}
+                    </span>
+                  </span>
+                  <span className="mt-1 block max-w-[68ch] text-[14px] leading-relaxed text-ink-soft">
+                    {s.note}
+                  </span>
+                </span>
+                <span
+                  className={`flex w-[9.5rem] shrink-0 items-center gap-2 pt-1 text-[13px] font-semibold ${hw.cls}`}
+                >
+                  <Icon className="h-[18px] w-[18px]" strokeWidth={2.2} />
+                  {hw.label}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </Card>
+    </>
+  );
+}
+
+/* ── 4. Essays and files ────────────────────────────────────────────────── */
+
+export function Writing({ data }) {
+  return (
+    <>
+      <SectionHead
+        title="Essays, draft by draft"
+        sub={`${data.essays.length} pieces of writing in flight. Every draft is saved here as it is written, so you can read what she is working on without asking for it.`}
+      />
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <div className="lg:col-span-7">
+          <Card title="In progress">
+            <ul className="divide-y divide-ink-faint/15">
+              {data.essays.map((e) => (
+                <li key={e.id} className="py-4">
+                  <div className="flex items-baseline justify-between gap-5">
+                    <span className="min-w-0 text-[16px] font-semibold text-ink">{e.name}</span>
+                    <span className="shrink-0 text-[13px] font-medium text-ink-soft">{e.round}</span>
+                  </div>
+                  <div className="mt-2.5 flex items-center gap-4">
+                    <span className="w-44 shrink-0 text-[14px] text-ink-soft">{e.stage}</span>
+                    <Bar value={e.pct} />
+                    <span className="w-10 shrink-0 text-right text-[13px] font-semibold text-ink-soft">
+                      {Math.round(e.pct * 100)}%
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        </div>
+        <div className="lg:col-span-5">
+          <Card title="Shared files" aside={`${data.files.length} documents`}>
+            <ul className="divide-y divide-ink-faint/15">
+              {data.files.map((f) => (
+                <li key={f.id} className="flex items-center gap-3 py-3.5">
+                  <FileText
+                    className="h-[18px] w-[18px] shrink-0 text-terracotta-deep"
+                    strokeWidth={2}
+                  />
+                  <span className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink">
+                    {f.name}
+                  </span>
+                  <span className="shrink-0 text-[12px] font-semibold text-ink-soft">{f.kind}</span>
+                  <span className="w-14 shrink-0 text-right text-[13px] font-medium text-ink-soft">
+                    {f.dateLabel}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ── 5. The plan ────────────────────────────────────────────────────────── */
+
+export function Plan({ data }) {
+  return (
+    <>
+      <SectionHead
+        title="The plan for senior year"
+        sub="The course plan, the activities that actually carry the application, and where we are in the admissions season."
+      />
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <div className="lg:col-span-5">
+          <Card title="Course plan" sub={data.coursePlan.summary}>
+            <ul className="divide-y divide-ink-faint/15">
+              {data.coursePlan.courses.map((c) => (
+                <li key={c.id} className="flex items-baseline gap-4 py-3.5">
+                  <span className="w-[4.5rem] shrink-0 text-[12px] font-bold uppercase tracking-[0.1em] text-ink-soft">
+                    {c.tag}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[15px] font-semibold text-ink">{c.name}</span>
+                    <span className="mt-0.5 block text-[13px] leading-relaxed text-ink-soft">
+                      {c.why}
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        </div>
+
+        <div className="lg:col-span-7">
+          <Card title="Activities and projects">
+            <ul className="divide-y divide-ink-faint/15">
+              {data.projects.map((p) => (
+                <li key={p.id} className="py-4">
+                  <div className="flex items-baseline justify-between gap-5">
+                    <span className="min-w-0 text-[16px] font-semibold text-ink">{p.name}</span>
+                    <span className="shrink-0 text-[13px] font-medium text-ink-soft">{p.role}</span>
+                  </div>
+                  <p className="mt-1 text-[14px] leading-relaxed text-ink-soft">{p.detail}</p>
+                  <div className="mt-2.5 flex items-center gap-4">
+                    <Bar value={p.pct} />
+                    <span className="w-10 shrink-0 text-right text-[13px] font-semibold text-ink-soft">
+                      {Math.round(p.pct * 100)}%
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </Card>
         </div>
       </div>
 
-      <p className="mt-6 text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-faint">
-        Recent sessions
-      </p>
-      <ul className="mt-1 divide-y divide-ink-faint/15">
-        {sessions.map((s) => {
-          const dt = today.minus({ days: s.d });
-          const hw = HW[s.homework] || HW.partly;
-          const Icon = hw.icon;
-          return (
-            <li key={s.d} className="flex items-start gap-5 py-3.5">
-              <span className="w-16 shrink-0 pt-0.5 text-[12px] font-bold uppercase tracking-[0.08em] text-ink-faint">
-                {dt.toFormat('LLL d')}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-[15px] font-semibold text-ink">
-                  {s.topic}
-                  <span className="ml-2 text-[12px] font-medium text-ink-faint">
-                    with {s.with}
-                  </span>
-                </span>
-                <span className="mt-0.5 block text-[13px] leading-relaxed text-ink-soft">
-                  {s.note}
-                </span>
-              </span>
-              <span
-                className={`flex shrink-0 items-center gap-1.5 pt-0.5 text-[12px] font-semibold ${hw.cls}`}
-                title={hw.label}
-              >
-                <Icon className="h-4 w-4" strokeWidth={2.2} />
-                {hw.label}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
-    </section>
-  );
-}
-
-/* ── Files ──────────────────────────────────────────────────────────────── */
-
-export function FileShelf({ files, today, delay = 0 }) {
-  return (
-    <section className="portal-rise neu-raised rounded-[2.5rem] p-7" style={{ animationDelay: `${delay}ms` }}>
-      <div className="flex items-baseline justify-between gap-4">
-        <Eyebrow>Shared files</Eyebrow>
-        <span className="text-[11px] font-medium text-ink-faint">
-          {files.length} documents, always current
-        </span>
-      </div>
-      <ul className="mt-4 divide-y divide-ink-faint/15">
-        {files.map((f) => (
-          <li key={f.name} className="flex items-center gap-3 py-3">
-            <FileText className="h-[18px] w-[18px] shrink-0 text-terracotta-deep" strokeWidth={2} />
-            <span className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink">
-              {f.name}
-            </span>
-            <span className="neu-chip shrink-0 rounded-full px-2.5 py-1.5 text-[10px] font-bold uppercase leading-none tracking-[0.08em] text-ink-soft">
-              {f.kind}
-            </span>
-            <span className="w-14 shrink-0 text-right text-[12px] font-semibold text-ink-faint">
-              {today.minus({ days: f.d }).toFormat('LLL d')}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-/* ── The season ─────────────────────────────────────────────────────────── */
-
-export function Season({ today, delay = 0 }) {
-  const y = today.month >= 4 ? today.year : today.year - 1;
-  const dt = (m, d) => DateTime.fromObject({ year: y, month: m, day: d }, { zone: ZONE });
-  const phases = [
-    { key: 'summer', label: 'Summer', work: 'Common App main essay + UC PIQs', start: dt(6, 15), end: dt(8, 31) },
-    {
-      key: 'r1',
-      label: 'Round 1',
-      work: 'ED · EA · REA supplementals',
-      start: dt(9, 1),
-      end: dt(10, 15),
-      milestones: [{ label: 'List locked', date: dt(9, 1) }],
-    },
-    {
-      key: 'r2',
-      label: 'Round 2',
-      work: 'ED2 · RD supplementals',
-      start: dt(10, 16),
-      end: dt(12, 15),
-      milestones: [{ label: 'UC applications due', date: dt(12, 1) }],
-    },
-  ];
-  const current = phases.find((p) => today <= p.end.endOf('day'));
-
-  return (
-    <section className="portal-rise neu-raised rounded-[2.5rem] p-7" style={{ animationDelay: `${delay}ms` }}>
-      <div className="flex items-baseline justify-between gap-4">
-        <Eyebrow>The season</Eyebrow>
-        <CalendarDays className="h-4 w-4 text-ink-faint" strokeWidth={2} />
-      </div>
-      <ol className="mt-5">
-        {phases.map((p, i) => {
-          const done = today > p.end.endOf('day');
-          const active = p === current;
-          return (
-            <li key={p.key} className="relative flex gap-4 pb-6 last:pb-0">
-              {i < phases.length - 1 && (
-                <span className="absolute bottom-1 left-[7px] top-5 w-px bg-ink-faint/25" />
-              )}
-              <span className="flex h-4 w-4 shrink-0 items-center justify-center pt-1">
-                {done ? (
-                  <CheckCircle2 className="h-4 w-4 text-moss" strokeWidth={2.4} />
-                ) : active ? (
-                  <span className="neu-pulse h-3 w-3 rounded-full bg-terracotta" />
-                ) : (
-                  <span className="h-3 w-3 rounded-full border-2 border-ink-faint/50" />
+      <div className="mt-6">
+        <Card title="The season">
+          <ol className="grid grid-cols-1 gap-6 md:grid-cols-3">
+            {data.phases.map((p) => (
+              <li key={p.key}>
+                <div className="flex items-center gap-3">
+                  {p.done ? (
+                    <CheckCircle2 className="h-[18px] w-[18px] text-moss" strokeWidth={2.4} />
+                  ) : p.live ? (
+                    <span className="neu-pulse h-3.5 w-3.5 rounded-full bg-terracotta" />
+                  ) : (
+                    <span className="h-3.5 w-3.5 rounded-full border-2 border-ink-soft/50" />
+                  )}
+                  <span className="text-[16px] font-semibold text-ink">{p.name}</span>
+                  <span className="text-[13px] font-medium text-ink-soft">{p.range}</span>
+                </div>
+                {p.current && (
+                  <p className="mt-1.5 pl-[30px] text-[13px] font-bold uppercase tracking-[0.12em] text-terracotta-deep">
+                    {p.live ? 'Here now' : 'Up next'}
+                  </p>
                 )}
-              </span>
-              <div className="min-w-0">
-                <p className="text-[14px] font-semibold text-ink">
-                  {p.label}
-                  <span className="ml-2 text-[12px] font-medium text-ink-faint">
-                    {p.start.toFormat('LLL d')} – {p.end.toFormat('LLL d')}
-                  </span>
-                </p>
-                <p className="mt-0.5 text-[13px] text-ink-soft">{p.work}</p>
-                {p.milestones?.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {p.milestones.map((m) => {
-                      const passed = today > m.date.endOf('day');
-                      const MIcon = passed ? CheckCircle2 : CircleAlert;
-                      return (
-                        <span
-                          key={m.label}
-                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] ${
-                            passed ? 'bg-moss/[0.10] text-moss' : 'bg-terracotta/[0.09] text-terracotta-deep'
-                          }`}
-                        >
-                          <MIcon className="h-3 w-3" strokeWidth={2.4} />
-                          {m.label}
-                          <span className="font-bold tracking-normal">{m.date.toFormat('LLL d')}</span>
-                        </span>
-                      );
-                    })}
-                  </div>
+                <p className="mt-2 pl-[30px] text-[14px] leading-relaxed text-ink-soft">{p.work}</p>
+                {p.milestone && (
+                  <p
+                    className={`mt-2.5 ml-[30px] inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px] font-semibold ${
+                      p.milestone.passed
+                        ? 'bg-moss/[0.12] text-moss'
+                        : 'bg-terracotta/[0.10] text-terracotta-deep'
+                    }`}
+                  >
+                    {p.milestone.passed ? (
+                      <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={2.4} />
+                    ) : (
+                      <CircleAlert className="h-3.5 w-3.5" strokeWidth={2.4} />
+                    )}
+                    {p.milestone.name}, {p.milestone.date}
+                  </p>
                 )}
-              </div>
-            </li>
-          );
-        })}
-      </ol>
-    </section>
+              </li>
+            ))}
+          </ol>
+        </Card>
+      </div>
+    </>
   );
 }

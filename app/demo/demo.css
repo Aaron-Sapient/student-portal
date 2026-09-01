@@ -1,83 +1,93 @@
-/* /demo only. Scoped to .demo-board so nothing here can reach the real portal.
+/* /demo only. Every rule is scoped to .demo-board so nothing here can reach the
+   real portal.
 
-   Two jobs, both consequences of the surface: this page is read on an office TV
-   from across a room, and it is read at desktop width — the two things the
-   portal's phone-first layout is worst at.
+   The whole file exists because this surface has a use scene the portal was
+   never designed for: a 1080-tall office television, read from across a room,
+   by someone who has never seen the product before and will see it once. */
 
-   1) SCALE. The portal's type is sized for a phone held at arm's length (10px
-      eyebrows, 14px body). Stretched to 1920 those become specks. Rather than
-      re-authoring every component at a second size, the whole board is zoomed:
-      one declaration, no component drift, radii and strokes scale with the type.
-      `zoom` (unlike `transform: scale`) reflows, so the grid still lays out
-      correctly at the zoomed width.
-
-   2) ONE GUTTER. The portal's cards were authored per-tab and carry three
-      different radii (2rem / 2.5rem / 1.75rem) and three different insets. On a
-      phone they are never seen side by side; on a board they sit in one row and
-      every mismatch reads as a jog. Normalize the card shell once, here. */
-
+/* ── 1. Scale ───────────────────────────────────────────────────────────────
+   The portal's type is sized for a phone held at arm's length: 10px labels,
+   14px body. Stretched to 1920 those are specks. Rather than re-authoring
+   every component at a second size, the whole board is zoomed. One
+   declaration, no component drift, and radii, strokes and shadows scale with
+   the type. `zoom` (unlike `transform: scale`) reflows, so the grid still lays
+   out correctly at the zoomed width. */
 .demo-board {
   zoom: 1;
 }
-
 @media (min-width: 1400px) {
   .demo-board {
     zoom: 1.08;
   }
 }
-
 @media (min-width: 1750px) {
   .demo-board {
-    zoom: 1.22;
+    zoom: 1.2;
   }
 }
 
-/* One card shell for the whole board. `section.neu-raised` is deliberately
-   narrow: it hits the top-level cards only, never the nested .neu-chip /
-   .neu-inset surfaces inside them. */
+/* ── 2. Contrast, re-derived for the room ───────────────────────────────────
+   Measured on the shipped tokens: --color-ink-faint (#a89e8f) is 2.51:1 on the
+   cream page and 2.25:1 on the card gradient's dark end. That is under the 3:1
+   floor for large text, let alone 4.5:1 for the 10px labels the portal uses it
+   on. It is survivable on a phone at 30cm; it is illegible on a television at
+   four metres. Re-derived from the same hue, verified arithmetically:
+     light #726858 -> 5.19:1 on page, 4.67:1 on card
+     dark  #9a9998 -> 6.17:1 on page, 5.37:1 on card
+   Scoped to the board, so the product's own surfaces keep their token. */
+.demo-board {
+  --color-ink-faint: #726858;
+}
+@media (prefers-color-scheme: dark) {
+  .demo-board {
+    --color-ink-faint: #9a9998;
+  }
+}
+
+/* ── 3. One card shell ──────────────────────────────────────────────────────
+   The portal's cards were authored per tab and carry three radii (2rem /
+   2.5rem / 1.75rem) and three insets. On a phone they are never seen side by
+   side; on a board they sit in one row and every mismatch reads as a jog.
+   Normalise the shell once, here, and let content differences do the work. */
 .demo-board section.neu-raised {
   border-radius: 2.5rem;
   padding: 1.75rem;
 }
 
-/* Cards in a row share one bottom edge. Claude's default alignment check is
-   per-container and the eye reads across the whole row, so a 430px card beside
-   a 250px one reads as a jog no matter how correct each card is on its own
-   terms (frontend-designt → "Alignment is checked across containers"). Content
-   is balanced first — the schools list and the session log are sized against
-   each other — and this only takes up the remainder. */
-.demo-board .board-row > div {
+/* A row marked .row-tie shares one bottom edge, because the eye reads across a
+   row and a 430px card beside a 250px one is a jog. It is opt-in, not blanket:
+   forcing every row level inflates a genuinely short card with hundreds of
+   pixels of empty ground, which reads worse than the jog it fixed. */
+.demo-board .row-tie > div {
   display: flex;
   flex-direction: column;
 }
-.demo-board .board-row > div > section {
+.demo-board .row-tie > div > section {
   flex: 1 1 auto;
 }
 
-/* The Choice Score is the one number the room is actually there to see, and the
-   portal sizes it for a phone at arm's length. Scaled up in place rather than
-   re-authored, so this stays the real component: the ring, the delta chips and
-   the sub-score bars all grow together, and the card ends up tall enough to sit
-   level with the movement chart beside it. */
+/* The Choice Score is the one number the room is there to see, and the portal
+   sizes it for a phone. Scaled up in place rather than re-authored, so it stays
+   the real component. Padding is divided back out so its heading still starts
+   on the same baseline as the unzoomed card beside it. */
 .demo-board .card-hero > section {
-  zoom: 1.2;
+  zoom: 1.1;
+  padding: 1.6rem;
 }
-.demo-board .card-lift > section {
-  zoom: 1.2;
-}
-/* A zoomed card's padding is zoomed too, which would push its eyebrow off the
-   baseline its unzoomed neighbour sits on. Divide it back out so every card on
-   the board starts its content on the same line. */
-.demo-board .card-hero > section,
-.demo-board .card-lift > section {
-  padding: 1.46rem;
+/* Only once the board itself is at its widest does the score card get its full
+   lift. At 1440 the extra zoom squeezed the sub-score column until the product
+   component truncated its own labels to ACAD... and EXTR..., which is the one
+   place on the board a shortened word is unmistakably a defect. */
+@media (min-width: 1750px) {
+  .demo-board .card-hero > section {
+    zoom: 1.2;
+    padding: 1.46rem;
+  }
 }
 
-/* A gauge card is short by nature: an eyebrow and one ring-plus-bars row. Once
-   the row equalises heights, that leaves the ring sitting high with dead cream
-   beneath it. Let the gauge row take the slack and centre in it, so the card
-   reads as a hero with breathing room instead of a card that ran out of
-   content. The eyebrow stays pinned to the shared top baseline. */
+/* A gauge card is short by nature: a title and one ring-plus-bars row. Once the
+   row equalises heights that leaves the ring high with dead cream under it. Let
+   the gauge row take the slack and centre in it. */
 .demo-board .card-fill > section {
   display: flex;
   flex-direction: column;
@@ -86,10 +96,89 @@
   flex: 1 1 auto;
 }
 
-/* The board is a display surface, not a workspace: nothing here is clicked, so
-   the components' tap-feedback transforms would only ever fire by accident. */
+/* ── 4. Motion: one moment, not one per card ────────────────────────────────
+   Every card used to rise on entry with a staggered delay, which is the same
+   entrance repeated eight times and, worse, starts every element at opacity 0.
+   On a television that reads as the page failing to load. The board's single
+   authored moment is the score ring drawing itself, which the product component
+   already owns. Everything else is simply present. */
+.demo-board .portal-rise {
+  animation: none;
+}
+
+/* ── 5. Browser surfaces ────────────────────────────────────────────────────
+   The parts nobody draws still carry the design, and they ship with defaults
+   belonging to no design system. On a demo screen a stock blue selection
+   highlight or a grey scrollbar is the one pixel that says "web page". */
+.demo-board ::selection {
+  background: color-mix(in srgb, var(--color-terracotta) 26%, transparent);
+  color: var(--color-ink);
+}
+.demo-board {
+  caret-color: var(--color-terracotta);
+  /* Figures line up in columns instead of dancing. Every number on this board
+     sits in a list beside another number. */
+  font-variant-numeric: tabular-nums;
+  scrollbar-color: var(--color-ink-faint) transparent;
+  scrollbar-width: thin;
+}
+.demo-board *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.demo-board *::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-ink-faint) 55%, transparent);
+  border-radius: 999px;
+}
+.demo-board *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* A real focus ring, in the palette. The rail is the only thing on the board
+   that can take focus, and it is the thing a keyboard user will reach for. */
+.demo-board :focus-visible {
+  outline: 2px solid var(--color-terracotta);
+  outline-offset: 3px;
+  border-radius: 1rem;
+}
+.demo-nav-item {
+  min-height: 44px;
+}
+
+/* The reused score card titles itself with the portal's all-caps micro label,
+   while every card the demo authors uses a real heading. Side by side that is
+   two titling systems in one row. Restyled here to match, rather than editing
+   the shipped component: same words, same voice as its neighbour. */
+.demo-board .card-hero > section > div:first-child > p {
+  font-family: var(--font-fraunces), Georgia, serif;
+  font-size: 1.3rem;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--color-ink);
+}
+
+/* ── 6. The Beta pill ───────────────────────────────────────────────────────
+   Correct and honest inside the product, where a student reading their own
+   score should know the rubric is still being tuned. On a proposal asset it is
+   the first badge a parent reads beside their child's number, and it says the
+   measurement is unfinished while somebody asks them for forty thousand
+   dollars. The honesty requirement is already carried by the sample marker at
+   the foot of the board. Hidden here only; the shipped portal keeps it. */
+.demo-board [title^="Scores are a work in progress"] {
+  display: none;
+}
+
+/* ── 7. Reduced motion ──────────────────────────────────────────────────────
+   The alternative has to preserve the state, not delete it: with the transition
+   removed the ring is simply drawn at its final value on first paint, which is
+   the information the animation was carrying. */
 @media (prefers-reduced-motion: reduce) {
-  .demo-board .portal-rise {
+  .demo-board .neu-pulse {
     animation: none;
+  }
+  .demo-board circle {
+    transition: none !important;
   }
 }
