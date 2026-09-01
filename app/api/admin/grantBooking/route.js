@@ -86,12 +86,16 @@ export async function POST(request) {
 
     let kind;
     let detail;
+    // The grant this request creates, when it is a senior one-off. The booking
+    // email has to name it: the student may already hold a weekly cross-meeting
+    // with the same teacher, and a bare link books that one instead.
+    let oneoffId = null;
 
     if (senior) {
       // Separate, additive track — does not touch the weekly cadence.
       const today = DateTime.now().setZone('America/Los_Angeles').startOf('day');
       const through = today.plus({ days: ONEOFF_WINDOW_DAYS });
-      await createOneoffGrant(senior, {
+      const grant = await createOneoffGrant(senior, {
         teacher: slug,
         minutes: mins,
         from: today.toISODate(),
@@ -99,6 +103,7 @@ export async function POST(request) {
         note: note?.trim() || null,
         grantedBy: gate.email,
       });
+      oneoffId = grant?.id ?? null;
       kind = 'senior';
       detail = `extra meeting · bookable through ${through.toFormat('LLL d')}`;
     } else {
@@ -166,6 +171,7 @@ export async function POST(request) {
           instructorSlug: slug,
           instructorName: instructor.displayName,
           reason: note?.trim() || 'a one-off meeting set up for you',
+          oneoffId,
         });
         emailed = true;
       } catch (emailErr) {
