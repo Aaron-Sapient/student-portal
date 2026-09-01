@@ -9,7 +9,7 @@ import {
   Video,
 } from 'lucide-react';
 import { Bar, Halo } from '@/app/(portal)/neu';
-import { GaugeCluster } from '@/app/(portal)/homeSections';
+import { GaugeCluster, ScoreReadout } from '@/app/(portal)/homeSections';
 
 /* Demo-only sections. Presentational, no hooks, no fetch: every value arrives
    as plain JSON already formatted by app/demo/demoData.js, which is what lets
@@ -55,7 +55,7 @@ function GroupRule({ label, tone, note }) {
   return (
     <div className="mb-1 mt-6 first:mt-0">
       <div className="flex items-center gap-3">
-        <span className={`text-[13px] font-bold uppercase tracking-[0.14em] ${tone}`}>{label}</span>
+        <span className={`text-[15px] font-semibold ${tone}`}>{label}</span>
         <span className="h-px flex-1 bg-ink-faint/25" />
       </div>
       {note && <p className="mt-1.5 text-[13px] leading-relaxed text-ink-soft">{note}</p>}
@@ -77,135 +77,40 @@ function StatusDot({ on, onLabel, offLabel }) {
   );
 }
 
-/* ── The read, with a chart that argues the same thing the copy does ────────
-   The product's own ScoreReadout plots the DELTA between check-ins around a
-   zero baseline. On real climbing data that renders as threads hovering near
-   "no change", with the extracurricular line visibly descending at the right
-   edge because the last jump was smaller than the one before it. Under a
-   headline claiming the student is ahead of schedule, the widest element on the
-   board reads as deceleration. The scores climb 61 to 78; the transform hides
-   it. So the demo plots the SCORE, one line, endpoints labelled directly.
-   The shipped component is left alone; this is a demo-only replacement. */
-
-function ScoreTrajectory({ points }) {
-  if (!points || points.length < 2) return null;
-  const values = points.map((p) => p.value);
-  const lo = Math.floor((Math.min(...values) - 6) / 5) * 5;
-  const hi = Math.ceil((Math.max(...values) + 6) / 5) * 5;
-  const x = (i) => 6 + (i / (points.length - 1)) * 88;
-  const y = (v) => 88 - ((v - lo) / (hi - lo)) * 76;
-  const first = points[0];
-  const last = points[points.length - 1];
-
-  return (
-    <figure className="mt-6">
-      <div className="neu-inset relative rounded-2xl px-4 pb-9 pt-5" style={{ height: 210 }}>
-        <svg
-          viewBox="0 0 100 100"
-          preserveAspectRatio="none"
-          className="absolute inset-x-4 inset-y-5 h-[calc(100%-3.5rem)] w-[calc(100%-2rem)]"
-          role="img"
-          aria-label={`Overall Choice Score rising from ${first.value} on ${first.label} to ${last.value} on ${last.label}.`}
-        >
-          <polyline
-            points={points.map((p, i) => `${x(i)},${y(p.value)}`).join(' ')}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={3.5}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            vectorEffect="non-scaling-stroke"
-            className="text-terracotta"
-          />
-          {points.map((p, i) => (
-            <circle
-              key={p.label}
-              cx={x(i)}
-              cy={y(p.value)}
-              r={2.2}
-              vectorEffect="non-scaling-stroke"
-              className="fill-terracotta"
-            />
-          ))}
-        </svg>
-
-        {/* Endpoints are labelled on the line itself, so the chart needs no
-            axis and no legend to be read from across a room. */}
-        <span
-          className="absolute font-display text-[1.05rem] font-semibold leading-none text-ink-soft"
-          style={{ left: '1rem', top: `calc(${y(first.value)}% + 0.1rem)` }}
-        >
-          {first.value}
-        </span>
-        <span
-          className="absolute font-display text-[1.6rem] font-semibold leading-none text-ink"
-          style={{ right: '1rem', top: `calc(${y(last.value)}% - 1.1rem)` }}
-        >
-          {last.value}
-        </span>
-        <span className="absolute bottom-3 left-4 text-[12px] font-semibold text-ink-soft">
-          {first.label}
-        </span>
-        <span className="absolute bottom-3 right-4 text-[12px] font-semibold text-ink-soft">
-          {last.label}
-        </span>
-      </div>
-      <figcaption className="mt-3 text-[13px] text-ink-soft">
-        Overall Choice Score at each of the last {points.length} check-ins, out of 100.
-      </figcaption>
-    </figure>
-  );
-}
-
-function WeeklyRead({ insight, trajectory }) {
-  return (
-    <section className="neu-raised rounded-[2.5rem] p-7">
-      <h3 className="font-display text-[1.3rem] font-semibold leading-snug text-ink">
-        This week’s read
-      </h3>
-      <p className="mt-3 max-w-[68ch] font-display text-[17px] leading-relaxed text-ink-soft">
-        {insight}
-      </p>
-      <ScoreTrajectory points={trajectory} />
-    </section>
-  );
-}
-
 /* ── 1. Overview ────────────────────────────────────────────────────────── */
 
 export function Overview({ data }) {
   const m = data.nextMeeting;
+  const move = data.scores.latest.overall - data.scores.prev.overall;
   return (
     <>
       <SectionHead title={`Here’s how ${data.student.first} is doing.`} />
 
-      {/* The human voice, as a pull quote rather than a stripe-bordered
-          callout. Weight and measure do the work a coloured left border was
-          doing before. */}
-      <p className="mb-8 max-w-[66ch] font-display text-[1.35rem] font-normal leading-[1.5] text-ink-soft">
-        {data.coachNote}
-      </p>
-
-      <div className="row-tie grid grid-cols-1 gap-6 lg:grid-cols-12">
-        <div className="card-hero card-fill lg:col-span-5">
+      {/* Two columns from 960 up, because 960 is a real viewport here: Ryan runs
+          this at half screen beside a university site. Stacked, the gauge card
+          spans the full width and throws its own labels 600px away from their
+          numbers. `min-[960px]` rather than `md`, because at 768 the five-column
+          gauge is too narrow for the component's own sub-score labels. */}
+      <div className="row-tie grid grid-cols-1 gap-6 min-[960px]:grid-cols-12">
+        <div className="card-hero card-fill min-[960px]:col-span-6 min-[1400px]:col-span-5">
           <GaugeCluster scores={data.scores} />
         </div>
-        <div className="lg:col-span-7">
-          <WeeklyRead insight={data.scores.latest.insight} trajectory={data.trajectory} />
+        <div className="card-read min-[960px]:col-span-6 min-[1400px]:col-span-7">
+          <ScoreReadout scores={data.scores} />
         </div>
       </div>
 
-      {/* 78 of what? The product never has to answer that, because a student
+      {/* 79 of what? The product never has to answer that, because a student
           checking their own standing already knows. A parent seeing the number
           once, from across a room, does not. */}
       <p className="mt-5 max-w-[76ch] text-[15px] leading-relaxed text-ink-soft">
-        The Choice Score is out of 100. It weighs academics, activities and leadership against
-        the schools actually on {data.student.first}’s list, and it is up{' '}
-        {data.scores.latest.overall - data.scores.prev.overall} points since the last check-in.
+        The Choice Score is out of 100, weighing academics, activities and leadership against
+        the schools actually on {data.student.first}’s list. It is up {move} points since the
+        last check-in.
       </p>
 
       {/* A pointer, not a second copy: the meeting lives in Meetings. */}
-      <p className="mt-7 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[15px] text-ink-soft">
+      <p className="mt-4 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[15px] text-ink-soft">
         <CalendarCheck
           className="relative top-[3px] h-[18px] w-[18px] shrink-0 text-terracotta-deep"
           strokeWidth={2.1}
@@ -302,13 +207,13 @@ function ApplicationCard({ application }) {
           {Math.round(application.overall * 100)}%
         </span>
       </div>
-      <div className="mt-4 flex">
+      <div className="mt-4 flex max-w-[34rem]">
         <Bar value={application.overall} />
       </div>
       <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
         Round 1 opens the supplemental essays, which is where most of the remaining work sits.
       </p>
-      <div className="mt-6 flex flex-col gap-4 border-t border-ink-faint/20 pt-5">
+      <div className="mt-6 flex max-w-[34rem] flex-col gap-4 border-t border-ink-faint/20 pt-5">
         {application.streams.map((st) => (
           <div key={st.key}>
             <div className="flex items-baseline justify-between gap-2">
@@ -371,7 +276,7 @@ export function Meetings({ data }) {
             const Icon = hw.icon;
             return (
               <li key={s.id} className="flex items-start gap-6 py-4">
-                <span className="w-20 shrink-0 pt-1 text-[13px] font-bold uppercase tracking-[0.08em] text-ink-soft">
+                <span className="w-20 shrink-0 pt-1 text-[14px] font-semibold text-ink-soft">
                   {s.dateLabel}
                 </span>
                 <span className="min-w-0 flex-1">
@@ -473,7 +378,7 @@ export function Plan({ data }) {
             <ul className="divide-y divide-ink-faint/15">
               {data.coursePlan.courses.map((c) => (
                 <li key={c.id} className="flex items-baseline gap-4 py-3.5">
-                  <span className="w-[4.5rem] shrink-0 text-[12px] font-bold uppercase tracking-[0.1em] text-ink-soft">
+                  <span className="w-[4.5rem] shrink-0 text-[13px] font-semibold text-ink-soft">
                     {c.tag}
                   </span>
                   <span className="min-w-0 flex-1">
@@ -528,7 +433,7 @@ export function Plan({ data }) {
                   <span className="text-[13px] font-medium text-ink-soft">{p.range}</span>
                 </div>
                 {p.current && (
-                  <p className="mt-1.5 pl-[30px] text-[13px] font-bold uppercase tracking-[0.12em] text-terracotta-deep">
+                  <p className="mt-1.5 pl-[30px] text-[14px] font-semibold text-terracotta-deep">
                     {p.live ? 'Here now' : 'Up next'}
                   </p>
                 )}

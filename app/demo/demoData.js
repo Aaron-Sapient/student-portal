@@ -48,24 +48,19 @@ const nextWeekday = (base, d) => {
    product's ScoreReadout expects. */
 const CURVE = [
   { d: 77, overall: 61, academic: 64, ec: 58, leadership: 55 },
-  { d: 63, overall: 64, academic: 67, ec: 61, leadership: 58 },
-  { d: 49, overall: 66, academic: 68, ec: 66, leadership: 59 },
-  { d: 35, overall: 70, academic: 70, ec: 73, leadership: 62 },
-  { d: 21, overall: 73, academic: 73, ec: 79, leadership: 66 },
-  { d: 7, overall: 78, academic: 78, ec: 83, leadership: 72 },
+  { d: 63, overall: 63, academic: 66, ec: 60, leadership: 57 },
+  { d: 49, overall: 66, academic: 68, ec: 63, leadership: 60 },
+  { d: 35, overall: 70, academic: 71, ec: 67, leadership: 63 },
+  { d: 21, overall: 74, academic: 74, ec: 72, leadership: 67 },
+  { d: 7, overall: 79, academic: 78, ec: 78, leadership: 72 },
 ];
 
 const INSIGHT =
-  'Two things moved this week. The 1470 from her most recent sitting is on file, which puts ' +
-  'Maya above the median for every school on her list, including both reaches. And the ' +
-  'Coastal Cleanup role finally has a title attached to it, which is what lifted leadership ' +
-  'six points rather than the hours. Round 1 supplements are now the only thing standing ' +
-  'between here and a finished application.';
+  'The 1470 is on file, which puts Maya above the median at every school on her list, both ' +
+  'reaches included. Leadership moved six points because the Coastal Cleanup role finally has ' +
+  'a title on it, not because of the hours. Round 1 supplements are all that stands between ' +
+  'here and a finished application.';
 
-const COACH_NOTE =
-  'Maya is about three weeks ahead of where most of this cohort sits at this point in the ' +
-  'fall. Her main essay is finished in everything but polish, which means the whole of ' +
-  'Round 1 can go to supplements.';
 
 export function buildDemo(base = now()) {
   const history = CURVE.map(({ d, ...s }) => ({ date: iso(base, d), ...s }));
@@ -123,19 +118,11 @@ export function buildDemo(base = now()) {
   const currentPhase = phases.find((p) => !p.done);
   for (const p of phases) p.current = p === currentPhase;
 
-  const trajectory = history.map((h, i) => ({
-    label: DateTime.fromISO(h.date, { zone: ZONE }).toFormat('LLL d'),
-    value: h.overall,
-    first: i === 0,
-    last: i === history.length - 1,
-  }));
 
   return {
     student: { ...STUDENT, gradYear: cycleYear + 1 },
-    trajectory,
     todayLabel: base.toFormat('cccc, LLLL d'),
     scores: { latest, prev, history, stale: false },
-    coachNote: COACH_NOTE,
 
     application: {
       overall: 0.34,

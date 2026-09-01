@@ -70,9 +70,20 @@
    sizes it for a phone. Scaled up in place rather than re-authored, so it stays
    the real component. Padding is divided back out so its heading still starts
    on the same baseline as the unzoomed card beside it. */
+/* The score card's lift is spent only once the board can afford it. Zoom shrinks
+   the card's own coordinate space, so lifting it at half-screen width is what
+   squeezes the sub-score column until the shipped component truncates its own
+   label to "Extracurric...". At 960 the card takes no lift at all and its labels
+   fit whole, which is the point of the card. */
 .demo-board .card-hero > section {
-  zoom: 1.1;
-  padding: 1.6rem;
+  zoom: 1;
+  padding: 1.75rem;
+}
+@media (min-width: 1400px) {
+  .demo-board .card-hero > section {
+    zoom: 1.1;
+    padding: 1.6rem;
+  }
 }
 /* Only once the board itself is at its widest does the score card get its full
    lift. At 1440 the extra zoom squeezed the sub-score column until the product
@@ -94,6 +105,12 @@
 }
 .demo-board .card-fill > section > :last-child {
   flex: 1 1 auto;
+}
+
+@media (max-width: 959px) {
+  .demo-board .card-hero > section > :last-child {
+    max-width: 34rem;
+  }
 }
 
 /* ── 4. Motion: one moment, not one per card ────────────────────────────────
@@ -159,6 +176,32 @@
   color: var(--color-ink);
 }
 
+/* ── 5b. Kickers ────────────────────────────────────────────────────────────
+   The shipped components label themselves with 9 and 10px all-caps letterspaced
+   micro-type: ACADEMIC, EXTRACURRICULAR, LEADERSHIP, OVERALL, SCORE MOVEMENT
+   ACROSS CHECK-INS, and the chart's own date ticks. That is the loudest AI tell
+   on the page and it is unreadable across a room at 9px. Restyled here, never
+   forked: same component, same words, sentence case at a size that carries. The
+   1.25em bump is relative, so each label grows from whatever the component set. */
+.demo-board .uppercase {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 1.1em;
+}
+/* The score card's own labels carry further than the chart's axis chrome does,
+   so they get the larger step. A blanket bump inflated the chart's tick labels
+   to body size and collided them with its caption. */
+/* Split by element, because the score card's two label roles have different room:
+   the sub-score names (spans) sit in an open column and carry the reading, while
+   the ring caption (a p) sits inside the ring's own hole and collides with the
+   stroke if it grows much. */
+.demo-board .card-hero span.uppercase {
+  font-size: 1.18em;
+}
+.demo-board .card-hero p.uppercase {
+  font-size: 1.05em;
+}
+
 /* ── 6. The Beta pill ───────────────────────────────────────────────────────
    Correct and honest inside the product, where a student reading their own
    score should know the rubric is still being tuned. On a proposal asset it is
@@ -168,6 +211,13 @@
    the foot of the board. Hidden here only; the shipped portal keeps it. */
 .demo-board [title^="Scores are a work in progress"] {
   display: none;
+}
+
+/* ── 6b. Measure ────────────────────────────────────────────────────────────
+   The product's weekly-read paragraph has no measure cap, because on a phone the
+   viewport is the cap. At 1920 in a 7-column card it runs past 110 characters. */
+.demo-board .card-read p {
+  max-width: 68ch;
 }
 
 /* ── 7. Reduced motion ──────────────────────────────────────────────────────

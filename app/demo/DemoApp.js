@@ -97,9 +97,7 @@ export default function DemoApp({ data, initial }) {
         {/* Honesty marker, deliberately the quietest thing on screen: the room
             is told out loud that this is a sample, so this only has to survive
             a screenshot leaving the room. Delete this one element to remove it. */}
-        <p className="mt-14 text-[12px] font-semibold uppercase tracking-[0.2em] text-ink-soft">
-          Sample portal, fictional student
-        </p>
+        <p className="mt-14 text-[13px] text-ink-soft">Sample portal. Fictional student.</p>
       </main>
     </div>
   );
