@@ -9,6 +9,8 @@ import {
 } from '@/app/developer/(panel)/devUi';
 import {
   ADDON_DEFS,
+  ADDON_PACKAGES,
+  CLOSED_PACKAGES,
   DEFAULT_PRICING,
   GRADES,
   PACKAGES,
@@ -122,6 +124,7 @@ export default function PricingDashboard({ config, onSaved }) {
                 {PACKAGES.map((p) => (
                   <th key={p} className="px-2 py-1 text-right font-medium">
                     {PACKAGE_LABELS[p]}
+                    {CLOSED_PACKAGES.includes(p) ? ' (closed)' : ''}
                   </th>
                 ))}
               </tr>
@@ -150,8 +153,9 @@ export default function PricingDashboard({ config, onSaved }) {
 
         <div className="mb-4">
           <p className="mb-1.5 text-[13px] font-semibold text-ink">Extra Colleges (per school)</p>
+          {/* ADDON_PACKAGES, never PACKAGES: no add-on is priced on UVIP. */}
           <div className="flex flex-wrap gap-x-6 gap-y-2">
-            {PACKAGES.map((p) => (
+            {ADDON_PACKAGES.map((p) => (
               <label key={p} className="flex items-center gap-2 text-[13px] text-ink-soft">
                 {PACKAGE_LABELS[p]}
                 <Num value={cfg.addOns.extraCollege[p]} onChange={(v) => up(['addOns', 'extraCollege', p], v)} prefix="$" width="w-20" />
@@ -213,8 +217,10 @@ export default function PricingDashboard({ config, onSaved }) {
                 <span className="text-ink-faint">to</span>
                 <MonthSelect value={w.endMonth} onChange={(v) => up(['lateStart', i, 'endMonth'], v)} />
               </div>
+              {/* UVIP never discounts seasonally, so its amount is not editable
+                  here; mergeConfig keeps it at 0 in every window. */}
               <div className="flex flex-wrap gap-x-6 gap-y-2">
-                {PACKAGES.map((p) => (
+                {ADDON_PACKAGES.map((p) => (
                   <label key={p} className="flex items-center gap-2 text-[13px] text-ink-soft">
                     {PACKAGE_LABELS[p]}
                     <Num value={w[p]} onChange={(v) => up(['lateStart', i, p], v)} prefix="$" width="w-20" />
@@ -247,7 +253,7 @@ export default function PricingDashboard({ config, onSaved }) {
           </div>
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 pt-1">
             <span className="font-semibold text-ink">Multiplier</span>
-            {PACKAGES.map((p) => (
+            {ADDON_PACKAGES.map((p) => (
               <label key={p} className="flex items-center gap-2">
                 {PACKAGE_LABELS[p]}
                 <Num value={cfg.earlyStart.multiplier[p]} onChange={(v) => up(['earlyStart', 'multiplier', p], v)} width="w-16" />

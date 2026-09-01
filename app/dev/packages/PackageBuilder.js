@@ -11,7 +11,17 @@ import {
   Modal,
   PillButton,
 } from '@/app/developer/(panel)/devUi';
-import { ADDON_DEFS, GRADES, PACKAGES, PACKAGE_LABELS, studentNameKey } from '@/lib/pricingSchema';
+import {
+  ADDON_DEFS,
+  ADDON_PACKAGES,
+  CLOSED_PACKAGES,
+  DEFAULT_OFFERED,
+  GRADES,
+  LEGACY_OFFERED,
+  PACKAGES,
+  PACKAGE_LABELS,
+  studentNameKey,
+} from '@/lib/pricingSchema';
 import { computeQuote, money } from '@/lib/pricingCalc';
 import { buildEmail } from '@/lib/packageEmail';
 
@@ -37,8 +47,13 @@ export function makeInitial() {
     referral: false,
     sibling: false,
     customPct: 0,
-    services: { essential: emptySel(), comprehensive: emptySel(), vip: emptySel() },
-    bonuses: { essential: emptySel(), comprehensive: emptySel(), vip: emptySel() },
+    services: Object.fromEntries(PACKAGES.map((p) => [p, emptySel()])),
+    bonuses: Object.fromEntries(PACKAGES.map((p) => [p, emptySel()])),
+    // Every new proposal starts explicitly VIP-only, and the Tiers offered
+    // control below edits it from there. Because the field is always written, a
+    // new row never reaches normalizeSelectedPackages' legacy fallback and
+    // never quotes a closed tier by omission.
+    selectedPackages: [...DEFAULT_OFFERED],
     // The saved row this form is editing, once there is one: { id, nameKey }.
     // It is the form's IDENTITY, not part of the proposal, so it is excluded
     // from the `state` memo that becomes `selection`. Without it a save can
@@ -89,11 +104,11 @@ export function fromSelection(sel, sourceQuote = null) {
     customPct: Math.round((Number(sel.discounts?.custom) || 0) * 10000) / 100,
     services: merge(sel.services),
     bonuses: merge(sel.bonuses),
-    // No control writes this yet, but the 1-3 tier plumbing downstream already
-    // reads it (lib/packageEmail.js). Carrying it through the round trip now
-    // means a Comprehensive-only proposal can't silently reopen as a
-    // three-option one with VIP back on the table the day that control ships.
-    selectedPackages: sel.selectedPackages,
+    // A row saved before the builder wrote this field carries no selection, so
+    // it reopens as the legacy pair and becomes explicit on its next save.
+    // Carrying a stored selection verbatim is what stops a narrower proposal
+    // from silently reopening with tiers the family was never offered.
+    selectedPackages: Array.isArray(sel.selectedPackages) ? sel.selectedPackages : [...LEGACY_OFFERED],
   };
 }
 
@@ -113,7 +128,8 @@ const labelCls = 'text-[12px] font-semibold uppercase tracking-[0.14em] text-ink
 const fieldCls = `${INPUT_CLS} w-full`;
 
 // Per-package selection grid (services or bonuses). Rows = add-ons, columns =
-// the three packages; cells are a count field or a Yes/— toggle.
+// ADDON_PACKAGES, never PACKAGES: UVIP sells and gifts no add-ons, so it gets
+// no cell to select one in.
 function AddOnGrid({ title, hint, sel, onChange }) {
   return (
     <Card delay={120}>
@@ -126,7 +142,7 @@ function AddOnGrid({ title, hint, sel, onChange }) {
           <thead>
             <tr className="text-ink-faint">
               <th className="py-1 text-left font-medium">Service</th>
-              {PACKAGES.map((p) => (
+              {ADDON_PACKAGES.map((p) => (
                 <th key={p} className="px-2 py-1 text-center font-medium">
                   {PACKAGE_LABELS[p]}
                 </th>
@@ -137,7 +153,7 @@ function AddOnGrid({ title, hint, sel, onChange }) {
             {ADDON_DEFS.map((d) => (
               <tr key={d.key} className="border-t border-sand">
                 <td className="py-2 pr-2 text-ink-soft">{d.label}</td>
-                {PACKAGES.map((p) => (
+                {ADDON_PACKAGES.map((p) => (
                   <td key={p} className="px-2 py-1.5 text-center">
                     {d.kind === 'flat' ? (
                       <Chip on={!!sel[p][d.key]} onClick={() => onChange(p, d.key, !sel[p][d.key])}>
@@ -183,6 +199,20 @@ export default function PackageBuilder({ config, form, setForm }) {
   const setSel = (bucket) => (pkg, key, value) =>
     setF((s) => ({ ...s, [bucket]: { ...s[bucket], [pkg]: { ...s[bucket][pkg], [key]: value } } }));
 
+  // The tiers this proposal presents. Stored in PACKAGES order because the
+  // email numbers its options by position, and NEVER emptied: deselecting the
+  // last remaining tier is a no-op, because an empty selection has no
+  // meaningful rendering and normalizeSelectedPackages would substitute the
+  // legacy pair without saying so. This control is where that is prevented.
+  const tiers = Array.isArray(f.selectedPackages) ? f.selectedPackages : [...DEFAULT_OFFERED];
+  const toggleTier = (pkg) =>
+    setF((s) => {
+      const cur = Array.isArray(s.selectedPackages) ? s.selectedPackages : [...DEFAULT_OFFERED];
+      const on = cur.includes(pkg);
+      if (on && cur.length === 1) return s;
+      return { ...s, selectedPackages: PACKAGES.filter((x) => (x === pkg ? !on : cur.includes(x))) };
+    });
+
   const state = useMemo(
     () => ({
       firstName: f.firstName,
@@ -194,9 +224,12 @@ export default function PackageBuilder({ config, form, setForm }) {
       discounts: { referral: f.referral, sibling: f.sibling, custom: (Number(f.customPct) || 0) / 100 },
       services: f.services,
       bonuses: f.bonuses,
-      // Undefined for anything built here (no control writes it yet), which
-      // normalizeSelectedPackages reads as all three tiers — unchanged
-      // behaviour. Present only on a reopened proposal that carried one.
+      // Always populated and never empty: makeInitial() seeds DEFAULT_OFFERED,
+      // fromSelection() fills a legacy row's absent selection, and the Tiers
+      // offered control refuses to deselect the last tier. So the saved
+      // `selection` blob always records which tiers were actually offered.
+      // Read straight off `f` rather than through the render-scoped `tiers`, so
+      // the memo keeps depending on `f` alone.
       selectedPackages: f.selectedPackages,
     }),
     [f]
@@ -348,6 +381,29 @@ export default function PackageBuilder({ config, form, setForm }) {
               </label>
             </div>
           </div>
+          <div className="block sm:col-span-2">
+            <span className={labelCls}>Tiers offered</span>
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+              {PACKAGES.map((pkg) => {
+                const closed = CLOSED_PACKAGES.includes(pkg);
+                return (
+                  <Chip
+                    key={pkg}
+                    on={tiers.includes(pkg)}
+                    onClick={() => toggleTier(pkg)}
+                    title={
+                      closed
+                        ? 'Closed for 2026-27. Still selectable, for a family on a pricing hold.'
+                        : undefined
+                    }
+                  >
+                    {PACKAGE_LABELS[pkg]}
+                    {closed && <span className="ml-1 font-normal opacity-60">closed</span>}
+                  </Chip>
+                );
+              })}
+            </div>
+          </div>
         </div>
 
         {/* Seasons to highlight */}
@@ -380,14 +436,19 @@ export default function PackageBuilder({ config, form, setForm }) {
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {PACKAGES.map((p) => {
           const P = quote.packages[p];
+          const closed = CLOSED_PACKAGES.includes(p);
           return (
-            <div key={p} className="neu-raised rounded-[1.5rem] p-4">
+            <div key={p} className={`neu-raised rounded-[1.5rem] p-4${closed ? ' opacity-60' : ''}`}>
               <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-ink-faint">
                 {PACKAGE_LABELS[p]}
+                {closed && ' · closed 2026-27'}
               </p>
               <p className="mt-1 font-display text-[1.8rem] font-semibold leading-none text-ink">
                 {money(P.total)}
               </p>
+              {p === 'uvip' && (
+                <p className="mt-1 text-[12px] text-ink-faint">all-inclusive · by conversation</p>
+              )}
               <p className="mt-1.5 text-[12px] text-ink-soft">
                 {money(P.subtotal)} − {money(P.totalDiscount)} ({P.totalDiscountPct}%)
               </p>
