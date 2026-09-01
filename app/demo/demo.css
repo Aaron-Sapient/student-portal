@@ -1,0 +1,95 @@
+/* /demo only. Scoped to .demo-board so nothing here can reach the real portal.
+
+   Two jobs, both consequences of the surface: this page is read on an office TV
+   from across a room, and it is read at desktop width — the two things the
+   portal's phone-first layout is worst at.
+
+   1) SCALE. The portal's type is sized for a phone held at arm's length (10px
+      eyebrows, 14px body). Stretched to 1920 those become specks. Rather than
+      re-authoring every component at a second size, the whole board is zoomed:
+      one declaration, no component drift, radii and strokes scale with the type.
+      `zoom` (unlike `transform: scale`) reflows, so the grid still lays out
+      correctly at the zoomed width.
+
+   2) ONE GUTTER. The portal's cards were authored per-tab and carry three
+      different radii (2rem / 2.5rem / 1.75rem) and three different insets. On a
+      phone they are never seen side by side; on a board they sit in one row and
+      every mismatch reads as a jog. Normalize the card shell once, here. */
+
+.demo-board {
+  zoom: 1;
+}
+
+@media (min-width: 1400px) {
+  .demo-board {
+    zoom: 1.08;
+  }
+}
+
+@media (min-width: 1750px) {
+  .demo-board {
+    zoom: 1.22;
+  }
+}
+
+/* One card shell for the whole board. `section.neu-raised` is deliberately
+   narrow: it hits the top-level cards only, never the nested .neu-chip /
+   .neu-inset surfaces inside them. */
+.demo-board section.neu-raised {
+  border-radius: 2.5rem;
+  padding: 1.75rem;
+}
+
+/* Cards in a row share one bottom edge. Claude's default alignment check is
+   per-container and the eye reads across the whole row, so a 430px card beside
+   a 250px one reads as a jog no matter how correct each card is on its own
+   terms (frontend-designt → "Alignment is checked across containers"). Content
+   is balanced first — the schools list and the session log are sized against
+   each other — and this only takes up the remainder. */
+.demo-board .board-row > div {
+  display: flex;
+  flex-direction: column;
+}
+.demo-board .board-row > div > section {
+  flex: 1 1 auto;
+}
+
+/* The Choice Score is the one number the room is actually there to see, and the
+   portal sizes it for a phone at arm's length. Scaled up in place rather than
+   re-authored, so this stays the real component: the ring, the delta chips and
+   the sub-score bars all grow together, and the card ends up tall enough to sit
+   level with the movement chart beside it. */
+.demo-board .card-hero > section {
+  zoom: 1.2;
+}
+.demo-board .card-lift > section {
+  zoom: 1.2;
+}
+/* A zoomed card's padding is zoomed too, which would push its eyebrow off the
+   baseline its unzoomed neighbour sits on. Divide it back out so every card on
+   the board starts its content on the same line. */
+.demo-board .card-hero > section,
+.demo-board .card-lift > section {
+  padding: 1.46rem;
+}
+
+/* A gauge card is short by nature: an eyebrow and one ring-plus-bars row. Once
+   the row equalises heights, that leaves the ring sitting high with dead cream
+   beneath it. Let the gauge row take the slack and centre in it, so the card
+   reads as a hero with breathing room instead of a card that ran out of
+   content. The eyebrow stays pinned to the shared top baseline. */
+.demo-board .card-fill > section {
+  display: flex;
+  flex-direction: column;
+}
+.demo-board .card-fill > section > :last-child {
+  flex: 1 1 auto;
+}
+
+/* The board is a display surface, not a workspace: nothing here is clicked, so
+   the components' tap-feedback transforms would only ever fire by accident. */
+@media (prefers-reduced-motion: reduce) {
+  .demo-board .portal-rise {
+    animation: none;
+  }
+}
