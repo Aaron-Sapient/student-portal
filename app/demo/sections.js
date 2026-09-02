@@ -9,7 +9,7 @@ import {
   Video,
 } from 'lucide-react';
 import { Bar, Halo } from '@/app/(portal)/neu';
-import { GaugeCluster, ScoreReadout } from '@/app/(portal)/homeSections';
+import { GaugeCluster } from '@/app/(portal)/homeSections';
 
 /* Demo-only sections. Presentational, no hooks, no fetch: every value arrives
    as plain JSON already formatted by app/demo/demoData.js, which is what lets
@@ -77,40 +77,149 @@ function StatusDot({ on, onLabel, offLabel }) {
   );
 }
 
+
+/* ── Score lines ────────────────────────────────────────────────────────────
+   The pattern is lifted from the "Week by week" panel on Aaron's Personal
+   Dashboard (dashboard.html, `weeklyChart` + `.hb-read` + `.hb-axis`), which had
+   already solved the problem the portal's own chart has: four lines at once,
+   readable at a glance, with no legend to hunt for.
+
+   What it takes from there: a distorted 100x100 viewBox with non-scaling-stroke
+   so the lines stay crisp at any width; SOLID polylines, one colour per series;
+   endpoint dots positioned as absolute percentages; a readout row underneath
+   that names each series and its current value, so it doubles as the legend;
+   "week of" above it; and the first and last dates in the corners.
+
+   What it drops, per the brief: the dotted grid, the dashed per-week verticals,
+   and any x-axis tick labels between the two corners.
+
+   Plotting the SCORE rather than the delta is the substantive difference from
+   the shipped DeltaLines. The shipped component is untouched and still runs in
+   the portal; this is a candidate for what replaces it in v2. */
+
+const SCORE_SERIES = [
+  { key: 'overall', label: 'Overall', color: 'var(--color-terracotta)', width: 3.4 },
+  { key: 'academic', label: 'Academic', color: 'var(--color-moss)', width: 2.4 },
+  { key: 'ec', label: 'Extracurricular', color: 'var(--color-ochre)', width: 2.4 },
+  { key: 'leadership', label: 'Leadership', color: 'var(--color-terracotta-soft)', width: 2.4 },
+];
+
+function DemoScoreLines({ chart, height = 190 }) {
+  const pts = chart?.points;
+  if (!pts || pts.length < 2) return null;
+
+  const all = pts.flatMap((p) => SCORE_SERIES.map((s) => p[s.key]));
+  const lo = Math.min(...all) - 3;
+  const hi = Math.max(...all) + 3;
+  const x = (i) => 3 + (i / (pts.length - 1)) * 94;
+  const y = (v) => 94 - ((v - lo) / (hi - lo)) * 88;
+  const latest = pts[pts.length - 1];
+
+  return (
+    <figure className="mt-5">
+      <div className="neu-inset relative rounded-2xl px-4 py-4" style={{ height }}>
+        <svg
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+          className="absolute inset-x-4 inset-y-4 h-[calc(100%-2rem)] w-[calc(100%-2rem)]"
+          role="img"
+          aria-label={SCORE_SERIES.map(
+            (s) => `${s.label} ${pts[0][s.key]} to ${latest[s.key]}`
+          ).join('. ')}
+        >
+          {SCORE_SERIES.map((s) => (
+            <polyline
+              key={s.key}
+              points={pts.map((p, i) => `${x(i).toFixed(1)},${y(p[s.key]).toFixed(1)}`).join(' ')}
+              fill="none"
+              stroke={s.color}
+              strokeWidth={s.width}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+        </svg>
+        {/* End dots sit outside the distorted viewBox so they stay round. */}
+        {SCORE_SERIES.map((s) => (
+          <span
+            key={s.key}
+            aria-hidden
+            className="absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-cream"
+            style={{
+              left: `calc(1rem + ${x(pts.length - 1)}% - ${x(pts.length - 1) * 0.02}rem)`,
+              top: `calc(1rem + (100% - 2rem) * ${y(latest[s.key]) / 100})`,
+              background: s.color,
+            }}
+          />
+        ))}
+      </div>
+
+      <figcaption className="mt-4">
+        <p className="text-[13px] font-semibold text-ink-soft">Week of {chart.weekOf}</p>
+        <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-2">
+          {SCORE_SERIES.map((s) => (
+            <span key={s.key} className="inline-flex items-center gap-2 text-[14px] text-ink-soft">
+              <span
+                aria-hidden
+                className="h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ background: s.color }}
+              />
+              {s.label}
+              <b className="font-display text-[16px] font-semibold text-ink">{latest[s.key]}</b>
+            </span>
+          ))}
+        </div>
+        <div className="mt-3 flex justify-between text-[12px] text-ink-soft">
+          <span>{chart.first}</span>
+          <span>{chart.last}</span>
+        </div>
+      </figcaption>
+    </figure>
+  );
+}
+
 /* ── 1. Overview ────────────────────────────────────────────────────────── */
 
 export function Overview({ data }) {
   const m = data.nextMeeting;
-  const move = data.scores.latest.overall - data.scores.prev.overall;
   return (
     <>
-      <SectionHead title={`Here’s how ${data.student.first} is doing.`} />
-
-      {/* Two columns from 960 up, because 960 is a real viewport here: Ryan runs
-          this at half screen beside a university site. Stacked, the gauge card
-          spans the full width and throws its own labels 600px away from their
-          numbers. `min-[960px]` rather than `md`, because at 768 the five-column
-          gauge is too narrow for the component's own sub-score labels. */}
-      <div className="row-tie grid grid-cols-1 gap-6 min-[960px]:grid-cols-12">
-        <div className="card-hero card-fill min-[960px]:col-span-6 min-[1400px]:col-span-5">
-          <GaugeCluster scores={data.scores} />
+      {/* No headline. The strip above already says whose portal this is, and a
+          sentence restating what the cards below show is the hero-and-blurb the
+          rest of this page spent two passes removing. */}
+      <div className="grid grid-cols-1 items-start gap-6 min-[1025px]:grid-cols-12">
+        <div className="card-hero min-[1025px]:col-span-5">
+          <section className="demo-score-card neu-raised rounded-[2.5rem] p-7">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <h3 className="font-display text-[1.3rem] font-semibold leading-snug text-ink">
+                Choice SuperScore
+              </h3>
+              <span className="rounded-full bg-ochre/[0.18] px-2.5 py-1 text-[11px] font-semibold leading-none text-ink">
+                Beta
+              </span>
+            </div>
+            {/* The shipped score card, un-carded by demo.css so this wrapper is
+                the only card: same ring, same bars, same deltas, same data. */}
+            <GaugeCluster scores={data.scores} />
+          </section>
         </div>
-        <div className="card-read min-[960px]:col-span-6 min-[1400px]:col-span-7">
-          <ScoreReadout scores={data.scores} />
+
+        <div className="min-[1025px]:col-span-7">
+          <section className="neu-raised rounded-[2.5rem] p-7">
+            <h3 className="font-display text-[1.3rem] font-semibold leading-snug text-ink">
+              This week’s read
+            </h3>
+            <p className="mt-3 max-w-[68ch] font-display text-[17px] leading-relaxed text-ink-soft">
+              {data.scores.latest.insight}
+            </p>
+            <DemoScoreLines chart={data.chart} />
+          </section>
         </div>
       </div>
 
-      {/* 79 of what? The product never has to answer that, because a student
-          checking their own standing already knows. A parent seeing the number
-          once, from across a room, does not. */}
-      <p className="mt-5 max-w-[76ch] text-[15px] leading-relaxed text-ink-soft">
-        The Choice Score is out of 100, weighing academics, activities and leadership against
-        the schools actually on {data.student.first}’s list. It is up {move} points since the
-        last check-in.
-      </p>
-
       {/* A pointer, not a second copy: the meeting lives in Meetings. */}
-      <p className="mt-4 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[15px] text-ink-soft">
+      <p className="mt-6 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[15px] text-ink-soft">
         <CalendarCheck
           className="relative top-[3px] h-[18px] w-[18px] shrink-0 text-terracotta-deep"
           strokeWidth={2.1}

@@ -48,11 +48,11 @@ const nextWeekday = (base, d) => {
    product's ScoreReadout expects. */
 const CURVE = [
   { d: 77, overall: 61, academic: 64, ec: 58, leadership: 55 },
-  { d: 63, overall: 63, academic: 66, ec: 60, leadership: 57 },
-  { d: 49, overall: 66, academic: 68, ec: 63, leadership: 60 },
-  { d: 35, overall: 70, academic: 71, ec: 67, leadership: 63 },
-  { d: 21, overall: 74, academic: 74, ec: 72, leadership: 67 },
-  { d: 7, overall: 79, academic: 78, ec: 78, leadership: 72 },
+  { d: 63, overall: 63, academic: 67, ec: 60, leadership: 57 },
+  { d: 49, overall: 66, academic: 70, ec: 63, leadership: 60 },
+  { d: 35, overall: 70, academic: 74, ec: 67, leadership: 63 },
+  { d: 21, overall: 74, academic: 78, ec: 72, leadership: 67 },
+  { d: 7, overall: 79, academic: 82, ec: 78, leadership: 72 },
 ];
 
 const INSIGHT =
@@ -119,8 +119,24 @@ export function buildDemo(base = now()) {
   for (const p of phases) p.current = p === currentPhase;
 
 
+  /* The four series as SCORES over time, for the demo's own line chart. The
+     shipped DeltaLines plots the change between check-ins; this plots the value,
+     which is the thing a parent is being asked to read. */
+  const chart = {
+    weekOf: DateTime.fromISO(history[history.length - 1].date, { zone: ZONE }).toFormat('LLLL d'),
+    first: DateTime.fromISO(history[0].date, { zone: ZONE }).toFormat('LLL d'),
+    last: DateTime.fromISO(history[history.length - 1].date, { zone: ZONE }).toFormat('LLL d'),
+    points: history.map((h) => ({
+      overall: h.overall,
+      academic: h.academic,
+      ec: h.ec,
+      leadership: h.leadership,
+    })),
+  };
+
   return {
     student: { ...STUDENT, gradYear: cycleYear + 1 },
+    chart,
     todayLabel: base.toFormat('cccc, LLLL d'),
     scores: { latest, prev, history, stale: false },
 

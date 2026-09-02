@@ -70,32 +70,6 @@
    sizes it for a phone. Scaled up in place rather than re-authored, so it stays
    the real component. Padding is divided back out so its heading still starts
    on the same baseline as the unzoomed card beside it. */
-/* The score card's lift is spent only once the board can afford it. Zoom shrinks
-   the card's own coordinate space, so lifting it at half-screen width is what
-   squeezes the sub-score column until the shipped component truncates its own
-   label to "Extracurric...". At 960 the card takes no lift at all and its labels
-   fit whole, which is the point of the card. */
-.demo-board .card-hero > section {
-  zoom: 1;
-  padding: 1.75rem;
-}
-@media (min-width: 1400px) {
-  .demo-board .card-hero > section {
-    zoom: 1.1;
-    padding: 1.6rem;
-  }
-}
-/* Only once the board itself is at its widest does the score card get its full
-   lift. At 1440 the extra zoom squeezed the sub-score column until the product
-   component truncated its own labels to ACAD... and EXTR..., which is the one
-   place on the board a shortened word is unmistakably a defect. */
-@media (min-width: 1750px) {
-  .demo-board .card-hero > section {
-    zoom: 1.2;
-    padding: 1.46rem;
-  }
-}
-
 /* A gauge card is short by nature: a title and one ring-plus-bars row. Once the
    row equalises heights that leaves the ring high with dead cream under it. Let
    the gauge row take the slack and centre in it. */
@@ -202,23 +176,56 @@
   font-size: 1.05em;
 }
 
-/* ── 6. The Beta pill ───────────────────────────────────────────────────────
-   Correct and honest inside the product, where a student reading their own
-   score should know the rubric is still being tuned. On a proposal asset it is
-   the first badge a parent reads beside their child's number, and it says the
-   measurement is unfinished while somebody asks them for forty thousand
-   dollars. The honesty requirement is already carried by the sample marker at
-   the foot of the board. Hidden here only; the shipped portal keeps it. */
-.demo-board [title^="Scores are a work in progress"] {
+/* ── 6. The score card ──────────────────────────────────────────────────────
+   The demo renders the SHIPPED score component and wraps it in its own card, so
+   the ring, the three bars, the delta chips and the data are the product's. Two
+   presentational overrides, no fork:
+
+   1. The shipped component draws its own card. Stripped to nothing here, so the
+      wrapper is the only card and nothing is nested inside anything.
+   2. Its own label row is hidden, because the wrapper titles the card. That is
+      what lets the demo say "Choice SuperScore" and carry its own Beta chip
+      without editing a component the live portal renders. */
+.demo-board .demo-score-card > section.neu-raised {
+  background: none;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 0;
+  margin-top: 1.5rem;
+}
+.demo-board .demo-score-card > section.neu-raised > div:first-child {
   display: none;
 }
 
-/* ── 6b. Measure ────────────────────────────────────────────────────────────
-   The product's weekly-read paragraph has no measure cap, because on a phone the
-   viewport is the cap. At 1920 in a 7-column card it runs past 110 characters. */
-.demo-board .card-read p {
-  max-width: 68ch;
+/* ── 7. The ring stacks above the bars at half screen ───────────────────────
+   The shipped layout is ring-beside-bars, which is right in a phone column and
+   right in a five-column card. In between, at half screen, the card is wide
+   enough that the pair drifts apart and short enough that neither gets room.
+   Stacked and centred is the composition that reads as deliberate. */
+@media (max-width: 1024px) {
+  .demo-board .demo-score-card > section > div:last-child {
+    flex-direction: column;
+    align-items: center;
+    gap: 1.75rem;
+  }
+  .demo-board .demo-score-card > section > div:last-child > div:last-child {
+    width: 100%;
+    max-width: 26rem;
+  }
 }
+
+/* ── 8. No truncated words, at any width ────────────────────────────────────
+   "Extracurricular" is the longest label the component owns and the one it
+   truncates first. Two changes: the ring gives back some diameter so the label
+   column has room, and the component's own `truncate` is lifted inside this
+   card. An abbreviation in front of a family reads as a defect, not a style. */
+.demo-board .demo-score-card .truncate {
+  overflow: visible;
+  text-overflow: clip;
+}
+/* The ring keeps its shipped diameter. Shrinking it to buy label width put the
+   "overall" caption on top of the stroke, and `overflow: visible` above already
+   solved the truncation on its own. */
 
 /* ── 7. Reduced motion ──────────────────────────────────────────────────────
    The alternative has to preserve the state, not delete it: with the transition
@@ -230,5 +237,116 @@
   }
   .demo-board circle {
     transition: none !important;
+  }
+}
+
+
+/* ── 9. The rail ────────────────────────────────────────────────────────────
+   Icons only, 44px targets, and the label arrives as a tooltip on hover AND on
+   keyboard focus, so it is not gated behind a pointer. Current section is the
+   icon's own colour plus a hairline indicator: a filled pill was reading louder
+   than the content it was pointing at. */
+.demo-nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
+}
+.demo-nav-item:hover {
+  color: var(--color-ink);
+  background: color-mix(in srgb, var(--color-ink) 6%, transparent);
+}
+.demo-nav-item.is-on {
+  color: var(--color-terracotta-deep);
+}
+/* The indicator sits under the icon on the horizontal strip and beside it on the
+   vertical rail, so "you are here" reads the same way in both orientations. */
+.demo-nav-item.is-on::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  width: 18px;
+  height: 2px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: currentColor;
+}
+@media (min-width: 1025px) {
+  .demo-nav-item.is-on::before {
+    left: -8px;
+    bottom: auto;
+    top: 50%;
+    width: 2px;
+    height: 20px;
+    transform: translateY(-50%);
+  }
+}
+
+.demo-tip {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 8px);
+  transform: translateX(-50%);
+  white-space: nowrap;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: var(--color-ink);
+  color: var(--color-paper);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+  z-index: 40;
+}
+@media (min-width: 1025px) {
+  .demo-tip {
+    left: calc(100% + 10px);
+    top: 50%;
+    transform: translateY(-50%);
+  }
+}
+.demo-nav-item:hover .demo-tip,
+.demo-nav-item:focus-visible .demo-tip {
+  opacity: 1;
+}
+
+/* ── 10. Mouse response ─────────────────────────────────────────────────────
+   Containers answer the pointer. Shadow and background only, never transform or
+   padding: a card that grows on hover shoves the row beside it, and on a board
+   being narrated that reads as the page twitching. The cursor stays default on
+   everything that does not do something; only the rail gets a pointer. */
+.demo-board section.neu-raised {
+  transition: box-shadow 0.18s ease;
+}
+.demo-board section.neu-raised:hover {
+  box-shadow:
+    8px 8px 18px var(--neu-lo),
+    -8px -8px 18px var(--neu-hi);
+}
+.demo-board li {
+  transition: background-color 0.14s ease;
+  border-radius: 10px;
+}
+.demo-board ul > li:hover {
+  background: color-mix(in srgb, var(--color-ink) 4%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .demo-board section.neu-raised,
+  .demo-board li,
+  .demo-nav-item,
+  .demo-tip {
+    transition: none;
   }
 }
