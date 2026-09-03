@@ -1,37 +1,21 @@
-import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { requireDeveloper } from '@/lib/developerAuth';
+import { getSupabaseClient, MEETING_CAP_SUMMARY } from '@/lib/supabase';
 
 // Engagement status per student per instructor, mirroring the logic in
 // "Google Apps Scripts/checkinReminder.gs" (the automated Friday reminder):
 // engaged = check-in within the window OR a meeting within the window OR an
-// upcoming meeting on file. Sources both tabs — the old version only read the
-// master sheet's check-in columns, so students with recent/upcoming meetings
-// were wrongly flagged.
+// upcoming meeting on file. Sources both halves — check-in recency from
+// `students`, meeting recency from `meeting_cap_summary`.
 //
 // Summer exception (6/1–8/31 Pacific): check-ins stay weekly but meetings are
 // as-needed, so meetings do NOT count toward engagement — only a check-in in
 // the window does. Must stay in lockstep with checkinReminder.gs.
 
-const MASTER_SHEET_ID =
-  process.env.MASTER_SHEET_ID || '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
-const MASTER_TAB = '👩‍🎓 All Data';
-const CHECKINS_TAB = '✅ Check-Ins';
-
 // Matches the reminder's window ("a full calendar week").
 const WINDOW_DAYS = 7;
 
 const ZONE = 'America/Los_Angeles';
-
-function getServiceAuth() {
-  return new google.auth.GoogleAuth({
-    credentials: {
-      client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-      private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-    },
-    scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-  });
-}
 
 // Cell → DateTime or null. Handles Sheets serials, ISO timestamps, and "N/A"/"TBD"/"-".
 //
@@ -78,29 +62,30 @@ function parseTimestamp(raw) {
   return dt.isValid ? dt : null;
 }
 
-const normName = (s) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
-
 export async function GET() {
   const gate = await requireDeveloper();
   if (!gate.ok) return gate.response;
 
   try {
-    const sheets = google.sheets({ version: 'v4', auth: getServiceAuth() });
+    // Was one Master batchGet over '👩‍🎓 All Data'!A:BE + '✅ Check-Ins'!A:M, joined
+    // by NORMALIZED STUDENT NAME. Now two roster reads joined on the FK. The name
+    // join was a live defect, not just slower: the two tabs' col-A spellings diverge
+    // for real students (lib/checkinIdentity.js), and an unmatched student silently
+    // read as "no meetings" — engaged=false on the strength of a spelling.
+    const sb = getSupabaseClient();
+    const [{ data: roster, error: rErr }, { data: caps, error: cErr }] = await Promise.all([
+      sb
+        .from('students')
+        .select('student_sheet_id, name, student_email, needs_checkin, last_ryan_checkin, last_aaron_checkin')
+        .eq('status', 'active'),
+      sb
+        .from(MEETING_CAP_SUMMARY)
+        .select('student_sheet_id, last_ryan_meeting, upcoming_ryan_meeting, last_aaron_meeting, upcoming_aaron_meeting'),
+    ]);
+    if (rErr) throw new Error(`roster read failed: ${rErr.message}`);
+    if (cErr) throw new Error(`cap summary read failed: ${cErr.message}`);
 
-    const res = await sheets.spreadsheets.values.batchGet({
-      spreadsheetId: MASTER_SHEET_ID,
-      ranges: [`'${MASTER_TAB}'!A:BE`, `'${CHECKINS_TAB}'!A:M`],
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
-    const [adRows, ciRows] = res.data.valueRanges.map((v) => v.values || []);
-
-    // "✅ Check-Ins" joined by normalized student name.
-    // J=9 last Ryan, K=10 upcoming Ryan, L=11 last Aaron, M=12 upcoming Aaron.
-    const ciByName = new Map();
-    for (const r of ciRows.slice(1)) {
-      const key = normName(r?.[0]);
-      if (key) ciByName.set(key, r);
-    }
+    const capById = new Map((caps || []).map((c) => [c.student_sheet_id, c]));
 
     const now = DateTime.now().setZone(ZONE);
     const cutoff = now.minus({ days: WINDOW_DAYS });
@@ -112,19 +97,19 @@ export async function GET() {
     const upcoming = (dt) => !!dt && dt >= startOfToday;
     const daysSince = (dt) => (dt ? Math.floor(now.diff(dt, 'days').days) : null);
 
-    // "👩‍🎓 All Data": A=0 name, J=9 email, AY=50 Ryan check-in,
-    // BA=52 Aaron check-in, BE=56 Needs Checkin (exclude on explicit FALSE).
-    const students = adRows
-      .slice(1)
+    // Ex-Master cols: name (A), email (J), last_ryan_checkin (AY), last_aaron_checkin
+    // (BA), needs_checkin (BE — exclude on explicit FALSE). Students with no email
+    // are skipped, as before: that now also skips a pre-auth roster row (phase 2b),
+    // which is correct — nobody can be non-compliant before they can sign in.
+    const students = (roster || [])
       .map((r) => {
-        const email = String(r?.[9] ?? '').trim();
-        const name = String(r?.[0] ?? '').trim();
+        const email = String(r.student_email ?? '').trim();
+        const name = String(r.name ?? '').trim();
         if (!email || !email.includes('@')) return null;
 
-        const needs = r?.[56];
-        const excluded = needs === false || /^false$/i.test(String(needs ?? '').trim());
+        const excluded = r.needs_checkin === false;
 
-        const ci = ciByName.get(normName(name)) || [];
+        const ci = capById.get(r.student_sheet_id) || {};
         const side = (checkinRaw, lastRaw, upRaw) => {
           const checkin = parseTimestamp(checkinRaw);
           const lastMeeting = parseTimestamp(lastRaw);
@@ -150,8 +135,8 @@ export async function GET() {
           name: name || email,
           email,
           excluded,
-          ryan: side(r?.[50], ci[9], ci[10]),
-          aaron: side(r?.[52], ci[11], ci[12]),
+          ryan: side(r.last_ryan_checkin, ci.last_ryan_meeting, ci.upcoming_ryan_meeting),
+          aaron: side(r.last_aaron_checkin, ci.last_aaron_meeting, ci.upcoming_aaron_meeting),
         };
       })
       .filter(Boolean);
