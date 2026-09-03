@@ -1,5 +1,9 @@
 import { notFound } from 'next/navigation';
-import { bookingUrl, getLead } from './leads';
+import { headers } from 'next/headers';
+import { DateTime } from 'luxon';
+import { getLead } from './leads';
+import BookingBlock from './BookingBlock';
+import { describeSlot } from '@/lib/nextBooking';
 
 /* /next/<slug> — the page a family lands on from the first post-consult email.
    ─────────────────────────────────────────────────────────────────────────
@@ -15,9 +19,10 @@ import { bookingUrl, getLead } from './leads';
      before the prices. It is the whole difference between this and a PDF: the
      page knows who opened it. Blurred to illegibility it still reads as a
      personal address, which is the one thing a template cannot fake.
-   · There is exactly ONE booking door. Two held times sit at the top of it
-     because two taps beat a month grid, and the calendar underneath is the
-     "another time" fallback rather than a competing second control. A sticky
+   · There is exactly ONE booking door and it is OURS. The family books Ryan's
+     real calendar through the portal's own engine, on the same availability
+     code a signed-in student books through, so they are never offered a time
+     the gate would refuse. Nothing is held for them while they decide. A sticky
      bar keeps that door reachable from the first screen on a phone.
    · Every time on the page is shown in BOTH zones, Singapore first. Fifteen
      hours of offset is the thing most likely to make this family misread their
@@ -31,14 +36,16 @@ import { bookingUrl, getLead } from './leads';
      "agreement". Ryan's two-email ruling (Claude_Services.md section 6): first
      contact carries the conversation, the second email carries the paperwork.
 
-   No auth, no database, and no client COMPONENT of ours. The page is static
-   HTML built from one JSON file. Two behaviours need the browser (the live
-   clock and the booked state) and both run from one small inline script rather
-   than from React state, so neither depends on the page hydrating: the Clerk
-   dev-instance handshake can stall hydration for an entire route over plain
-   HTTP, and a clock that only works on production is a clock that lied during
-   every review. Calendly's own widget loads the same way, as a plain async
-   script tag React hoists for us. */
+   No auth. The lead data is one Supabase row and the availability is one live
+   read of Ryan's calendar, both on this render.
+
+   ONE client component, BookingBlock, and only because picking a time is
+   genuinely interactive. It still renders to HTML on the server, so the first
+   paint carries real times on both clocks before any JavaScript runs. The live
+   clock and the ?booked=1 state stay OFF React entirely, in a small inline
+   script, because the Clerk dev-instance handshake can stall hydration for a
+   whole route over plain HTTP, and a clock that only works in production is a
+   clock that lied during every review. */
 
 /* Rendered per request, not prerendered. The lead data lives in a Supabase row
    rather than in a file the build can see (app/next/[slug]/leads.js explains
@@ -54,17 +61,17 @@ export async function generateMetadata({ params }) {
     /* Repeated here as well as on the layout because this is the object that
        wins for this route, and a page carrying a family's contact details and
        their quoted prices must never be indexed, followed, cached as a snippet,
-       or turned into a search preview. noindex alone would still let a crawler
-       walk the Calendly link out of the page. The X-Robots-Tag header in
-       next.config.mjs says the same thing at the transport layer, so a crawler
-       that never parses the head is covered too. */
+       or turned into a search preview. nofollow matters as much as noindex: a
+       crawler that indexed nothing could still walk every link out of the page.
+       The X-Robots-Tag header in next.config.mjs says the same thing at the
+       transport layer, on both hosts, so a crawler that never parses the head is
+       covered too. */
     robots: { index: false, follow: false, nocache: true },
-    /* Cross-origin requests from this page (Calendly's widget, its iframe, the
-       fallback link) send only the ORIGIN, never the path. The path IS the
-       secret: the unguessable slug is what authorizes a family to read their
-       own prices, and a full-URL Referer would hand it to a third party on every
-       load. This is the browser default in modern engines and is stated anyway,
-       because a default is not a decision. */
+    /* Any cross-origin request this page makes sends only the ORIGIN, never the
+       path. The path IS the secret: the unguessable slug is what authorizes a
+       family to read their own prices, and a full-URL Referer would hand it to
+       a third party on every load. This is the browser default in modern
+       engines and is stated anyway, because a default is not a decision. */
     referrer: 'strict-origin-when-cross-origin',
   };
 }
@@ -118,13 +125,11 @@ function Accent({ text }) {
    out whose yesterday it is, in the one sentence on the page whose entire job
    is to stop them doing time-zone arithmetic.
 
-   The booked state flips one attribute on <html> and lets CSS do the swap, so
-   nothing needs to re-render and the booking block does not have to be a
-   client component to disappear. `booked=1` is ours; `event_start_time` is what
-   Calendly appends when an event type is configured to redirect to a custom
-   page with event details passed. That configuration does not exist yet on
-   Ryan's event, so today only booked=1 fires; the check costs nothing and means
-   the page is already right the day someone turns it on. */
+   The ?booked=1 state flips one attribute on <html> and lets CSS do the swap.
+   It is now the SECONDARY path: the authoritative booked state comes from the
+   lead's own row, server-rendered, so it survives the family closing the tab
+   and coming back on another device. The query flag is what a confirmation link
+   in an email can carry, and it costs one attribute to honour. */
 const BROWSER_SCRIPT = `(function(){
   /* The booked flag is set IMMEDIATELY, before the browser has painted, so a
      family who already booked never sees a calendar flash on screen first. It
@@ -174,9 +179,60 @@ export default async function NextPage({ params }) {
   if (!lead) notFound();
 
   const b = lead.booking || {};
-  const held = b.heldTimes || [];
-  const booking = bookingUrl(lead);
-  const embed = b.embed !== false;
+
+  /* Availability is read on THIS render, from Ryan's live calendar, so the
+     first paint carries times that were true a moment ago rather than times a
+     build baked in.
+​
+     It goes through this app's OWN slots endpoint rather than calling Google
+     from here, and that is a measured constraint rather than a preference:
+     googleapis' response handling does not survive a React Server Component
+     render under Next 16. Calling it here fails the whole page with
+     "TypeError: ArrayBuffer is not detachable and could not be cloned" during
+     response streaming, while the identical call inside a route handler works.
+     Isolated on 2026-09-03 by keeping the import and skipping only the call,
+     which rendered 200. The same-origin hop is the price of a page that renders
+     at all.
+
+     The origin is derived from the REQUEST, never hardcoded, so this works
+     unchanged on portal.admissions.partners and on book.ryanchoice.com, where
+     the very same page is served from the root.
+
+     A failure here must never take the page down: the block falls back to its
+     empty state and the client re-asks. */
+  const h = await headers();
+  const host = h.get('host');
+  const proto = h.get('x-forwarded-proto') || (host?.startsWith('localhost') || host?.startsWith('127.') ? 'http' : 'https');
+
+  let availability = { days: [] };
+  try {
+    const res = await fetch(
+      `${proto}://${host}/api/next/slots?slug=${encodeURIComponent(slug)}`,
+      { cache: 'no-store' }
+    );
+    if (res.ok) availability = await res.json();
+  } catch (err) {
+    console.error(`/next/${slug}: could not load availability`, err);
+  }
+
+  /* A family who already booked sees their booking, not a list of times. The
+     row carries it, so this survives them closing the tab and coming back. */
+  const bookedState = lead.booked
+    ? {
+        start: lead.booked.start,
+        email: b.familyEmail || null,
+        slot: describeSlot(
+          {
+            start: lead.booked.start,
+            end: DateTime.fromISO(lead.booked.start)
+              .plus({ minutes: b.durationMinutes || 30 })
+              .toISO(),
+          },
+          b.timezone || 'Asia/Singapore',
+          b.zoneLabel || 'Singapore time'
+        ),
+      }
+    : null;
 
   return (
     <>
@@ -257,21 +313,30 @@ export default async function NextPage({ params }) {
         </Col>
 
         {/* ── 5. The booking block ────────────────────────────────────────────
-            The only booking door on the page. Held times first, calendar under
-            them as "another time", and a single failure-path link under that.
+            The family books Ryan's real calendar here. No Calendly, no embed,
+            no hand-off to a third party and no UTM: the booking is the portal's
+            own, it lands on the same calendar a student booking lands on, and
+            the lead slug rides on the event and on the row, which is the
+            attribution the query string used to carry badly.
 
-            The stylesheet and the script are rendered in the tree, not injected
-            from an effect: React hoists both, so the calendar does not depend on
-            this page hydrating. */}
+            The times are computed LIVE, on this render, from Ryan's calendar,
+            and re-verified live when the family taps confirm. NOTHING IS HELD
+            for them in between: a pre-reserved slot is a meeting Ryan cannot
+            see, nothing ever releases it, and four slots held for one family
+            are three slots taken from every other family. The cost of that
+            honesty is a race, and the confirm step is where the race is
+            resolved rather than hidden.
+
+            BookingBlock is a client component, which in the App Router still
+            renders to HTML on the server: the first paint carries real times,
+            already on both clocks, before any JavaScript has run. What
+            JavaScript adds is the ability to tap one. */}
         <section id="pick-a-time" className="mt-16 scroll-mt-8">
           <Col>
             <H2>
               <Accent text={b.heading} />
             </H2>
 
-            {/* The booked state. Same block, swapped by CSS on one attribute, so
-                a family who has already booked is never shown a calendar
-                inviting them to book again. */}
             <div className="booked-only mt-6">
               <div className="neu-raised rounded-[1.75rem] p-7">
                 <p className="font-display text-[1.5rem] font-semibold leading-tight text-ink">
@@ -287,73 +352,20 @@ export default async function NextPage({ params }) {
                 <p className="mt-2 text-[16px] leading-relaxed text-ink-soft">{b.zoneNote}</p>
               )}
 
-              {/* Times Ryan is holding. Singapore leads every label because that
-                  is the clock the family reads; Irvine follows for the same
-                  instant, so neither side does the arithmetic. */}
-              {held.length > 0 && (
-                <ul className="mt-6 space-y-3">
-                  {held.map((h) => (
-                    <li key={h.labelSGT}>
-                      <a
-                        href={bookingUrl(lead, h)}
-                        referrerPolicy="strict-origin-when-cross-origin"
-                        className="neu-slot flex min-h-[64px] flex-col justify-center rounded-[1.5rem] px-6 py-4"
-                      >
-                        <span className="font-display text-[1.15rem] font-semibold leading-snug text-ink">
-                          {h.labelSGT}
-                        </span>
-                        <span className="mt-0.5 text-[14px] leading-snug text-ink-soft">
-                          {h.labelPT}
-                        </span>
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {embed ? (
-                <>
-                  {held.length > 0 && <p className="eyebrow mt-10">Another time</p>}
-                  <link rel="stylesheet" href="https://assets.calendly.com/assets/external/widget.css" />
-                  {/* The frame is ours, the calendar inside it is Calendly's.
-                      The card treatment is not decoration: an unstyled embed
-                      div is invisible until the third-party script paints into
-                      it, so a slow network, an ad blocker or a corporate proxy
-                      leaves a 760px hole in the middle of the page with no
-                      indication that anything was ever meant to be there. As a
-                      card it reads as a panel that has not filled yet, and the
-                      link underneath is right where someone would look. */}
-                  <div
-                    className="calendly-inline-widget neu-inset mt-6 overflow-hidden rounded-[1.75rem]"
-                    data-url={booking}
-                    style={{ minWidth: '280px', height: '760px' }}
-                  />
-                  <script src="https://assets.calendly.com/assets/external/widget.js" async />
-                  <p className="mt-4 text-[14px] leading-relaxed text-ink-faint">
-                    If the calendar does not load,{' '}
-                    <a
-                      className="text-terracotta-deep underline underline-offset-2"
-                      href={booking}
-                      referrerPolicy="strict-origin-when-cross-origin"
-                    >
-                      open it here
-                    </a>
-                    .
-                  </p>
-                </>
-              ) : (
-                <a
-                  href={booking}
-                  referrerPolicy="strict-origin-when-cross-origin"
-                  className="neu-raised mt-6 flex min-h-[56px] items-center justify-center rounded-full px-8 text-[17px] font-semibold text-terracotta-deep"
-                >
-                  {held.length > 0 ? 'Another time' : 'Choose a time'}
-                </a>
-              )}
+              <BookingBlock
+                slug={slug}
+                initial={{ days: availability.days || [], booked: bookedState }}
+                copy={{
+                  booked: b.booked || { heading: 'Booked.', body: 'Nothing to prepare.' },
+                  confirmLabel: b.confirmLabel || 'Confirm this time',
+                  emptyLabel:
+                    b.emptyLabel ||
+                    'No mornings are open in the next two weeks. Email us and we will find one.',
+                }}
+              />
             </div>
           </Col>
         </section>
-
         {/* ── 6. What happens in that conversation ────────────────────────── */}
         <Col className="mt-16">
           <H2>

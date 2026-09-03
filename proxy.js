@@ -21,10 +21,32 @@ import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 // page is read-only and writes nothing. The trailing SLASH is load-bearing:
 // `/next(.*)` would also publish any future /next-steps or /nextcloud, so only
 // the id space under /next/ is public.
-const isPublicRoute = createRouteMatcher(['/demo(.*)', '/sign-in(.*)', '/sso-callback(.*)', '/parents(.*)', '/api/parentCheckin', '/write(.*)', '/next/(.*)', '/api/writing/doc', '/api/writing/save', '/api/writing/tab', '/api/writing/history', '/sat(.*)', '/api/sat/init', '/api/sat/quiz', '/api/sat/submit', '/api/cron(.*)', '/api/omnibar(.*)'])
+// /api/next/* serves that same page: the slots it offers and the booking it
+// takes. Same credential, same reasoning — the slug is in the request and the
+// routes 404 an unknown one, so they cannot be used to enumerate leads either.
+const isPublicRoute = createRouteMatcher(['/demo(.*)', '/sign-in(.*)', '/sso-callback(.*)', '/parents(.*)', '/api/parentCheckin', '/write(.*)', '/next/(.*)', '/api/next/(.*)', '/api/writing/doc', '/api/writing/save', '/api/writing/tab', '/api/writing/history', '/sat(.*)', '/api/sat/init', '/api/sat/quiz', '/api/sat/submit', '/api/cron(.*)', '/api/omnibar(.*)'])
+
+// book.ryanchoice.com serves the lead pages from its ROOT, so on that host the
+// path is `/conor-c44061` and the matcher above (which knows about `/next/…`)
+// never fires. The middleware sees the ORIGINAL path, not the rewritten one, so
+// the host has to be checked here rather than inferred from the destination.
+//
+// Scoped to ONE path segment matching the slug shape, and only on that host:
+// this must never widen what is public on portal.admissions.partners, where a
+// bare `/:slug` rule would unauthenticate a great deal more than a lead page.
+// `/api/*` is excluded by the segment rule (it has two) and is already covered
+// above, so the API works identically from either host.
+const BOOK_HOST = 'book.ryanchoice.com'
+const BOOK_SLUG = /^\/[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+function isBookHostLeadPage(request) {
+  const host = request.headers.get('host')?.split(':')[0].toLowerCase()
+  if (host !== BOOK_HOST) return false
+  return BOOK_SLUG.test(new URL(request.url).pathname)
+}
 
 export default clerkMiddleware(async (auth, request) => {
-  if (!isPublicRoute(request)) {
+  if (!isPublicRoute(request) && !isBookHostLeadPage(request)) {
     await auth.protect()
   }
 }, { signInUrl: '/sign-in' })

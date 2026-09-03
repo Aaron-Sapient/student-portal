@@ -1,6 +1,5 @@
 import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
-import nodemailer from 'nodemailer';
 import { DateTime } from 'luxon';
 import { getInstructor, validateInstructorHours } from '@/lib/instructors';
 import {
@@ -18,6 +17,8 @@ import {
 } from '@/lib/bookings';
 import { resolveRescheduleTarget } from '@/lib/rescheduleTarget';
 import { standingUnavailableWindows, exceedsTeachingRun, overlapsAny } from '@/lib/teachingGuardrails';
+import { sendBookingEmail } from '@/lib/bookingEmail';
+import { buildEventTitle } from '@/lib/calendarTitles';
 
 // Human messages for canBookOnDate() rejection reasons (grant gates + package rules).
 const SENIOR_DENY = {
@@ -58,38 +59,10 @@ function getServiceAuth() {
   });
 }
 
-async function sendBookingEmail(instructor, studentName, studentEmail, duration, meetingStart, agenda, isReschedule = false) {
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    secure: false,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  });
-
-  const dateLabel = new Date(meetingStart).toLocaleString('en-US', {
-    weekday: 'long', month: 'long', day: 'numeric',
-    hour: 'numeric', minute: '2-digit', hour12: true,
-    timeZone: 'America/Los_Angeles',
-  });
-
-  const action = isReschedule ? 'rescheduled' : 'booked';
-  const agendaLine = agenda ? `\nAgenda: ${agenda}` : '';
-
-  // A reschedule used to send TWO mails (bookMeeting → bookingEmail, cancelMeeting →
-  // cancelEmail) and those differ for Ryan — support@ vs ryan@. It is one request now,
-  // so cancelEmail is added here or Ryan's own inbox would stop hearing about moves.
-  const recipients = [studentEmail, instructor.bookingEmail];
-  if (isReschedule && instructor.cancelEmail) recipients.push(instructor.cancelEmail);
-
-  await transporter.sendMail({
-    from: process.env.SMTP_USER,
-    to: [...new Set(recipients.filter(Boolean))].join(', '),
-    subject: isReschedule
-      ? `Meeting Rescheduled: ${studentName} – ${duration} with ${instructor.displayName}`
-      : `New Meeting Booked: ${studentName} – ${duration} with ${instructor.displayName}`,
-    text: `Hi,\n\n${studentName} has ${action} a ${duration} meeting with ${instructor.displayName} for ${dateLabel} (Pacific Time).${agendaLine}\n\nZoom: ${instructor.zoomLink}\n\nThis is an automated message from the student portal.`,
-  });
-}
+/* sendBookingEmail moved to lib/bookingEmail.js on 2026-09-03, unchanged. The
+   per-lead page (/next/<slug>) books real meetings on the same calendar, and
+   support@ has to hear about those in the same shape it hears about a student's
+   booking. */
 
 export async function POST(request) {
   const { sessionClaims } = await auth();
@@ -363,9 +336,9 @@ export async function POST(request) {
     const agendaTrimmed =
       agenda?.trim() || (projectPlan ? projectPlan.label : senior ? 'College Apps' : '');
     const titlePrefix = instructor.slug === 'art' ? 'ART: ' : '';
-    const eventTitle = agendaTrimmed
-      ? `${titlePrefix}${studentName} – ${duration}: ${agendaTrimmed}`
-      : `${titlePrefix}${studentName} – ${duration}`;
+    const eventTitle = buildEventTitle({
+      studentName, duration, agenda: agendaTrimmed, prefix: titlePrefix,
+    });
 
     const eventDescription = agendaTrimmed
       ? `Zoom: ${instructor.zoomLink}\nAgenda: ${agendaTrimmed}`

@@ -47,3 +47,27 @@ comment on table lead_pages is
   'Per-lead /next/<slug> page data. Service-role only: rows contain a minor''s name, parent contact details and quoted prices. Seeded by scripts/seedLeadPages.mjs from app/next/leads/*.json (gitignored).';
 comment on column lead_pages.data is
   'The whole lead JSON, verbatim. Shape is documented by app/next/leads/example-a1b2c3.json, which is the committed template.';
+
+-- ── Booking columns (2026-09-03) ────────────────────────────────────────────
+-- Added when the page stopped punting to Calendly and started booking Ryan's
+-- own calendar through the portal's engine. The confirmed booking is ALSO
+-- merged into `data.booked` so a single row read renders the booked state with
+-- no second query; these columns exist so the same fact is queryable without
+-- digging through jsonb ("which leads booked this week", "which event id
+-- belongs to this family"). The row is the attribution: it is keyed by the
+-- slug, which is why nothing in this flow carries a UTM.
+--
+-- Separate idempotent statements rather than a second create table, so this
+-- file stays safe to re-run against a database that already has the table.
+alter table lead_pages add column if not exists booked_event_id text;
+alter table lead_pages add column if not exists booked_start    timestamptz;
+alter table lead_pages add column if not exists booked_at       timestamptz;
+
+-- One booking per lead page, by design: a second confirm RESCHEDULES (the route
+-- books the new time, then cancels the old event), so the row holds the current
+-- meeting rather than a history. If a history is ever wanted it belongs in its
+-- own append-only table, not in a second column here.
+comment on column lead_pages.booked_event_id is
+  'Google Calendar event id of the CURRENT booking. Replaced on reschedule, not appended.';
+
+create index if not exists lead_pages_booked_start_idx on lead_pages (booked_start);

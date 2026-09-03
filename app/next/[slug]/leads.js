@@ -81,52 +81,38 @@ export async function getLead(slug) {
   return data?.data ?? null;
 }
 
-/* The Calendly link, assembled in one place so no surface can build a
-   half-tagged variant.
+/* Record a confirmed booking on the lead's row.
 
-   Parameters verified against Calendly's own help pages on 2026-09-03:
-   prefill takes `name`, `first_name`, `last_name`, `email`, `location`,
-   `a1`..`a10`, `guests`, with spaces encoded as %20
-   (calendly.com/help/how-to-pre-fill-invitee-information-in-your-calendly-link);
-   source tracking takes `utm_source`, `utm_medium`, `utm_campaign`,
-   `utm_content`, `utm_term`, each value under 255 characters
-   (calendly.com/help/how-to-source-track-your-calendly-embed-with-utm-parameters).
-   URLSearchParams does the encoding, so a name with a space or an email with an
-   @ cannot break the link.
+   The booking lives on the SAME row as the page it was made from, so "did this
+   family book, and when" is one read of one row rather than a join against the
+   calendar. It is also the attribution: the row is keyed by the slug, so the
+   lead a booking came from is data we own. That is why nothing in this flow
+   carries a UTM any more — the Calendly link builder that used to live here,
+   and the utm_source/medium/content it assembled, are gone with it.
 
-   The a1..a10 answers are POSITIONAL, so they are only safe against a question
-   set someone has actually read. The first lead's were checked against the live
-   event on 2026-09-03 (GET /event_types, event 88554dee: "Consultation", 30
-   minutes, four custom questions, grade level a single-select whose options
-   include the exact string "10th"). A lead whose event has a different question
-   order must have its own prefill checked the same way, or leave a1..a4 out: a
-   positional answer against an unread question set files the phone number under
-   whatever question happens to be first.
+   Merged into the existing jsonb rather than replacing it: `data` is the whole
+   lead page, and a booking must never be able to overwrite the copy. */
+export async function recordLeadBooking(slug, booking) {
+  const client = getSupabaseClient();
+  const { data: row, error: readErr } = await client
+    .from(LEAD_PAGES)
+    .select('data')
+    .eq('slug', slug)
+    .maybeSingle();
+  if (readErr) throw new Error(`lead_pages read failed for "${slug}": ${readErr.message}`);
+  if (!row) throw new Error(`lead_pages has no row for "${slug}"`);
 
-   utm_content is taken from the lead's `id` rather than typed into the JSON, so
-   the tag and the ledger handle cannot drift apart. */
-export function bookingUrl(lead, held) {
-  const b = lead.booking || {};
-  const params = new URLSearchParams({
-    ...(b.prefill || {}),
-    ...(b.utm || {}),
-    utm_content: lead.id,
-  });
-
-  /* A held time deep-links into its own slot.
-
-     slotPath is the date-time segment Calendly itself writes into the address
-     bar when a slot is selected, copied verbatim rather than composed here, so
-     the link is verified by whoever picked the time instead of by my reading of
-     a URL format. Probed 2026-09-03: Calendly serves the correct event page for
-     a well-formed slot path and 302s a malformed one, so the route is real;
-     whether the slot arrives preselected happens in their client and was not
-     verified from here. month/date are the weaker fallback: they open the
-     calendar on the right day and leave the time to the family. With neither,
-     the button is the plain booking link, which still works. */
-  if (held?.slotPath) return `${b.url}/${held.slotPath}?${params.toString()}`;
-  if (held?.month) params.set('month', held.month);
-  if (held?.date) params.set('date', held.date);
-
-  return `${b.url}?${params.toString()}`;
+  const next = { ...row.data, booked: booking };
+  const { error } = await client
+    .from(LEAD_PAGES)
+    .update({
+      data: next,
+      booked_event_id: booking.event_id,
+      booked_start: booking.start,
+      booked_at: booking.booked_at,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('slug', slug);
+  if (error) throw new Error(`lead_pages booking write failed for "${slug}": ${error.message}`);
+  return booking;
 }

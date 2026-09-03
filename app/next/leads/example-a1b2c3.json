@@ -34,27 +34,28 @@
   "_clockNote": "The live line is COMPUTED in the browser from the two zones, never typed, because a typed clock is wrong within the hour. Singapore is UTC+8 with no daylight saving; Irvine follows America/Los_Angeles, which does observe it, so the offset is 15 hours now and 16 in the winter. The fallback string is what a reader with scripting off sees, and it is the only place a number is hard-coded; it is correct until US clocks change on 2026-11-01.",
   "booking": {
     "heading": "Pick a time for the second conversation.",
-    "sub": "30 minutes on Zoom with Ryan, shown in your local time.",
+    "sub": "Thirty minutes on Zoom with Ryan. Times are shown in your clock and in his.",
     "zoneNote": "Friday evening in California is Saturday morning in Singapore.",
     "stickyLabel": "Pick a time",
-    "url": "https://calendly.com/ryan_choice/free-consultation",
-    "embed": true,
-    "heldTimes": [],
     "booked": {
       "heading": "Booked.",
-      "body": "Nothing to prepare. The Zoom link is in your confirmation email."
+      "body": "Nothing to prepare."
     },
-    "prefill": {
-      "name": "Parent name as they typed it",
-      "email": "parent@example.com"
+    "instructor": "ryan",
+    "durationMinutes": 30,
+    "timezone": "Asia/Singapore",
+    "zoneLabel": "Singapore time",
+    "morning": {
+      "startHour": 7,
+      "endHour": 11
     },
-    "utm": {
-      "utm_source": "next",
-      "utm_medium": "email"
-    }
+    "agenda": "Second conversation",
+    "calendarName": "Alex Example",
+    "familyEmail": "parent@example.com",
+    "confirmLabel": "Confirm this time",
+    "emptyLabel": "No mornings are open in the next two weeks. Email us and we will find one."
   },
-  "_bookingNote": "Prefill values are whatever the family themselves typed into their previous Calendly booking, read from the live Calendly pull, never a guessed full name. a1..a10 are POSITIONAL: only add them after reading THAT event type's own question order from the Calendly API, or a phone number lands in whatever question happens to be first. utm_content is filled from `id` by the page.",
-  "_heldTimesNote": "Empty renders the calendar alone. Each entry is {labelSGT-style local label, labelPT, slotPath}. Show every time in BOTH zones, the family's first. slotPath is the ISO-8601 segment Calendly puts in its own address bar when a slot is picked: paste it from there rather than composing one.",
+  "_bookingNote": "The page books Ryan's real calendar through the portal's own engine; it does NOT punt to Calendly, and there is no Calendly link, embed or UTM anywhere in this flow. Slots come from the same availability code app/api/getAvailableSlots serves students from, so a family is never offered a time the booking gate would refuse. NOTHING IS HELD: the offer is computed live at render and re-verified live at confirm, because a pre-reserved slot is a meeting Ryan cannot see and nothing ever releases it. `morning` is the family's own clock, 07:00 to 11:00: Ryan's standing hours (Tue-Thu 16-20, Fri 16-19 Pacific) already land entirely inside a Singapore morning, so his ordinary availability IS the offer and no special arrangement is needed. `calendarName` is the internal filing handle Ryan reads in his own day, deliberately different from the greeting name the page addresses the student by. Attribution rides on the row and the calendar event (leadSlug), which is what replaced the UTMs.",
   "next": {
     "heading": "What happens in that conversation.",
     "lines": [

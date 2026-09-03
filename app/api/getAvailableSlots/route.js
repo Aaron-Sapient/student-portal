@@ -2,8 +2,8 @@ import { auth } from '@clerk/nextjs/server';
 import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
-import { listBlocksForBooking, isDateBlocked, blockedWindowsForDate } from '@/lib/blocks';
-import { standingUnavailableWindows, exceedsTeachingRun, teachingRunMinutes } from '@/lib/teachingGuardrails';
+import { teachingRunMinutes } from '@/lib/teachingGuardrails';
+import { computeDayAvailability } from '@/lib/bookingSlots';
 import { getSeniorByEmail, loadSeniorBookingState, canBookOnDate } from '@/lib/seniors';
 import { resolveRescheduleTarget } from '@/lib/rescheduleTarget';
 import {
@@ -25,29 +25,13 @@ function getServiceAuth() {
   });
 }
 
-function generateSlots(dateStr, durationMinutes, instructor) {
-  const slots = [];
-  const zone = 'America/Los_Angeles';
-  const dayObj = DateTime.fromISO(dateStr, { zone });
-  const hours = instructor.hoursByWeekday[dayObj.weekday];
-  if (!hours) return [];
-
-  let startPointer = dayObj.set({ hour: hours.start, minute: 0, second: 0, millisecond: 0 });
-  const endLimit = dayObj.set({ hour: hours.end, minute: 0, second: 0, millisecond: 0 });
-
-  while (startPointer < endLimit) {
-    const slotEnd = startPointer.plus({ minutes: durationMinutes });
-    if (slotEnd <= endLimit) {
-      slots.push({
-        start: startPointer.toISO(),
-        end: slotEnd.toISO(),
-        label: startPointer.toLocaleString(DateTime.TIME_SIMPLE),
-      });
-    }
-    startPointer = startPointer.plus({ minutes: durationMinutes });
-  }
-  return slots;
-}
+/* generateSlots and the whole day-availability computation moved to
+   lib/bookingSlots.js on 2026-09-03, unchanged. The per-lead page
+   (/next/<slug>) offers families real times on the same calendar and has to get
+   the same answer this route gives; a second copy would diverge on its first
+   divergent day and nobody would see it until someone tapped a time and was
+   refused. The gates below (senior, project, reschedule) stayed here: they are
+   about a signed-in student's entitlement, which the lead route has none of. */
 
 // Recommendation order. Used to give +100 to back-to-back slots, which steered students
 // into stacking the day solid (Fri 2026-08-28: 4:00–8:00 with no break). For capped
@@ -136,62 +120,18 @@ export async function GET(request) {
       }
     }
 
-    const dayStart = requestedDate.startOf('day').toISO();
-    const dayEnd = requestedDate.endOf('day').toISO();
+    const { blocked, slots: available, calendarEvents, busyWindows } = await computeDayAvailability({
+      calendar,
+      instructor,
+      dateStr,
+      duration,
+      earliestAllowed,
+      replacingEventId,
+    });
 
-    // ART books on Aaron's calendar, so an Aaron block also blocks ART.
-    const blockSlugs = instructor.slug === 'art' ? ['art', 'aaron'] : [instructor.slug];
-
-    const [eventsRes, blocks] = await Promise.all([
-      calendar.events.list({
-        calendarId: instructor.calendarId,
-        timeMin: dayStart,
-        timeMax: dayEnd,
-        singleEvents: true,
-        orderBy: 'startTime',
-      }),
-      listBlocksForBooking(),
-    ]);
-
-    if (blockSlugs.some(slug => isDateBlocked(blocks, slug, dateStr))) {
+    if (blocked) {
       return Response.json({ slots: [], recommendations: [], blocked: true });
     }
-
-    // Every non-cancelled event blocks, including ones Google marks Free. Deliberate —
-    // Ryan blocks time off with all-day events, which Google defaults to "Free" and he
-    // doesn't re-mark. Full reasoning in getMonthAvailability; don't change one site alone.
-    const busyWindows = (eventsRes.data.items || [])
-      .filter(e => e.status !== 'cancelled')
-      // The meeting being rescheduled must not block its own replacement — otherwise
-      // its current time (and anything overlapping it) is missing from the new day.
-      .filter(e => !replacingEventId || e.id !== replacingEventId)
-      .map(e => ({
-        start: DateTime.fromISO(e.start.dateTime || e.start.date),
-        end: DateTime.fromISO(e.end.dateTime || e.end.date),
-        timed: Boolean(e.start.dateTime),
-      }));
-
-    // TIMED calendar events alone feed the teaching-run cap: blocks and standing gaps are
-    // time OFF, not teaching, and an all-day event (`start.date`, parsed zoneless) would
-    // read as a 24h run bleeding into the neighbouring day. All-day events still block
-    // by overlap via busyWindows. Captured before the exclusion-only windows merge.
-    const calendarEvents = busyWindows.filter(w => w.timed);
-
-    // Merge any partial-time blocks for this date so their windows filter out slots.
-    for (const slug of blockSlugs) {
-      busyWindows.push(...blockedWindowsForDate(blocks, slug, dateStr));
-    }
-    // Standing per-weekday gaps (lib/teachingGuardrails.js) exclude slots the same way.
-    busyWindows.push(...standingUnavailableWindows(instructor, dateStr));
-
-    const candidates = generateSlots(dateStr, duration, instructor);
-    const available = candidates.filter(slot => {
-      const slotStart = DateTime.fromISO(slot.start);
-      const slotEnd = DateTime.fromISO(slot.end);
-      if (slotStart < earliestAllowed) return false;
-      if (busyWindows.some(busy => slotStart < busy.end && slotEnd > busy.start)) return false;
-      return !exceedsTeachingRun(instructor, { start: slotStart, end: slotEnd }, calendarEvents);
-    });
 
     const scored = scoreSlots(available, calendarEvents, busyWindows, instructor);
     const recommendations = [...scored]
