@@ -3,18 +3,15 @@ import { sheetSafe } from '@/lib/sheetSafe';
 import { DateTime } from 'luxon';
 import { requireDeveloper } from '@/lib/developerAuth';
 import { getSupabaseClient, WRITTEN_REPORTS } from '@/lib/supabase';
+import { getStudentContactBySheetId } from '@/lib/identity';
 
-const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
-const MASTER_TAB = '👩‍🎓 All Data';
-const REPORTS_TAB = 'WrittenReports';
+// The MASTER sheet id, its 👩‍🎓 All Data tab and its WrittenReports tab are gone:
+// the report RECORD lives in `written_reports`. What remains below is the separate
+// 'Written Reports' TAB on each STUDENT's own sheet — the family-facing delivery
+// surface. It has no Supabase reader yet (written_reports.body_html is written
+// NULL by the backfill and nothing reads it), so replacing it needs a portal-native
+// report page. That is the next lane, deliberately not this one.
 const STUDENT_REPORTS_TAB = 'Written Reports';
-
-const FIELD_TO_COL = {
-  onTarget: 'C',
-  needsAttention: 'D',
-  strategy: 'E',
-  parentRequests: 'F',
-};
 
 // Supabase (snake_case) column for each editable field — for the best-effort
 // written_reports mirror dual-write (Bucket-A cutover), keyed on sheet_row.
@@ -163,30 +160,31 @@ export async function GET() {
   if (!gate.ok) return gate.response;
 
   try {
-    const sheets = google.sheets({ version: 'v4', auth: getServiceAuth() });
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${REPORTS_TAB}!A:H`,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
-    const rows = res.data.values || [];
-    const reports = rows.slice(1)
-      .map((r, i) => ({
-        rowIndex: i + 2,
-        date: r[0] || '',
-        student: r[1] || '',
-        onTarget: r[2] || '',
-        needsAttention: r[3] || '',
-        strategy: r[4] || '',
-        parentRequests: r[5] || '',
-        status: r[6] === true || r[6] === 'TRUE' || r[6] === 'true',
-        parentNotified: r[7] === true || r[7] === 'TRUE' || r[7] === 'true',
-      }))
-      .filter(r => r.student)
-      // date is an UNFORMATTED sheet serial (a number); sort numerically so
-      // newest-first holds across digit-count boundaries (a string localeCompare
-      // sorts "9999" after "46100" lexically). Blank/non-numeric dates sink last.
-      .sort((a, b) => (Number(b.date) || 0) - (Number(a.date) || 0));
+    // Was MASTER WrittenReports!A:H, with the 1-based sheet row as each report's
+    // handle. `written_reports` is the store now and `id` (uuid) is the handle, so
+    // a report is no longer addressed by its position in a spreadsheet.
+    const { data, error } = await getSupabaseClient()
+      .from(WRITTEN_REPORTS)
+      .select('id, report_at, report_date, student_name, on_target, needs_attention, strategy, parent_requests, status, parent_notified')
+      .order('report_at', { ascending: false, nullsFirst: false });
+    if (error) throw new Error(error.message);
+
+    const reports = (data || [])
+      .filter((r) => r.student_name)
+      .map((r) => ({
+        id: r.id,
+        // The sheet stored an UNFORMATTED serial and the client re-formatted it.
+        // report_at is an ISO instant; report_date is the LA calendar date and is
+        // what the backfilled rows carry when report_at is null.
+        date: r.report_at || r.report_date || '',
+        student: r.student_name || '',
+        onTarget: r.on_target || '',
+        needsAttention: r.needs_attention || '',
+        strategy: r.strategy || '',
+        parentRequests: r.parent_requests || '',
+        status: r.status === true,
+        parentNotified: r.parent_notified === true,
+      }));
     return Response.json({ reports });
   } catch (err) {
     console.error('writtenReports GET error:', err);
@@ -199,34 +197,19 @@ export async function PATCH(request) {
   if (!gate.ok) return gate.response;
 
   try {
-    const { rowIndex, field, value } = await request.json();
-    if (!rowIndex || rowIndex < 2) return Response.json({ error: 'Invalid rowIndex' }, { status: 400 });
-    const col = FIELD_TO_COL[field];
-    if (!col) return Response.json({ error: 'Invalid field' }, { status: 400 });
+    const { id, field, value } = await request.json();
+    if (!id || typeof id !== 'string') return Response.json({ error: 'Invalid id' }, { status: 400 });
+    const dbcol = FIELD_TO_DBCOL[field];
+    if (!dbcol) return Response.json({ error: 'Invalid field' }, { status: 400 });
 
-    const sheets = google.sheets({ version: 'v4', auth: getServiceAuth() });
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${REPORTS_TAB}!${col}${rowIndex}`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [[sheetSafe(value || '')]] },
-    });
-
-    // Best-effort mirror the field edit to Supabase written_reports (keyed on
-    // sheet_row = rowIndex). Non-authoritative — never fail the request on a
-    // mirror error, and no read flag is flipped.
-    try {
-      const dbcol = FIELD_TO_DBCOL[field];
-      if (dbcol) {
-        const { error } = await getSupabaseClient()
-          .from(WRITTEN_REPORTS)
-          .update({ [dbcol]: value || null })
-          .eq('sheet_row', rowIndex);
-        if (error) console.warn('[dual-write:written_reports] PATCH failed:', error.message);
-      }
-    } catch (e) {
-      console.warn('[dual-write:written_reports] PATCH skipped:', e?.message || e);
-    }
+    // Single-write. Was an authoritative sheet-cell update plus a best-effort
+    // Supabase mirror keyed on sheet_row; a mirror failure was swallowed, so the
+    // two could silently disagree. One store, one write, and it can fail loudly.
+    const { error } = await getSupabaseClient()
+      .from(WRITTEN_REPORTS)
+      .update({ [dbcol]: value || null })
+      .eq('id', id);
+    if (error) throw new Error(error.message);
 
     return Response.json({ success: true });
   } catch (err) {
@@ -416,45 +399,42 @@ export async function POST(request) {
   if (!gate.ok) return gate.response;
 
   try {
-    const { rowIndex, silent } = await request.json();
-    if (!rowIndex || rowIndex < 2) return Response.json({ error: 'Invalid rowIndex' }, { status: 400 });
+    const { id, silent } = await request.json();
+    if (!id || typeof id !== 'string') return Response.json({ error: 'Invalid id' }, { status: 400 });
 
     const sheets = google.sheets({ version: 'v4', auth: getServiceAuth() });
 
-    // 1. Read the report row from master.
-    const reportRes = await sheets.spreadsheets.values.get({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${REPORTS_TAB}!A${rowIndex}:G${rowIndex}`,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
-    const row = reportRes.data.values?.[0];
-    if (!row) return Response.json({ error: 'Report row not found' }, { status: 404 });
-    const [, student, onTarget, needsAttention, strategy, parentRequests] = row;
-    if (!student) return Response.json({ error: 'Report row has no student name' }, { status: 400 });
+    // 1. Read the report from `written_reports` (was MASTER WrittenReports!A<row>:G<row>).
+    //    student_sheet_id rides on the row, so the Master A:J name lookup that used
+    //    to resolve it — and could 404 a report whose stored name drifted from the
+    //    roster spelling — is gone.
+    const { data: report, error: readErr } = await getSupabaseClient()
+      .from(WRITTEN_REPORTS)
+      .select('id, student_sheet_id, student_name, on_target, needs_attention, strategy, parent_requests')
+      .eq('id', id)
+      .maybeSingle();
+    if (readErr) throw new Error(readErr.message);
+    if (!report) return Response.json({ error: 'Report not found' }, { status: 404 });
+
+    const student = report.student_name;
+    const onTarget = report.on_target || '';
+    const needsAttention = report.needs_attention || '';
+    const strategy = report.strategy || '';
+    const parentRequests = report.parent_requests || '';
+    if (!student) return Response.json({ error: 'Report has no student name' }, { status: 400 });
+
+    const studentSheetId = report.student_sheet_id;
+    if (!studentSheetId) {
+      return Response.json({ error: `No student sheet on file for "${student}"` }, { status: 400 });
+    }
 
     // Column A on the student sheet should reflect when the report was actually
     // uploaded, not when Claude originally drafted it. Force LA per project rules.
     const dateIso = DateTime.now().setZone('America/Los_Angeles').toISO();
 
-    // 2. Look up the student sheet ID by name (col A) → URL (col G).
-    //    Also pull col J (student email) for the parent-notifier ping.
-    const masterRes = await sheets.spreadsheets.values.get({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${MASTER_TAB}!A:J`,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
-    const masterRows = masterRes.data.values || [];
-    const studentRow = masterRows.find(r => r[0] === student);
-    if (!studentRow) {
-      return Response.json({ error: `Student "${student}" not found in master sheet` }, { status: 404 });
-    }
-    const studentSheetUrl = studentRow[6];
-    const sheetIdMatch = studentSheetUrl?.match?.(/\/d\/([a-zA-Z0-9-_]+)/);
-    if (!sheetIdMatch) {
-      return Response.json({ error: `Could not parse sheet URL for "${student}"` }, { status: 400 });
-    }
-    const studentSheetId = sheetIdMatch[1];
-    const studentEmail = String(studentRow[9] ?? '').trim();
+    // The parent-notifier ping needs the student's address (was Master col J).
+    const contact = await getStudentContactBySheetId(studentSheetId);
+    const studentEmail = contact?.studentEmail || '';
 
     // 3. Tab + header (creates with hidden gridlines + frozen header + styled header).
     const { sheetId: tabSheetId, isNew } = await ensureStudentReportsTab(sheets, studentSheetId);
@@ -474,23 +454,13 @@ export async function POST(request) {
       await applyTableFormatting(sheets, studentSheetId, tabSheetId, totalRows, isNew);
     }
 
-    // 6. Flip Status to TRUE in the master.
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${REPORTS_TAB}!G${rowIndex}`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [[true]] },
-    });
-
-    // Best-effort mirror the status flip to Supabase (keyed on sheet_row).
-    try {
+    // 6. Flip Status to TRUE. Single-write, keyed on the report's own id.
+    {
       const { error } = await getSupabaseClient()
         .from(WRITTEN_REPORTS)
         .update({ status: true })
-        .eq('sheet_row', rowIndex);
-      if (error) console.warn('[dual-write:written_reports] POST status failed:', error.message);
-    } catch (e) {
-      console.warn('[dual-write:written_reports] POST status skipped:', e?.message || e);
+        .eq('id', id);
+      if (error) throw new Error(`status flip failed: ${error.message}`);
     }
 
     // 7. Fire-and-forget the parent-notifier webhook. The Apps Script
@@ -512,14 +482,14 @@ export async function POST(request) {
         + `&email=${encodeURIComponent(studentEmail)}`
         + `&sheetId=${encodeURIComponent(studentSheetId)}`
         + `&gid=${encodeURIComponent(tabSheetId)}`
-        + `&rowIndex=${encodeURIComponent(rowIndex)}`;
+        + `&rowIndex=${encodeURIComponent(id)}`;
       fetch(url, { method: 'GET' }).catch(e => {
         console.error('parent-notifier ping failed:', e);
       });
     } else if (!webhookUrl || !webhookToken) {
       console.warn('parent-notifier env vars missing — skipping ping');
     } else if (!studentEmail) {
-      console.warn(`parent-notifier: no email in col J for "${student}" — skipping ping`);
+      console.warn(`parent-notifier: no student email on the roster row for "${student}" — skipping ping`);
     }
 
     return Response.json({ success: true });

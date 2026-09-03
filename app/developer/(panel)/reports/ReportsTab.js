@@ -43,7 +43,7 @@ function AutoResizingTextarea({ value, onChange, onBlur }) {
 
 function ReportRow({ report, onPatch, onUpload, busy, busyMode }) {
   // Local state lets us debounce sheet writes to blur and avoid re-rendering the
-  // textarea every keystroke from parent state. We sync from props on rowIndex change.
+  // textarea every keystroke from parent state. We sync from props on id change.
   const [local, setLocal] = useState({
     onTarget: report.onTarget,
     needsAttention: report.needsAttention,
@@ -58,7 +58,7 @@ function ReportRow({ report, onPatch, onUpload, busy, busyMode }) {
       strategy: report.strategy,
       parentRequests: report.parentRequests,
     });
-  }, [report.rowIndex, report.onTarget, report.needsAttention, report.strategy, report.parentRequests]);
+  }, [report.id, report.onTarget, report.needsAttention, report.strategy, report.parentRequests]);
 
   const cell = (field) => (
     <td className="p-1.5 align-top">
@@ -66,7 +66,7 @@ function ReportRow({ report, onPatch, onUpload, busy, busyMode }) {
         value={local[field]}
         onChange={(e) => setLocal((s) => ({ ...s, [field]: e.target.value }))}
         onBlur={() => {
-          if (local[field] !== report[field]) onPatch(report.rowIndex, field, local[field]);
+          if (local[field] !== report[field]) onPatch(report.id, field, local[field]);
         }}
       />
     </td>
@@ -137,12 +137,14 @@ export default function ReportsTab() {
 
   const all = reports.data || [];
 
-  const patch = async (rowIndex, field, value) => {
+  // A report is addressed by its written_reports uuid, not by its old 1-based row
+  // in the MASTER WrittenReports tab (zero-google, 2026-09-02).
+  const patch = async (id, field, value) => {
     try {
       const res = await fetch('/api/developer/writtenReports', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rowIndex, field, value }),
+        body: JSON.stringify({ id, field, value }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -159,13 +161,13 @@ export default function ReportsTab() {
     const verb = report.status ? 'Re-upload to' : 'Upload to';
     const suffix = silent ? ' WITHOUT emailing parents?' : '?';
     if (!confirm(`${verb} ${report.student}'s Google Sheet${suffix}`)) return;
-    setBusyRow(report.rowIndex);
+    setBusyRow(report.id);
     setBusyMode(silent ? 'silent' : 'normal');
     try {
       const res = await fetch('/api/developer/writtenReports', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rowIndex: report.rowIndex, silent }),
+        body: JSON.stringify({ id: report.id, silent }),
       });
       const data = await res.json();
       if (!res.ok) alert('Upload failed: ' + (data.error || 'unknown'));
@@ -266,12 +268,12 @@ export default function ReportsTab() {
               <tbody>
                 {filtered.map((r) => (
                   <ReportRow
-                    key={r.rowIndex}
+                    key={r.id}
                     report={r}
                     onPatch={patch}
                     onUpload={upload}
-                    busy={busyRow === r.rowIndex}
-                    busyMode={busyRow === r.rowIndex ? busyMode : null}
+                    busy={busyRow === r.id}
+                    busyMode={busyRow === r.id ? busyMode : null}
                   />
                 ))}
               </tbody>
