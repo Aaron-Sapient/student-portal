@@ -1,14 +1,10 @@
 import { auth } from '@clerk/nextjs/server';
-import { sheetSafe } from '@/lib/sheetSafe';
 import { resolveCheckinStudent } from '@/lib/checkinIdentity';
 import { DateTime } from 'luxon';
 import { listBlocksForBooking, isDateBlocked } from '@/lib/blocks';
 import { setBookingToken } from '@/lib/bookingTokens';
 import { stampCheckin } from '@/lib/identity';
-
-const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
-const MASTER_TAB = '👩‍🎓 All Data';
-const CHECKIN_TAB = 'A_CheckinForm';
+import { recordCheckin, setCheckinOutcome } from '@/lib/checkinRecords';
 
 
 export async function POST(request) {
@@ -31,7 +27,9 @@ export async function POST(request) {
     const target = await resolveCheckinStudent();
     if (target.error) return target.error;
     // Overview!B2 verbatim — see the ⚠ note in lib/checkinIdentity.js.
-    const { studentSheetId, studentName, sheets } = target;
+    // No `sheets`: the Aaron track writes no spreadsheet at all now (its check-in
+    // carries no grades, so it never touched the 🎓 Transcript grid).
+    const { studentSheetId, studentName } = target;
 
     const now = new Date().toISOString();
 
@@ -45,28 +43,23 @@ export async function POST(request) {
       .map(({ task, status }) => `${task}: ${status}`)
       .join('; ');
 
-    // ── 3. Append new row to A_CheckinForm ───────────────────────────────────
-    // Column order: A=Timestamp, B=Name, C=Task Updates, D=Upcoming Deadlines,
-    // E=Questions Category, F=Questions Text, G=Response Preference,
-    // H=Agenda (filled later by bookMeeting), I=Routing Reason, J=Booking Decision
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${CHECKIN_TAB}!A:J`,
-      valueInputOption: 'USER_ENTERED',
-      insertDataOption: 'INSERT_ROWS',
-      requestBody: {
-        values: [[
-          now,                                   // A: Timestamp (server-generated)
-          studentName || '',                     // B: Name (server-resolved; matched raw downstream — do NOT sheetSafe)
-          sheetSafe(taskUpdatesString),          // C: Task Updates (concatenated)
-          sheetSafe(upcomingDeadlines || ''),    // D: Upcoming Deadlines
-          sheetSafe(questionsCategory || ''),    // E: Questions Category
-          sheetSafe(questionsText || ''),        // F: Questions Text
-          sheetSafe(responsePreference || ''),   // G: Response Preference
-          '',                         // H: Agenda (filled by bookMeeting)
-          '',                         // I: Routing Reason (filled below)
-          '',                         // J: Booking Decision (filled below)
-        ]],
+    // ── 3. Record the check-in ───────────────────────────────────────────────
+    // Was an append to MASTER `A_CheckinForm!A:J`. The aaron payload keys differ
+    // from ryan's because the two form tabs always differed — see the contract note
+    // in lib/checkinRecords.js; unifying them would orphan one era's history.
+    // `agenda` stays null here and is filled by bookMeeting, as col H was.
+    const checkinId = await recordCheckin({
+      studentSheetId,
+      instructor: 'aaron',
+      submittedAt: now,
+      payload: {
+        task_updates: taskUpdatesString || null,
+        upcoming_deadlines: upcomingDeadlines || null,
+        concern_category: questionsCategory || null,
+        concern_text: questionsText || null,
+        response_preference: responsePreference || null,
+        agenda: null,
+        routing_reason: null,
       },
     });
 
@@ -103,32 +96,12 @@ export async function POST(request) {
       return Response.json({ error: 'Check-in saved, but unlocking booking failed. Please retry.' }, { status: 500 });
     }
 
-    // ── 6. Backfill routing reason (col I) and decision (col J) on the appended row ──
-    const allRowsRes = await sheets.spreadsheets.values.get({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${CHECKIN_TAB}!A:J`,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
-
-    const checkinRows = allRowsRes.data.values || [];
-    let lastMatchIndex = -1;
-    checkinRows.forEach((r, i) => {
-      if (r[1] === studentName) lastMatchIndex = i;
-    });
-
-    if (lastMatchIndex > -1) {
-      const sheetRow = lastMatchIndex + 1;
-      await sheets.spreadsheets.values.batchUpdate({
-        spreadsheetId: MASTER_SHEET_ID,
-        requestBody: {
-          valueInputOption: 'USER_ENTERED',
-          data: [
-            { range: `${CHECKIN_TAB}!I${sheetRow}`, values: [[sheetSafe(reason || '')]] },
-            { range: `${CHECKIN_TAB}!J${sheetRow}`, values: [[decision]] },
-          ],
-        },
-      });
-    }
+    // ── 6. Stamp the outcome on THIS check-in ────────────────────────────────
+    // Was: re-read the whole A_CheckinForm tab, walk it for the LAST row whose
+    // col B matched studentName, write cols I/J of that row. Same two failure modes
+    // as the Ryan track — a name mismatch wrote the decision nowhere behind the
+    // `lastMatchIndex > -1` guard, and same-named students raced for "last row".
+    await setCheckinOutcome(checkinId, { decision, reason, existingPayload: null });
 
     return Response.json({ success: true, decision, reason });
 
