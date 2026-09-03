@@ -11,6 +11,7 @@ import { sheetSafe } from '@/lib/sheetSafe';
 import { resolveCheckinStudent, buildGradeWriteData } from '@/lib/checkinIdentity';
 import { getStudentContactBySheetId, stampCheckin } from '@/lib/identity';
 import { recordCheckin, recentCheckins, setCheckinOutcome } from '@/lib/checkinRecords';
+import { isPortalNative } from '@/lib/provisioning';
 
 // The Master sheet id / tab names are gone with the last write to them. The only
 // Google call left in this route is the 🎓 Transcript grid write below, whose
@@ -140,7 +141,12 @@ export async function POST(request) {
     // server-side from their own resolved sheet + grade year, and each rowOffset
     // is bounds-checked against that grid. A client-supplied A1 range used to be
     // half of an arbitrary-write primitive — it is no longer read.
-    if (grades?.length) {
+    // isPortalNative: a phase-2b student has no spreadsheet to write into, and
+    // getUpdateFormData never offered them the grades step, so `grades` should be
+    // empty anyway — this guard is the one that has to hold if a stale client posts
+    // grades regardless, because the alternative is a Sheets write aimed at the
+    // literal id 'portal:<slug>'.
+    if (grades?.length && !isPortalNative(studentSheetId)) {
       const gradeData = buildGradeWriteData(gradeYear, grades)
         .map((d) => ({ ...d, values: [[sheetSafe(d.values[0][0] || '')]] }));
       if (gradeData.length) {

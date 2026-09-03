@@ -4,6 +4,7 @@ import { google } from 'googleapis';
 // WRITES can never disagree — the POST recomputes rather than trusting the client.
 import { getCurrentSemester, getGradeRanges } from '@/lib/checkinIdentity';
 import { getStudentByEmail, getStudentProfile, studentDisplay } from '@/lib/identity';
+import { isPortalNative } from '@/lib/provisioning';
 
 // The transcript grid (🎓 Transcript on the STUDENT sheet) is still read from
 // Sheets below — that domain's Supabase reader (lib/transcript.js) is the §4
@@ -49,8 +50,22 @@ export async function GET() {
     const { studentName, currentYear: gradeYear } = studentDisplay(student, profile);
     const semester = getCurrentSemester();
 
-    // Skip Q1 for MS/summer but still show Q2+Q3
-    if (semester === 'NA' || gradeYear === 'MS' || !['9th','10th','11th','12th'].includes(gradeYear)) {
+    // Skip Q1 for MS/summer but still show Q2+Q3.
+    //
+    // isPortalNative rides the SAME gate on purpose. A portal-native student
+    // (phase 2b, student_sheet_id 'portal:<slug>') has no Google spreadsheet, so
+    // the transcript read below would hand Google a garbage spreadsheetId and 500
+    // the whole check-in form. They survive today only because their `class` is
+    // null, which makes gradeYear null and lands them here by accident — the moment
+    // anyone fills in a class and a current_year they would break. Making it
+    // explicit means the check-in still WORKS for them, minus the grades step,
+    // which is exactly what the skip path is for.
+    if (
+      semester === 'NA' ||
+      gradeYear === 'MS' ||
+      !['9th','10th','11th','12th'].includes(gradeYear) ||
+      isPortalNative(studentSheetId)
+    ) {
       return Response.json({
         skip: true,
         lastSubmitted,
