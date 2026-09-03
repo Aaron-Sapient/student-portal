@@ -6,9 +6,10 @@ import { listBlocksForBooking, isDateBlocked } from '@/lib/blocks';
 import { getProjectRows, toLADate } from '@/lib/projects';
 import { sendMeetingGrantedEmail } from '@/lib/checkinEmails';
 import { getSeniorBySheetId, createCheckinGrant } from '@/lib/seniors';
-import { setBookingToken, resolveStudentSheetId } from '@/lib/bookingTokens';
+import { setBookingToken } from '@/lib/bookingTokens';
 import { sheetSafe } from '@/lib/sheetSafe';
 import { resolveCheckinStudent, buildGradeWriteData } from '@/lib/checkinIdentity';
+import { getStudentContactBySheetId, stampCheckin } from '@/lib/identity';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -106,7 +107,7 @@ export async function POST(request) {
     // studentName is Overview!B2 VERBATIM — the spelling every existing CheckinForm
     // row was written with, which downstream code matches exactly. See the ⚠ note
     // in lib/checkinIdentity.js before changing it.
-    const { studentSheetId, studentRowIndex, studentName, gradeYear, sheets } = target;
+    const { studentSheetId, studentName, gradeYear, sheets } = target;
 
     // Seniors do a record-only weekly check-in: it's the deterministic prerequisite
     // that unlocks their booking for the week (no Claude eval, no token, no Ryan
@@ -167,16 +168,7 @@ export async function POST(request) {
     // and no report. Failing the other way (token written, AY stamp failed)
     // just lets them re-submit, which supersedes harmlessly.
     if (isSenior) {
-      await sheets.spreadsheets.values.batchUpdate({
-        spreadsheetId: MASTER_SHEET_ID,
-        requestBody: {
-          valueInputOption: 'USER_ENTERED',
-          data: [
-            { range: `${MASTER_TAB}!AY${studentRowIndex}`, values: [[now]] },
-            { range: `${MASTER_TAB}!BA${studentRowIndex}`, values: [[now]] },
-          ],
-        },
-      });
+      await stampCheckin(studentSheetId, 'both', now);
     }
 
     // ── 3. Build concatenated strings for CheckinForm ────────────────────────
@@ -413,16 +405,11 @@ GRADE CHANGES vs LAST CHECK-IN: ${gradeDropsText}`;
     // The Master AZ cell is deliberately NOT written anymore — the booking
     // outcome lives in the database, not the sheet. Fail loudly: a grant that
     // doesn't land is a stranded student, not a cosmetic miss.
-    const tokenSheetId = studentSheetId || (await resolveStudentSheetId(sheets, studentRowIndex));
+    const tokenSheetId = studentSheetId;
     await setBookingToken({ studentSheetId: tokenSheetId, slug: 'ryan', value: decision });
 
     // Decision landed — NOW mark the week's check-in done (see the note at step 2).
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${MASTER_TAB}!AY${studentRowIndex}`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [[now]] },
-    });
+    await stampCheckin(studentSheetId, 'ryan', now);
 
     // ── 8. Stamp the just-appended CheckinForm row: K=reason, L=status ────────
     const allRowsRes = await sheets.spreadsheets.values.get({
@@ -454,14 +441,12 @@ GRADE CHANGES vs LAST CHECK-IN: ${gradeDropsText}`;
       // token is already written, so the student can also book straight from
       // the portal (the check-in confirmation screen links there).
       try {
-        const emailsRes = await sheets.spreadsheets.values.get({
-          spreadsheetId: MASTER_SHEET_ID,
-          range: `${MASTER_TAB}!J${studentRowIndex}:L${studentRowIndex}`,
-          valueRenderOption: 'UNFORMATTED_VALUE',
-        });
-        const row = emailsRes.data.values?.[0] || [];
-        const studentEmail = String(row[0] || '').trim();
-        const parentEmails = [row[1], row[2]].map((e) => String(e || '').trim()).filter(Boolean);
+        // Was Master `J${rowIndex}:L${rowIndex}` (student email + the two parent
+        // slots). guardians carries the same recipients, ordered by `ordinal` = the
+        // K/L slot, and is not capped at two.
+        const contact = await getStudentContactBySheetId(studentSheetId);
+        const studentEmail = contact?.studentEmail || '';
+        const parentEmails = contact?.parentEmails ?? [];
         if (studentEmail) {
           await sendMeetingGrantedEmail({ studentEmail, parentEmails, studentName, decision });
         }

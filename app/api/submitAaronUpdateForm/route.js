@@ -3,7 +3,8 @@ import { sheetSafe } from '@/lib/sheetSafe';
 import { resolveCheckinStudent } from '@/lib/checkinIdentity';
 import { DateTime } from 'luxon';
 import { listBlocksForBooking, isDateBlocked } from '@/lib/blocks';
-import { setBookingToken, resolveStudentSheetId } from '@/lib/bookingTokens';
+import { setBookingToken } from '@/lib/bookingTokens';
+import { stampCheckin } from '@/lib/identity';
 
 const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
 const MASTER_TAB = '👩‍🎓 All Data';
@@ -30,17 +31,14 @@ export async function POST(request) {
     const target = await resolveCheckinStudent();
     if (target.error) return target.error;
     // Overview!B2 verbatim — see the ⚠ note in lib/checkinIdentity.js.
-    const { studentRowIndex, studentName, sheets } = target;
+    const { studentSheetId, studentName, sheets } = target;
 
     const now = new Date().toISOString();
 
-    // ── 1. Overwrite BA timestamp in 👩‍🎓 All Data ───────────────────────────
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${MASTER_TAB}!BA${studentRowIndex}`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [[now]] },
-    });
+    // ── 1. Stamp Aaron's check-in on the roster row ──────────────────────────
+    // Was Master `BA${rowIndex}`. A keyed update on `students`, so no scan position
+    // can go stale and stamp another student's row.
+    await stampCheckin(studentSheetId, 'aaron', now);
 
     // ── 2. Build concatenated task-updates string ────────────────────────────
     const taskUpdatesString = (taskUpdates || [])
@@ -93,13 +91,13 @@ export async function POST(request) {
 
     // ── 5. Write the booking decision (authoritative: Supabase booking_tokens) ──
     // The Master BB cell is deliberately NOT written anymore — the booking
-    // outcome lives in the database. Resolve sheetId via a col-G read (this
-    // route only knows the rowIndex). A failed write gets the same honest,
-    // retryable contract as the senior grant path — never a bare "Server error"
-    // over a check-in that half-happened.
+    // outcome lives in the database. The sheetId comes straight from the resolved
+    // identity now; the col-G read that existed only because this route knew a row
+    // index and not an id is gone. A failed write gets the same honest, retryable
+    // contract as the senior grant path — never a bare "Server error" over a
+    // check-in that half-happened.
     try {
-      const aaronSid = await resolveStudentSheetId(sheets, studentRowIndex);
-      await setBookingToken({ studentSheetId: aaronSid, slug: 'aaron', value: decision });
+      await setBookingToken({ studentSheetId, slug: 'aaron', value: decision });
     } catch (tokenErr) {
       console.error('submitAaronUpdateForm: booking-decision write failed:', tokenErr);
       return Response.json({ error: 'Check-in saved, but unlocking booking failed. Please retry.' }, { status: 500 });
