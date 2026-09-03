@@ -1,7 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
 import PortalShell from '@/components/portal/PortalShell';
-import { getGoogleSheetsClient } from '@/lib/google';
 import { resolveIdentity, sessionEmail } from '@/lib/identity';
 import ParentDataProvider from './ParentDataContext';
 import ParentTabBar from './ParentTabBar';
@@ -21,7 +20,7 @@ export default async function ParentLayout({ children }) {
   if (!userId) redirect('/sign-in');
 
   const email = sessionEmail(sessionClaims);
-  const identity = await resolveIdentity(getGoogleSheetsClient(email), email);
+  const identity = await resolveIdentity(email);
   if (identity.role !== 'parent' || !identity.children.length) {
     // → /account, NOT /dashboard. The (portal) layout bounces a Clerk
     // `role: 'parent'` CLAIM to /parent/home, while this gate bounces on the
