@@ -4,6 +4,9 @@ import './demo.css';
 export const metadata = {
   title: 'Family Portal · Admissions.Partners',
   description: 'A sample family portal, shown during proposal meetings.',
+  // Public by design (Ryan narrates it in proposal meetings), but it is a fictional
+  // student and must never surface in search or be mistaken for a real family's page.
+  robots: { index: false, follow: false, nocache: true },
 };
 
 /* The demo shell is the real PortalShell — same tokens, same fonts, same warm
