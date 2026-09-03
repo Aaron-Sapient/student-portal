@@ -2,7 +2,6 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { auth, currentUser } from '@clerk/nextjs/server';
 import { ArrowLeft, CircleAlert, GraduationCap, Mail, Users } from 'lucide-react';
-import { getGoogleSheetsClient } from '@/lib/google';
 import { resolveIdentity, sessionEmail, normEmail } from '@/lib/identity';
 import SignOutButton from './SignOutButton';
 
@@ -43,7 +42,7 @@ export default async function AccountPage() {
   let identity = null;
   let lookupFailed = false;
   try {
-    identity = await resolveIdentity(getGoogleSheetsClient(email), email);
+    identity = await resolveIdentity(email);
   } catch {
     lookupFailed = true;
   }

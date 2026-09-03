@@ -109,6 +109,12 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
   // still-active booking would block its own week's slots via the 1/week cap. So we route
   // them to cancel+rebook — cancel correctly frees the week, then the Projects card rebooks.
   const isProject = meeting?.bookingType === 'project';
+  // The booking is recorded but its calendar event doesn't exist yet (Calendar was
+  // down when it was booked; reconcile pushes it). getUpcomingMeetings sends `id: null`
+  // for these, and every action below posts `meeting.id` as the eventId — so a cancel
+  // or reschedule would 400 on a missing eventId, or worse act on the wrong thing.
+  // Hide the actions until the event lands rather than let them fail.
+  const syncPending = !!meeting?.calendarSyncPending;
 
   useEffect(() => {
     if (mode !== 'reschedule' || !rDate || !meeting) return;
@@ -254,7 +260,7 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
           <p className="mt-0.5 text-sm text-ink-soft">{whenStr}</p>
         </div>
 
-        {mode === 'view' && !within2 && (
+        {mode === 'view' && !within2 && !syncPending && (
           <div className="flex shrink-0 flex-col gap-2">
             {!within24 && !isProject && (
               <button
@@ -293,15 +299,20 @@ export default function UpcomingMeeting({ meeting: initial, studentName, isNext 
       </a>
 
       {/* timing notes (the buttons themselves live in the header row above) */}
-      {mode === 'view' && within2 && (
+      {mode === 'view' && syncPending && (
+        <p className="mt-3 text-[11px] text-ink-faint">
+          Syncing to the calendar — actions unlock shortly.
+        </p>
+      )}
+      {mode === 'view' && !syncPending && within2 && (
         <p className="mt-3 text-xs text-ink-faint">Changes are locked within 2 hours of the meeting.</p>
       )}
-      {mode === 'view' && within24 && !within2 && !isProject && (
+      {mode === 'view' && !syncPending && within24 && !within2 && !isProject && (
         <p className="mt-3 text-[11px] text-ink-faint">
           Rescheduling needs 24 hours’ notice — you can still cancel.
         </p>
       )}
-      {mode === 'view' && !within2 && isProject && (
+      {mode === 'view' && !syncPending && !within2 && isProject && (
         <p className="mt-3 text-[11px] text-ink-faint">
           To move a project meeting, cancel it and rebook the new time from Book.
         </p>

@@ -181,8 +181,7 @@ export default function FilesView({ endpoint = '/api/files' }) {
     );
   }
 
-  const { files = [], drive } = state.data;
-  const driveDisabled = drive?.status === 'disabled' || drive?.status === 'no_access';
+  const { files = [] } = state.data;
 
   return (
     <div className="space-y-7">
@@ -198,18 +197,6 @@ export default function FilesView({ endpoint = '/api/files' }) {
           </h1>
         </div>
       </header>
-
-      {driveDisabled && (
-        <div
-          className="portal-rise neu-inset flex items-start gap-3 rounded-2xl p-4"
-          style={{ animationDelay: '60ms' }}
-        >
-          <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-ink-faint" strokeWidth={2} />
-          <p className="text-xs leading-relaxed text-ink-soft">
-            Google Drive isn’t connected yet — showing local files only.
-          </p>
-        </div>
-      )}
 
       {files.length === 0 ? (
         <div className="portal-rise flex min-h-[40vh] flex-col items-center justify-center text-center">

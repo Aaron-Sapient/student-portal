@@ -1,36 +1,58 @@
 import { auth } from '@clerk/nextjs/server';
-import { google } from 'googleapis';
 import { DateTime } from 'luxon';
 import { getInstructor } from '@/lib/instructors';
 import { getBookingToken } from '@/lib/bookingTokens';
+import { getStudentByEmail, getStudentProfile, studentDisplay } from '@/lib/identity';
+import { getSupabaseClient, MEETING_CAP_SUMMARY } from '@/lib/supabase';
 import { getSeniorByEmail, loadSeniorBookingState, seniorBookingPlan } from '@/lib/seniors';
 import { loadProjectPlanForBooking, loadProjectBookingsForPlan, buildProjectCard } from '@/lib/projectMeetings';
 
-const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
-const MASTER_TAB = '👩‍🎓 All Data';
-const CHECKINS_TAB = '✅ Check-Ins';
-
-// Master-sheet column index (A=0) still read from the roster row: BC=54 (ART
-// flag). Booking tokens themselves live in Supabase booking_tokens — the old
-// AZ/BB/BD cells are dead (cutover 2026-08-19, SUMMER-EXIT.md W6).
+// Zero Google in this route (ruling 2026-08-27): identity + ART flag come from
+// Supabase `students`, the name from `student_profiles`, tokens from
+// booking_tokens (cutover 2026-08-19), the Ryan monthly cap from
+// meeting_cap_summary. The old Master A:BD / 🔎 Overview!B2 / ✅ Check-Ins reads
+// are gone — a student whose sheet lacks the Overview tab could not book at all
+// (Ryan Koo, 2026-08-26), on EVERY track, because those reads ran before the
+// project-track branch and the branch consumed their result.
 const NON_BOOKABLE_VALUE = { ryan: 'written', aaron: 'email' };
-const IS_ART_COL = 54;
-
-function getServiceAuth() {
-  return new google.auth.GoogleAuth({
-    credentials: {
-      client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-      private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-    },
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
-}
 
 function mostRecentSaturdayLA() {
   const now = DateTime.now().setZone('America/Los_Angeles');
   let sat = now.set({ weekday: 6 });
   if (now.weekday < 6) sat = sat.minus({ weeks: 1 });
   return sat.startOf('day');
+}
+
+// Ryan's monthly meeting cap. One row per student, kept fresh by the reconcile
+// cron (scripts/backfillCheckinSummary.cjs) and mirrored on cap lifts by
+// admin/grantBooking.
+//
+// TWO failure modes, deliberately split — the Sheets version this replaced threw on
+// a read error and returned "no cap" only when the row was absent, and collapsing
+// them meant an outage silently handed every capped student unlimited meetings:
+//   • read error  → THROW. The route's catch 500s, the student sees an error and
+//     retries. Failing closed is right: nothing here is worth over-granting for.
+//   • missing / capless row → null + a warn. That is a real, expected state (a
+//     student with no cap set), and enforcement is correctly skipped.
+// Returns { used, allowed } or null.
+async function loadRyanCap(studentSheetId) {
+  const { data, error } = await getSupabaseClient()
+    .from(MEETING_CAP_SUMMARY)
+    .select('meetings_used, meetings_allowed')
+    .eq('student_sheet_id', studentSheetId)
+    .limit(1);
+  if (error) throw new Error(`meeting cap read failed: ${error.message}`);
+  const row = data?.[0];
+  if (!row || row.meetings_allowed === null || row.meetings_allowed === undefined) {
+    console.warn(`validateBooking: no meeting cap row for ${studentSheetId} — not enforcing.`);
+    return null;
+  }
+  const allowed = Number(row.meetings_allowed);
+  if (!Number.isFinite(allowed)) {
+    console.warn(`validateBooking: meeting cap row for ${studentSheetId} has a non-numeric meetings_allowed (${JSON.stringify(row.meetings_allowed)}) — not enforcing.`);
+    return null;
+  }
+  return { used: Number(row.meetings_used) || 0, allowed };
 }
 
 export async function GET(request) {
@@ -42,35 +64,19 @@ export async function GET(request) {
   const instructor = getInstructor(searchParams.get('instructor'));
 
   try {
-    const authClient = getServiceAuth();
-    const sheets = google.sheets({ version: 'v4', auth: authClient });
+    // Identity FIRST, from Postgres, then branch — every track below (project,
+    // senior, ART, standard) needs the sheet id and the name, so the resolution
+    // order is unchanged; only the source moved.
+    const student = await getStudentByEmail(email);
+    if (!student) return Response.json({ error: 'Student not found' }, { status: 404 });
 
-    const masterRes = await sheets.spreadsheets.values.get({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${MASTER_TAB}!A:BD`,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
+    const studentSheetId = student.student_sheet_id;
+    if (!studentSheetId) return Response.json({ error: 'No student sheet found' }, { status: 404 });
 
-    const rows = masterRes.data.values || [];
-    const studentRow = rows.find(r => r[9] === email); // col J = index 9
-    if (!studentRow) return Response.json({ error: 'Student not found' }, { status: 404 });
-
-    const studentSheetUrl = studentRow[6];
-    const sheetIdMatch = studentSheetUrl?.match(/\/d\/([a-zA-Z0-9-_]+)/);
-    if (!sheetIdMatch) return Response.json({ error: 'No student sheet found' }, { status: 404 });
-    const studentSheetId = sheetIdMatch[1];
-
-    // Non-fatal (mirrors lib/checkinIdentity.js): a sheet with no 🔎 Overview
-    // tab used to throw here, BEFORE the project-track branch below that needs no
-    // check-in at all, so a project-track student could never book. Roster name
-    // is the fallback.
-    const nameRes = await sheets.spreadsheets.values
-      .get({ spreadsheetId: studentSheetId, range: '🔎 Overview!B2', valueRenderOption: 'UNFORMATTED_VALUE' })
-      .catch((err) => {
-        console.error('[validateBooking] Overview read failed:', err?.message);
-        return { data: { values: [] } };
-      });
-    const studentName = nameRes.data.values?.[0]?.[0] || String(studentRow[0] ?? '').trim();
+    // Name from the 🔎 Overview mirror, degraded to students.name on a missing
+    // profile row — never fatal, never 404.
+    const profile = await getStudentProfile(studentSheetId);
+    const { studentName } = studentDisplay(student, profile);
 
     // Project-meeting path (deep-linked ?m=project:<id>) — a standing weekly track,
     // authorized PURELY by the plan (no check-in / senior gate). Resolved FIRST so a
@@ -177,9 +183,10 @@ export async function GET(request) {
       });
     }
 
-    // ART path: requires BC=TRUE, and BD either empty or older than this week's Saturday.
+    // ART path: requires students.art_eligible (a real boolean — no 'TRUE' string
+    // any more), and the art token either empty or older than this week's Saturday.
     if (instructor.slug === 'art') {
-      const isART = studentRow[IS_ART_COL] === 'TRUE' || studentRow[IS_ART_COL] === true;
+      const isART = student.art_eligible === true;
       if (!isART) {
         return Response.json({ allowed: false, reason: 'Not part of the Advanced Research Team.' });
       }
@@ -213,29 +220,16 @@ export async function GET(request) {
       });
     }
 
-    // Meeting cap (Ryan only)
+    // Meeting cap (Ryan only) — meeting_cap_summary, keyed by sheet id (the old
+    // ✅ Check-Ins lookup joined on the Overview name, which is exactly the field
+    // that diverges from the roster for several live students).
     if (instructor.slug === 'ryan') {
-      const checkinRes = await sheets.spreadsheets.values.get({
-        spreadsheetId: MASTER_SHEET_ID,
-        range: `${CHECKINS_TAB}!A:I`,
-        valueRenderOption: 'UNFORMATTED_VALUE',
-      });
-
-      const checkinRows = checkinRes.data.values || [];
-      const checkinRow = checkinRows.find(r => r[0] === studentName);
-
-      if (checkinRow) {
-        const used = parseInt(checkinRow[7]) || 0;
-        const allowed = checkinRow[8] !== undefined && checkinRow[8] !== ''
-          ? parseInt(checkinRow[8])
-          : null;
-
-        if (allowed !== null && used >= allowed) {
-          return Response.json({
-            allowed: false,
-            reason: `You've used all ${allowed} of your allowed meetings this month.`,
-          });
-        }
+      const cap = await loadRyanCap(studentSheetId);
+      if (cap && cap.used >= cap.allowed) {
+        return Response.json({
+          allowed: false,
+          reason: `You've used all ${cap.allowed} of your allowed meetings this month.`,
+        });
       }
     }
 

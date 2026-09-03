@@ -1,4 +1,4 @@
-import { requireParent } from '@/lib/identity'
+import { getStudentProfile, requireParent, studentDisplay } from '@/lib/identity'
 import { getGoogleCalendarClient } from '@/lib/google'
 
 // Read-only upcoming meetings for the validated child — same title-match
@@ -6,20 +6,17 @@ import { getGoogleCalendarClient } from '@/lib/google'
 // VIEW-ONLY BY CONSTRUCTION: the payload carries no event ids and no titles,
 // so nothing here can feed the cancel/reschedule endpoints.
 export async function GET(request) {
-  const { email, child, sheets, error } = await requireParent(request)
+  const { email, child, error } = await requireParent(request)
   if (error) return error
 
   try {
-    // Canonical name from the student sheet (bookMeeting builds event titles
-    // from it); fall back to the roster name if the tab is unreadable.
-    let studentName = child.name
-    try {
-      const nameRes = await sheets.spreadsheets.values.get({
-        spreadsheetId: child.sheetId,
-        range: "'🔎 Overview'!B2",
-      })
-      studentName = String(nameRes.data.values?.[0]?.[0] ?? '').trim() || child.name
-    } catch {}
+    // Canonical name for the title match. bookMeeting builds event titles from
+    // 🔎 Overview!B2, which student_profiles.display_name mirrors VERBATIM (trailing
+    // space included — see lib/checkinIdentity.js for why that spelling is
+    // load-bearing). getStudentProfile never throws; a missing row degrades to the
+    // roster name, exactly as the old try/catch around the sheet read did.
+    const profile = await getStudentProfile(child.sheetId)
+    const { studentName } = studentDisplay({ name: child.name }, profile)
     if (!studentName) return Response.json({ meetings: [] })
 
     const calendar = getGoogleCalendarClient(email)

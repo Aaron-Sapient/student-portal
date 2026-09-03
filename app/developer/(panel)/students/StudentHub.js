@@ -420,7 +420,7 @@ export default function StudentHub() {
         ) : !files ? (
           <TabSkeleton rows={2} />
         ) : (files.files || []).length === 0 ? (
-          <EmptyNote>No files in this student’s Drive folder.</EmptyNote>
+          <EmptyNote>No documents pushed for this student yet.</EmptyNote>
         ) : (
           <div className="space-y-2">
             {files.files.map((f) => {

@@ -1,5 +1,5 @@
-import { google } from 'googleapis';
 import { requireAdmin } from '@/lib/developerAuth';
+import { getStudentContactBySheetId } from '@/lib/identity';
 import { getInstructor } from '@/lib/instructors';
 import { createProjectPlan, findActiveDuplicatePlan } from '@/lib/projectMeetings';
 import { validateSession, formatSession } from '@/lib/sessionSpec';
@@ -13,19 +13,6 @@ import { sendProjectMeetingGrantedEmail } from '@/lib/checkinEmails';
 //
 // Future: this becomes "assign a student to a project (with a lead/co-lead role)"; the
 // plan row is the seed of that model. Not built yet — see supabase/project_meetings.sql.
-
-const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
-const MASTER_TAB = '👩‍🎓 All Data';
-
-function getServiceAuth() {
-  return new google.auth.GoogleAuth({
-    credentials: {
-      client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-      private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-    },
-    scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-  });
-}
 
 export async function POST(request) {
   const gate = await requireAdmin();
@@ -51,22 +38,12 @@ export async function POST(request) {
   const instructor = getInstructor(slug);
 
   try {
-    // Resolve the student from the Master sheet by sheet id (portal URL, col G) for the
-    // email identity (A=name, J=email, K/L=parent emails).
-    const authClient = getServiceAuth();
-    const sheets = google.sheets({ version: 'v4', auth: authClient });
-    const masterRes = await sheets.spreadsheets.values.get({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${MASTER_TAB}!A:L`,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
-    const rows = masterRes.data.values || [];
-    const row = rows.find((r) => String(r[6] || '').includes(studentSheetId)) || null;
-    if (!row) return Response.json({ error: 'Student not found in the Master sheet' }, { status: 404 });
+    // Email identity from `students` + `guardians` (was a Master A:L scan matched on
+    // col G containing the sheet id).
+    const contact = await getStudentContactBySheetId(studentSheetId);
+    if (!contact) return Response.json({ error: 'Student not found' }, { status: 404 });
 
-    const studentName = (row[0] || '').trim();
-    const studentEmail = (row[9] || '').trim();
-    const parentEmails = [row[10], row[11]].filter((e) => e && String(e).includes('@'));
+    const { name: studentName, studentEmail, parentEmails } = contact;
 
     // A second identical ACTIVE plan is not a no-op: the 1/week cap is per plan, so it
     // silently doubles the student's weekly meetings (that is exactly how one student

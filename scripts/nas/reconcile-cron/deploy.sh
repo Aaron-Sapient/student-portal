@@ -17,7 +17,7 @@ REPO="$(cd "$HERE/../../.." && pwd)"
 DOCKER='/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker'
 DENV='export HOME=/share/Container/coach DOCKER_CONFIG=/share/Container/coach/.docker'
 
-ssh -i "$KEY" "$HOST" "mkdir -p $BASE/app/scripts $BASE/app/lib $BASE/logs"
+ssh -i "$KEY" "$HOST" "mkdir -p $BASE/app/scripts $BASE/app/scripts/lib $BASE/app/lib $BASE/logs"
 # Every script named in reconcile.cjs's ALL_STEPS must be hand-carried (the repo is NOT
 # synced to the NAS). Wave 1 added checkins, student-hub, transcript,
 # college lists, and comps to the prior roster/params/scores set. Wave 3 added
@@ -30,20 +30,31 @@ ssh -i "$KEY" "$HOST" "mkdir -p $BASE/app/scripts $BASE/app/lib $BASE/logs"
 # REMOVED 2026-08-19: backfillBookingTokens.cjs, for the same reason — the app now owns
 # booking_tokens outright (the Master AZ/BB/BD cells are dead), so reconciling from the
 # sheet would prune every app-created grant. rm the orphaned NAS copy when redeploying.
+# REMOVED 2026-09-02 (zero-google B/D/F): backfillCheckins.cjs, backfillParentCheckins.cjs,
+# backfillWrittenReports.cjs, backfillCheckinSummary.cjs. The app owns checkins,
+# parent_checkins, written_reports and meeting_cap_summary outright now. Same hazard as
+# above, and worse for the cap: backfillCheckinSummary upserted the FULL row from
+# ✅ Check-Ins H/I, so leaving it would undo every cap lift within one cron cycle.
+# ⚠ BIND MOUNT: dropping a script from this list does NOT delete it from the NAS, and the
+# orphaned copy is still on disk where a hand-run could execute it. rm these four on the
+# NAS when you redeploy:
+#   ssh <nas> 'cd /share/Container/reconcile-cron/app/scripts && rm -f \
+#     backfillCheckins.cjs backfillParentCheckins.cjs backfillWrittenReports.cjs \
+#     backfillCheckinSummary.cjs'
 scp -i "$KEY" \
   "$REPO/scripts/reconcile.cjs" \
   "$REPO/scripts/backfillStudents.cjs" \
   "$REPO/scripts/backfillScoreParams.cjs" \
-  "$REPO/scripts/backfillCheckins.cjs" \
-  "$REPO/scripts/backfillParentCheckins.cjs" \
-  "$REPO/scripts/backfillWrittenReports.cjs" \
-  "$REPO/scripts/backfillCheckinSummary.cjs" \
   "$REPO/scripts/reconcileScores.cjs" \
   "$REPO/scripts/mirrorStudentHub.cjs" \
   "$REPO/scripts/reconcileTranscript.cjs" \
   "$REPO/scripts/mirrorCollegeLists.cjs" \
   "$REPO/scripts/mirrorComps.cjs" \
+  "$REPO/scripts/reconcileBookings.cjs" \
   "$HOST:$BASE/app/scripts/"
+# ADDED 2026-09-03: the hourly Calendar→bookings pass (Dockerfile :35 line) and the
+# discovery module it shares with backfillBookings.cjs.
+scp -i "$KEY" "$REPO/scripts/lib/bookingDiscovery.cjs" "$HOST:$BASE/app/scripts/lib/"
 # mirrorCollegeLists.cjs dynamic-imports lib/collegeList.js (ESM), which statically imports
 # lib/supabase.js + lib/readFlags.js. They must live at $BASE/app/lib so the script's
 # `../lib/...` resolves. (The Dockerfile symlinks /node_modules → the global install so the

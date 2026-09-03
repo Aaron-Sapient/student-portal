@@ -1,29 +1,17 @@
-import { auth } from '@clerk/nextjs/server'
-import { getGoogleSheetsClient } from '@/lib/google'
-import { listStudentFiles } from '@/lib/studentFiles'
-import { normEmail, sessionEmail } from '@/lib/identity'
+import { requireSessionEmail, listDocumentsFor } from '@/lib/studentFiles'
 
+// GET /api/files — every document the signed-in email may read: a student's own
+// rows, a parent's attached students' rows. One gate (canAccess semantics inside
+// listDocumentsFor); no Google anywhere on this path.
 export async function GET() {
-  const { userId, sessionClaims } = await auth()
-  if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
-
-  const userEmail = sessionEmail(sessionClaims)
-  const sheets = getGoogleSheetsClient(userEmail)
-
-  // email -> master row -> student sheet id (same resolution as /api/home-data)
-  const masterRes = await sheets.spreadsheets.values.get({
-    spreadsheetId: process.env.MASTER_SHEET_ID,
-    range: "'👩‍🎓 All Data'!G:BD",
-  })
-  const masterRows = masterRes.data.values || []
-  const studentRow = masterRows.find(
-    (row) => normEmail(row[3]) === normEmail(userEmail)
-  )
-  if (!studentRow) return Response.json({ error: 'Student not found' }, { status: 404 })
-
-  const sheetIdMatch = studentRow[0]?.match(/\/d\/([a-zA-Z0-9-_]+)/)
-  if (!sheetIdMatch) return Response.json({ error: 'Invalid portal URL' }, { status: 400 })
-
-  const payload = await listStudentFiles(sheets, sheetIdMatch[1])
-  return Response.json(payload)
+  const session = await requireSessionEmail()
+  if (session.error) return session.error
+  try {
+    const files = await listDocumentsFor(session.email)
+    const studentName = files.find((f) => f.studentName)?.studentName || ''
+    return Response.json({ studentName, files, counts: { portal: files.length } })
+  } catch (err) {
+    console.error('files GET error:', err)
+    return Response.json({ error: 'Load failed' }, { status: 502 })
+  }
 }

@@ -36,7 +36,7 @@ async function resolveStudent() {
   if (!email) return { error: Response.json({ error: 'Unauthorized' }, { status: 401 }) };
 
   const sheets = getGoogleSheetsClient(email);
-  const identity = await resolveIdentity(sheets, email);
+  const identity = await resolveIdentity(email);
   if (identity.role !== 'student') {
     return { error: Response.json({ error: 'Forbidden' }, { status: 403 }) };
   }

@@ -1,9 +1,9 @@
 import { auth } from '@clerk/nextjs/server'
-import { getGoogleSheetsClient, getGoogleCalendarClient } from '@/lib/google'
+import { getGoogleSheetsClient } from '@/lib/google'
 import { getStudentScores, gradeFromClass } from '@/lib/scores'
 import { hasRecentGrades } from '@/lib/gradeData'
 import { studentGradeGate } from '@/lib/transcript'
-import { normEmail, sessionEmail } from '@/lib/identity'
+import { sessionEmail, getStudentByEmail, getStudentProfile, studentDisplay } from '@/lib/identity'
 import { activeProjectsFromRows, getProjectRows } from '@/lib/projects'
 import {
   getSeniorBySheetId,
@@ -13,7 +13,7 @@ import {
 } from '@/lib/seniors'
 import { projectMeetingCards } from '@/lib/projectMeetings'
 import { getBookingTokens } from '@/lib/bookingTokens'
-import { belongsToStudent } from '@/lib/calendarTitles'
+import { pastBookingDays } from '@/lib/bookings'
 import { getSessionLog } from '@/lib/meetings'
 import { DateTime } from 'luxon'
 
@@ -75,44 +75,20 @@ function weeklySessionCounts(dayCounts) {
   return buckets
 }
 
-// Past booked meetings for the sessions strip: events on an instructor's
-// calendar in the 12-week window whose title carries the student's name (the
-// same matching convention as getUpcomingMeetings). Returns [{ day, instructor }].
-async function fetchPastBookedMeetings(calendar, calendarId, instructor, studentName, studentEmail) {
-  if (!calendarId || !studentName) return []
+// Past booked meetings for the sessions strip: the three Postgres booking ledgers
+// (bookings + project_meeting_bookings + senior_bookings, lib/bookings.js) over the
+// 12-week window. Replaced the Calendar list + title fuzzy-match on 2026-08-27
+// (zero-Google sweep, Package C): the record is Postgres; a Calendar outage no
+// longer blanks the strip. Returns [{ day, instructor }]; [] on a DB error so the
+// sessions strip degrades to the sheet log alone, as before.
+async function fetchPastBookedDays(studentSheetId) {
   const now = DateTime.now().setZone(ZONE)
   const windowStart = now.startOf('week').minus({ weeks: 11 })
   try {
-    const res = await calendar.events.list({
-      calendarId,
-      timeMin: windowStart.toISO(),
-      timeMax: now.toISO(),
-      singleEvents: true,
-      orderBy: 'startTime',
-      maxResults: 250,
-    })
-    const name = studentName.toLowerCase().trim()
-    const mail = String(studentEmail || '').toLowerCase()
-    return (res.data.items || [])
-      .filter((e) => {
-        if (e.status === 'cancelled' || !e.summary) return false
-        // A portal booking names its own student; trust that over the title.
-        const pep = e.extendedProperties?.private || {}
-        if (pep.studentEmail && pep.studentEmail.toLowerCase() === mail) return true
-        if (!e.summary.toLowerCase().includes(name)) return false
-        // A parent meeting carries the student's name but is not a session they
-        // attended — counting it would overstate the frequency strip.
-        return belongsToStudent({ summary: e.summary })
-      })
-      .map((e) => ({
-        day: DateTime.fromISO(e.start?.dateTime || e.start?.date || '')
-          .setZone(ZONE)
-          .toISODate(),
-        instructor, // ART rides Aaron's calendar → counts as aaron
-      }))
-      .filter((e) => e.day)
-  } catch {
-    return [] // calendar unavailable → sessions degrade to the sheet log alone
+    return await pastBookingDays(studentSheetId, windowStart.toISODate(), now.toISODate())
+  } catch (e) {
+    console.error('home-data: past bookings read failed (sessions strip degrades to the log):', e?.message || e)
+    return []
   }
 }
 
@@ -121,67 +97,54 @@ export async function GET() {
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
   const userEmail = sessionEmail(sessionClaims)
+
+  // Identity + the whole check-in block (AY/BA/BC/BE) come from Supabase
+  // `students` — the record of truth (ruling 2026-08-27). No Master read: this
+  // payload is served from Postgres even if the Google Workspace vanished.
+  // `sheets` survives ONLY as the pass-through argument of the flag-gated
+  // per-domain readers below (comps / scores / transcript / meetings — the §4
+  // deletion sweep collapses those).
+  let student
+  try {
+    student = await getStudentByEmail(userEmail)
+  } catch (e) {
+    console.error('home-data: student lookup failed:', e?.message || e)
+    return Response.json({ error: 'Student lookup failed' }, { status: 503 })
+  }
+  if (!student) return Response.json({ error: 'Student not found' }, { status: 404 })
+
+  const masterName = String(student.name ?? '').trim()
+  const studentSheetId = student.student_sheet_id
+  console.log('6. Student sheet ID:', studentSheetId)
+  if (!studentSheetId) return Response.json({ error: 'No student sheet on record' }, { status: 400 })
+
   const sheets = getGoogleSheetsClient(userEmail)
-  const calendar = getGoogleCalendarClient(userEmail)
 
-  // A:BE so col A (name — what calendar event titles carry) rides along.
-  // Indices match scripts/nas/scoreStudents.cjs listStudents: name 0, portal
-  // URL 6, email 9, check-in/token block 50–55, "Needs Checkin" 56.
-  const masterRes = await sheets.spreadsheets.values.get({
-    spreadsheetId: process.env.MASTER_SHEET_ID,
-    range: "'👩‍🎓 All Data'!A:BE",
-  })
-
-  const masterRows = masterRes.data.values || []
-
-  const studentRow = masterRows.find(row => normEmail(row[9]) === normEmail(userEmail))
-
-  if (!studentRow) return Response.json({ error: 'Student not found' }, { status: 404 })
-
-  const masterName = (studentRow[0] || '').trim()
-  const portalUrl = studentRow[6]
-
-  const sheetIdMatch = portalUrl?.match(/\/d\/([a-zA-Z0-9-_]+)/)
-  console.log('6. Extracted sheet ID:', sheetIdMatch?.[1])
-
-  if (!sheetIdMatch) return Response.json({ error: 'Invalid portal URL' }, { status: 400 })
-
-  const studentSheetId = sheetIdMatch[1]
-
-  // Fetch projects, student name + grade (🔎 Overview, gates the Colleges tab),
-  // the weekly holistic scores (📊 Scores, written by the NAS cron), and the
-  // session log (📆 Meetings dates → frequency strip) in parallel
+  // Fetch projects, the 🔎 Overview mirror (name + grade — gates the Colleges
+  // tab), the weekly holistic scores (📊 Scores, written by the NAS cron), and
+  // the session log (📆 Meetings dates → frequency strip) in parallel
   const nowLA = DateTime.now().setZone(ZONE)
-  const [projectRows, nameRes, rawScores, gradeGate, sessionLog, aaronPast, ryanPast] = await Promise.all([
+  const [projectRows, profile, rawScores, gradeGate, sessionLog, pastBooked] = await Promise.all([
     // 🏆 Comps & Projects E:N rows per the `comps` flag (Sheets today). Owner in
     // col N (relative index 9), appended right of E:M so indices 0–8 are unchanged.
     getProjectRows(sheets, studentSheetId),
-    sheets.spreadsheets.values.get({
-      spreadsheetId: studentSheetId,
-      // B2 = student name; C4 = "Current Year:" grade (gates the Colleges tab).
-      // One read serves both — see studentName / currentYear below.
-      range: "'🔎 Overview'!B2:C4",
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    }).catch((err) => {
-      // Non-fatal, same contract as lib/checkinIdentity.js: a sheet with no
-      // 🔎 Overview tab (obsolete template, essays-only students — Ryan Koo,
-      // 2026-08-26) degrades to the roster name and "not a senior". Before this
-      // guard the rejection escaped Promise.all and the whole home payload
-      // failed, which blanked every booking card on the Meetings tab.
-      console.error('[home-data] Overview read failed:', err?.message)
-      return { data: { values: [] } }
-    }),
-    getStudentScores(sheets, studentSheetId, gradeFromClass(studentRow[1])),
+    // student_profiles.display_name / current_year — the B2 / C4 mirror. Never
+    // throws; null on a missing row, and studentDisplay() degrades to the roster
+    // name + students.grade. A sheet with no 🔎 Overview tab (obsolete template,
+    // essays-only students — Ryan Koo, 2026-08-26) used to reject the whole
+    // Promise.all and blank every booking card on the Meetings tab.
+    getStudentProfile(studentSheetId),
+    getStudentScores(sheets, studentSheetId, gradeFromClass(student.class)),
     // Data-sufficiency gate per the `transcript` flag (Sheets today). On a read
     // error, fall through to hasRecentGrades([]) — the exact prior behavior of the
     // old `.catch(() => null)` + `transcriptRes?.data?.values || []`.
-    studentGradeGate(sheets, studentSheetId, studentRow[1], { year: nowLA.year, month: nowLA.month })
-      .catch(() => hasRecentGrades([], studentRow[1], { year: nowLA.year, month: nowLA.month })),
+    studentGradeGate(sheets, studentSheetId, student.class, { year: nowLA.year, month: nowLA.month })
+      .catch(() => hasRecentGrades([], student.class, { year: nowLA.year, month: nowLA.month })),
     // 📆 Meetings session log per the `meetings` flag (Sheets today). Returns
     // [{ date, teacher }] — the meetingLogRows shape dailySessionCounts expects.
     getSessionLog(sheets, studentSheetId).catch(() => []),
-    fetchPastBookedMeetings(calendar, process.env.GOOGLE_CALENDAR_ID_AARON, 'aaron', masterName, userEmail),
-    fetchPastBookedMeetings(calendar, process.env.GOOGLE_CALENDAR_ID_RYAN, 'ryan', masterName, userEmail),
+    // Booked meetings (all three ledgers) → [{ day, instructor }] for the strip.
+    fetchPastBookedDays(studentSheetId),
   ])
 
   // gradeGate (data-sufficiency) and projectRows now come straight from the
@@ -192,17 +155,17 @@ export async function GET() {
   const sessions = weeklySessionCounts(
     dailySessionCounts(
       sessionLog,
-      [...aaronPast, ...ryanPast],
+      pastBooked,
       DateTime.now().setZone(ZONE)
     )
   )
 
   // Colleges tab = 12th-graders only. Gate on the student's grade
-  // (🔎 Overview!C4 "Current Year:" === "12th"), NOT on a 🏫 College List tab:
+  // (Overview C4 "Current Year:" mirror === "12th"), NOT on a 🏫 College List tab:
   // every student gets that tab from day 1 so Ryan can build the list early, so
   // tab-presence both leaks Colleges to underclassmen and hides it from a senior
   // whose tab isn't created yet.
-  const currentYear = String(nameRes.data.values?.[2]?.[1] || '').trim()
+  const { studentName, currentYear } = studentDisplay(student, profile)
   const hasCollegeList = currentYear === '12th'
 
   // "Project progress" line: always aggregated across 🏆 Comps & Projects —
@@ -210,7 +173,6 @@ export async function GET() {
   // Colleges tab, not here). Computed below once activeProjects is built.
   let progress = null
 
-  const studentName = nameRes.data.values?.[0]?.[0] || masterName || ''
   console.log('Student name:', studentName)
 
   console.log('7. Project rows found:', projectRows.length)
@@ -227,26 +189,24 @@ try {
   console.error('home-data: booking token read failed (rendering locked):', e?.message || e);
 }
 const meetingType = bookingTokens.ryan || null;
-const aaronLastCheckin = studentRow[52] || null;
+const aaronLastCheckin = student.last_aaron_checkin ?? null; // was Master BA
 const aaronMeetingType = bookingTokens.aaron || null;
 
-// ART eligibility (col BC, still roster data) + token (ISO timestamp of the
-// last booking, or empty). "Available" iff isART AND (no timestamp OR it's
-// older than this week's Saturday).
-const isART = studentRow[54] === 'TRUE' || studentRow[54] === true;
+// ART eligibility (students.art_eligible, a real boolean) + token (ISO timestamp
+// of the last booking, or empty). "Available" iff isART AND (no timestamp OR
+// it's older than this week's Saturday).
+const isART = student.art_eligible === true;
 const artBookingTimestamp = bookingTokens.art || '';
 
-// Col BE "Needs Checkin" — THE roster-maintained answer to "is this student in the
-// weekly check-in cadence at all?" (11 of 47 are marked out of it). Two other
-// consumers already treat this column as the authority and use exactly this rule —
-// excluded only on an EXPLICIT false, so a blank cell stays in the cadence:
+// students.needs_checkin (was Master BE "Needs Checkin") — THE roster-maintained
+// answer to "is this student in the weekly check-in cadence at all?" (11 of 47
+// are marked out of it). Two other consumers already treat this flag as the
+// authority and use exactly this rule — excluded only on an EXPLICIT false, so a
+// null (blank cell) stays in the cadence:
 // Google Apps Scripts/checkin-reminder/checkinReminder.gs (AD_NEEDS_CHECKIN = 56)
 // and app/api/developer/checkinCompliance/route.js:104. The portal reads it so its
 // check-in nudge can't contradict the reminder email that same flag already gates.
-const needsCheckinRaw = studentRow[56];
-const needsCheckin = !(
-  needsCheckinRaw === false || /^false$/i.test(String(needsCheckinRaw ?? '').trim())
-);
+const needsCheckin = student.needs_checkin !== false;
 
 let artTokenAvailable = false;
 if (isART) {
@@ -336,26 +296,27 @@ if (isART) {
       //                       meetings page gates its bookable cards on THIS, so a
       //                       carried grant isn't walled behind "check in to unlock".
       //   checkedInThisWeek = "do you still owe THIS Saturday-week's check-in?" —
-      //                       the raw AY timestamp vs the current Saturday-week,
-      //                       LA-pinned (timezone-safe). The check-in FORM gate,
-      //                       the /check-ins card, and the dock nudge read THIS, so
-      //                       a carried 2-week grant does NOT suppress next week's
-      //                       check-in. (Collapsing both into hasGrant — the 7/8
-      //                       ecabc3a/a90179f fix — let a Saturday check-in's grant
-      //                       block the following week's check-in while the weekly
-      //                       reminder still nagged: same signal, opposite answers.)
+      //                       students.last_ryan_checkin (was Master AY) vs the
+      //                       current Saturday-week, LA-pinned (timezone-safe). The
+      //                       check-in FORM gate, the /check-ins card, and the dock
+      //                       nudge read THIS, so a carried 2-week grant does NOT
+      //                       suppress next week's check-in. (Collapsing both into
+      //                       hasGrant — the 7/8 ecabc3a/a90179f fix — let a Saturday
+      //                       check-in's grant block the following week's check-in
+      //                       while the weekly reminder still nagged: same signal,
+      //                       opposite answers.)
       //                       The reminder GAS uses a rolling-7-day window (not this
       //                       Saturday-week); they agree in the common case incl.
       //                       that bug, and late-week boundary diffs are benign.
       hasGrant: plan.hasGrant,
-      checkedInThisWeek: checkedInThisWeek(studentRow[50], nowLA),
+      checkedInThisWeek: checkedInThisWeek(student.last_ryan_checkin, nowLA),
     }
   }
 
   return Response.json({
     activeProjects,
     studentName,
-    lastCheckin: studentRow[50] || null,
+    lastCheckin: student.last_ryan_checkin ?? null, // was Master AY
     meetingType,
     aaronLastCheckin,
     aaronMeetingType,
