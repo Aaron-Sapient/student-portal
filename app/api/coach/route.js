@@ -1,24 +1,19 @@
 import { auth } from '@clerk/nextjs/server';
 import { DateTime } from 'luxon';
 import { getGoogleSheetsClient } from '@/lib/google';
+import { getStudentByEmail } from '@/lib/identity';
 import { getCoachMessage } from '@/lib/coachMessages';
 import { hadRecentMeeting } from '@/lib/meetings';
 import { getSheetCoachNote } from '@/lib/scores';
 import { studentGradeGate } from '@/lib/transcript';
 
-// Resolve the student's sheet ID + Class from the master sheet. A:BD so col A
-// rides along: email col J (9), portal URL col G (6), Class col B (1).
-async function resolveStudent(sheets, email) {
+// Resolve the student's sheet ID + Class from `students` (record of truth). The
+// Master A:BD scan is gone; student_sheet_id IS the value the portal-URL regex
+// used to extract, and `class` is the same raw Class cell the old row[1] carried.
+async function resolveStudent(email) {
   if (!email) return { sheetId: null, cls: null };
-  const masterRes = await sheets.spreadsheets.values.get({
-    spreadsheetId: process.env.MASTER_SHEET_ID,
-    range: "'👩‍🎓 All Data'!A:BD",
-  });
-  const row = (masterRes.data.values || []).find(
-    (r) => r[9]?.toLowerCase() === email.toLowerCase()
-  );
-  const sheetIdMatch = row?.[6]?.match(/\/d\/([a-zA-Z0-9-_]+)/);
-  return { sheetId: sheetIdMatch?.[1] ?? null, cls: row?.[1] ?? null };
+  const student = await getStudentByEmail(email);
+  return { sheetId: student?.student_sheet_id ?? null, cls: student?.class ?? null };
 }
 
 // Suppress the coach note when the student has no recent recorded grades —
@@ -50,8 +45,10 @@ export async function GET() {
   const override = getCoachMessage(email);
 
   try {
+    // `sheets` still serves the three student-sheet readers below (coach note,
+    // meeting recency, grade gate) — the comps/scores/transcript/meetings lanes.
     const sheets = getGoogleSheetsClient(email);
-    const { sheetId: studentSheetId, cls } = await resolveStudent(sheets, email);
+    const { sheetId: studentSheetId, cls } = await resolveStudent(email);
     const message = override ?? (await getSheetCoachNote(sheets, studentSheetId));
     if (!message) return Response.json({ coach: null });
     const recent = await hadRecentMeeting(sheets, studentSheetId);
