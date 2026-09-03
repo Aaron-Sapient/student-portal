@@ -1,7 +1,7 @@
 {
   "_note": "EXAMPLE lead, committed so the /next route stays buildable and reviewable on a fresh clone. Every family-identifying value here is a placeholder. Real lead files are gitignored: this repository is public and a real file carries a minor's first name, a parent's email and a phone number. Copy this file to app/next/leads/<lead>-<6 hex>.json, fill it from the lead's own record, and leave it out of git. Firm-side copy below (pamphlet sentences, the price ladder and the stats) is what the pamphlets already print and is safe to keep.",
   "id": "example-lead",
-  "_idNote": "Goes out as utm_content on every Calendly URL, so it must stay stable and lowercase-hyphen. The SLUG is the file name; the id is the analytics handle.",
+  "_idNote": "Stored on the lead_pages row and on the calendar event (extendedProperties.leadId), so it must stay stable and lowercase-hyphen. The SLUG is the file name; the id is the analytics handle.",
   "student": "Alex",
   "_studentNote": "First name only, and only if that is genuinely all we have. Never guess a surname from a filing handle: print the name the family gave, and print nothing where they gave nothing.",
   "greeting": "Hi Alex.",
