@@ -20,21 +20,33 @@
  * Requires .env.local present in the repo (the child scripts read it). A lockfile
  * prevents overlapping runs. Mac↔NAS deploy is Aaron's call.
  *
- * NOTE — scope: covers the built-flag domains. Wave 1 added checkins,
- * transcript, college lists, and comps (instructor_blocks was here too until
- * 2026-08-09, when the app took sole ownership of that table — see ALL_STEPS);
- * Wave 3 added
- * parent_checkins + written_reports (best-effort app dual-writes in
- * lib/parentCheckinCore.js / lib/generateReport.js + the developer/writtenReports
- * route, backstopped by these upsert steps) + compliance_cap (roster fields
- * needs_checkin/last_ryan_checkin/last_aaron_checkin folded into the existing
- * roster step; meeting_cap_summary best-effort dual-written by
- * admin/grantBooking's cap-bump, backstopped by backfillCheckinSummary.cjs) +
- * booking_tokens was here until 2026-08-19, when the app took sole ownership
- * of that table (Supabase is the authority; the Master AZ/BB/BD cells are dead
- * and no longer written) — mirroring it back from the sheet would PRUNE every
- * app-created grant. Same retirement pattern as instructor_blocks (2026-08-09).
- * All live-safe (upsert / insert-missing+prune-by-key, never delete-then-insert).
+ * NOTE — scope: what remains is transcript, college lists, comps, scores,
+ * score_params, the student-hub mirror, and the roster (students + guardians,
+ * MINUS its three check-in columns).
+ *
+ * THE RETIREMENT LEDGER. A domain leaves this list the moment the APP takes sole
+ * ownership of its table, because mirroring back from a frozen sheet does not merely
+ * waste a read — it OVERWRITES or PRUNES what the app just wrote:
+ *   instructor_blocks    2026-08-09  (would prune every app-created block)
+ *   booking_tokens       2026-08-19  (would prune every app-created grant)
+ *   checkins             2026-09-02  (would re-add dead rows from a frozen tab)
+ *   parent_checkins      2026-09-02
+ *   written_reports      2026-09-02  (new rows carry no sheet_row to match on)
+ *   meeting_cap_summary  2026-09-02  (would undo every cap lift in one cycle)
+ *   roster check-in cols 2026-09-02  (needs_checkin / last_ryan_checkin /
+ *                                     last_aaron_checkin — would overwrite a real
+ *                                     check-in with a frozen cell)
+ * Do not restore any of them.
+ *
+ * ⚠ THIS FILE IS NOT WHAT RUNS. The NAS container reads
+ * /share/Container/reconcile-cron/app/scripts/, hand-carried by
+ * scripts/nas/reconcile-cron/deploy.sh — "The repo is NOT synced to the NAS."
+ * Editing this file changes nothing until that script is run. Retiring a step here
+ * and deploying the app WITHOUT running it is the worst of both worlds: the app
+ * writes and the old cron keeps reverting.
+ *
+ * All remaining steps stay live-safe (upsert / insert-missing+prune-by-key, never
+ * delete-then-insert).
  * meetings_log is being retired in favor of the `meetings` hub table (kept
  * fresh by the student-hub step).
  */
@@ -53,15 +65,34 @@ const ALL_STEPS = [
   // ---- fast tier (cheap Master-tab reads; run in --fast every ~10 min) ----
   { name: 'roster (students + guardians + gender + soft-deactivate)', script: 'backfillStudents.cjs', args: ['--reconcile'] },
   { name: 'score_params', script: 'backfillScoreParams.cjs', args: [] },
-  { name: 'checkins (live-safe upsert)', script: 'backfillCheckins.cjs', args: ['--reconcile'] },
+  // checkins step REMOVED 2026-09-02 (zero-google D): the portal INSERTs a
+  // submitted check-in straight into `checkins` and stamps its outcome there.
+  // The Master CheckinForm / A_CheckinForm tabs are frozen residue, so re-deriving
+  // the table from them would keep re-adding dead rows forever.
   // instructor_blocks step REMOVED 2026-08-09: blocks are no longer mirrored from
   // Sheets. The app now owns `instructor_blocks` outright (Supabase is the sole
   // source of truth, written directly by app/api/developer/blocks). Re-adding a
   // Sheets→Supabase reconcile here would PRUNE every app-created block, since
   // none of them exist in the frozen InstructorBlocks tab. Do not restore.
-  { name: 'parent_checkins (live-safe upsert on natural key)', script: 'backfillParentCheckins.cjs', args: [] },
-  { name: 'written_reports (live-safe upsert on sheet_row)', script: 'backfillWrittenReports.cjs', args: ['--reconcile'] },
-  { name: 'meeting_cap_summary (live-safe upsert on student_sheet_id)', script: 'backfillCheckinSummary.cjs', args: [] },
+  // parent_checkins step REMOVED 2026-09-02 (zero-google F): lib/parentCheckinCore
+  // writes the table directly and no longer appends to the ParentCheckins tab.
+  //
+  // written_reports step REMOVED 2026-09-02 (zero-google D): lib/generateReport
+  // INSERTs the report and the developer panel edits it by uuid. New rows carry no
+  // sheet_row at all, so a sheet_row-keyed mirror has nothing to match them on.
+  //
+  // meeting_cap_summary step REMOVED 2026-09-02 (zero-google B): admin/grantBooking
+  // now writes meetings_allowed here as the authority. backfillCheckinSummary
+  // upserted the FULL row from ✅ Check-Ins H/I, so leaving it in place would undo
+  // every cap lift within ten minutes — Ryan lifts a cap, the student is bookable
+  // for one cron cycle, then silently blocked again with no error anywhere.
+  //
+  // ⚠ KNOWN GAP, accepted with this retirement: meetings_used and the four meeting
+  // date columns (last/upcoming × ryan/aaron) now have NO writer. They freeze at
+  // their last mirrored values, and developer/checkinCompliance reads them for its
+  // meeting-recency half. Closing it needs a portal-native writer derived from the
+  // `bookings` ledger (lane C), which does not exist yet. Check-in recency, the
+  // other half of that dashboard, is unaffected and stays live.
   // ---- heavy tier (per-student fan-out; full hourly pass only) ----
   { name: 'scores (live-safe upsert + prune)', script: 'reconcileScores.cjs', args: [], heavy: true },
   // Students-tab hub mirror (intended major + 📆 Meetings agenda). Heavy

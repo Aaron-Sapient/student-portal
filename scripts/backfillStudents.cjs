@@ -141,9 +141,13 @@ async function main() {
       package_type: pkg,
       gender: String(r?.[49] ?? '').trim() || null, // 👩‍🎓 All Data col AX (idx 49)
       art_eligible: r?.[54] === 'TRUE' || r?.[54] === true,
-      needs_checkin: boolOrNull(r?.[56]), // col BE (idx 56)
-      last_ryan_checkin: tsOrNull(r?.[50]), // col AY (idx 50)
-      last_aaron_checkin: tsOrNull(r?.[52]), // col BA (idx 52)
+      // needs_checkin / last_ryan_checkin / last_aaron_checkin (Master BE/AY/BA) are
+      // NO LONGER MIRRORED (zero-google, 2026-09-02). The portal writes those three
+      // columns directly now — submitUpdateForm and submitAaronUpdateForm stamp them
+      // through lib/identity stampCheckin, and resetFormStatus clears them. Re-adding
+      // them here would overwrite a real check-in with a frozen sheet cell within ten
+      // minutes of the student submitting it. Same retirement as booking_tokens
+      // (2026-08-19) and instructor_blocks (2026-08-09). Do not restore.
       status: nc ? 'nc' : 'active',
       updated_at: new Date().toISOString(),
     });
@@ -207,13 +211,30 @@ async function main() {
   // still IN the sheet were upserted with status='nc' above; this only catches
   // sheetIds no longer present at all. NEVER deletes (FK'd history stays intact).
   if (RECONCILE) {
+    // Refuse to prune from a scan we can't trust: an empty read (transient API blip)
+    // or any unparseable col-G row means real students may be missing from `present`,
+    // and pruning would deactivate them. Upserts above still ran; only pruning skips.
+    if (!students.length || skipped.length) {
+      console.log(
+        `⚠ reconcile pruning skipped: ${students.length} parsed, ${skipped.length} unparseable row(s) — a scan with holes must not deactivate anyone.`
+      );
+      return;
+    }
     const present = new Set(students.map((s) => s.student_sheet_id));
     const { data: existing, error: exErr } = await sb.from('students').select('student_sheet_id, status');
     if (exErr) {
       console.error('reconcile read failed:', exErr.message);
       process.exit(1);
     }
-    const stale = (existing || []).filter((r) => !present.has(r.student_sheet_id) && r.status !== 'nc');
+    const stale = (existing || []).filter(
+      (r) =>
+        !present.has(r.student_sheet_id) &&
+        r.status !== 'nc' &&
+        // 'portal:*' = portal-native student, no Master row BY DESIGN (2026-08-31,
+        // first: Diya Sindol). KILL this exemption together with the Master-sheet
+        // reconcile itself when the Sheets cutover completes — it means nothing after.
+        !String(r.student_sheet_id).startsWith('portal:')
+    );
     if (stale.length) {
       const ids = stale.map((r) => r.student_sheet_id);
       const { error: dErr } = await sb.from('students').update({ status: 'nc' }).in('student_sheet_id', ids);

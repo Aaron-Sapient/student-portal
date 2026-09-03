@@ -30,14 +30,21 @@ ssh -i "$KEY" "$HOST" "mkdir -p $BASE/app/scripts $BASE/app/lib $BASE/logs"
 # REMOVED 2026-08-19: backfillBookingTokens.cjs, for the same reason — the app now owns
 # booking_tokens outright (the Master AZ/BB/BD cells are dead), so reconciling from the
 # sheet would prune every app-created grant. rm the orphaned NAS copy when redeploying.
+# REMOVED 2026-09-02 (zero-google B/D/F): backfillCheckins.cjs, backfillParentCheckins.cjs,
+# backfillWrittenReports.cjs, backfillCheckinSummary.cjs. The app owns checkins,
+# parent_checkins, written_reports and meeting_cap_summary outright now. Same hazard as
+# above, and worse for the cap: backfillCheckinSummary upserted the FULL row from
+# ✅ Check-Ins H/I, so leaving it would undo every cap lift within one cron cycle.
+# ⚠ BIND MOUNT: dropping a script from this list does NOT delete it from the NAS, and the
+# orphaned copy is still on disk where a hand-run could execute it. rm these four on the
+# NAS when you redeploy:
+#   ssh <nas> 'cd /share/Container/reconcile-cron/app/scripts && rm -f \
+#     backfillCheckins.cjs backfillParentCheckins.cjs backfillWrittenReports.cjs \
+#     backfillCheckinSummary.cjs'
 scp -i "$KEY" \
   "$REPO/scripts/reconcile.cjs" \
   "$REPO/scripts/backfillStudents.cjs" \
   "$REPO/scripts/backfillScoreParams.cjs" \
-  "$REPO/scripts/backfillCheckins.cjs" \
-  "$REPO/scripts/backfillParentCheckins.cjs" \
-  "$REPO/scripts/backfillWrittenReports.cjs" \
-  "$REPO/scripts/backfillCheckinSummary.cjs" \
   "$REPO/scripts/reconcileScores.cjs" \
   "$REPO/scripts/mirrorStudentHub.cjs" \
   "$REPO/scripts/reconcileTranscript.cjs" \
