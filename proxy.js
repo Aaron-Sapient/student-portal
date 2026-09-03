@@ -14,7 +14,14 @@ import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 // office TV during proposal meetings. It reads no table, sheet or session, so
 // there is nothing for auth to protect — and a login wall in front of a demo is
 // the demo failing in the room.
-const isPublicRoute = createRouteMatcher(['/demo(.*)', '/sign-in(.*)', '/sso-callback(.*)', '/parents(.*)', '/api/parentCheckin', '/write(.*)', '/api/writing/doc', '/api/writing/save', '/api/writing/tab', '/api/writing/history', '/sat(.*)', '/api/sat/init', '/api/sat/quiz', '/api/sat/submit', '/api/cron(.*)', '/api/omnibar(.*)'])
+// /next/<lead-slug> is the per-lead post-consult page, opened from an email by a
+// family who has no account and will never have one. Public on the same terms as
+// /write: possession of the unguessable `<lead>-<6 hex>` slug IS the capability,
+// which is why the slug is not just a first name (the page carries prices). The
+// page is read-only and writes nothing. The trailing SLASH is load-bearing:
+// `/next(.*)` would also publish any future /next-steps or /nextcloud, so only
+// the id space under /next/ is public.
+const isPublicRoute = createRouteMatcher(['/demo(.*)', '/sign-in(.*)', '/sso-callback(.*)', '/parents(.*)', '/api/parentCheckin', '/write(.*)', '/next/(.*)', '/api/writing/doc', '/api/writing/save', '/api/writing/tab', '/api/writing/history', '/sat(.*)', '/api/sat/init', '/api/sat/quiz', '/api/sat/submit', '/api/cron(.*)', '/api/omnibar(.*)'])
 
 export default clerkMiddleware(async (auth, request) => {
   if (!isPublicRoute(request)) {

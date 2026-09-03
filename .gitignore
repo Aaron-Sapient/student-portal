@@ -79,3 +79,14 @@ supabase/.temp/
 /Claude/
 # dated working-notes folders (screenshots, fix lists) — local only
 /June 19 2026/
+
+# Per-lead /next/<slug> pages (added 2026-09-03).
+# A lead file carries a minor's first name, a parent's email address and phone
+# number, and the answers they typed into an intake form. THIS REPOSITORY IS
+# PUBLIC, and the proposal generator's per-family records are gitignored for
+# exactly this reason. The route reads this directory at build time
+# (app/next/[slug]/leads.js), so the mechanism lives in git and the families do
+# not. The example file is committed so the route stays buildable and reviewable
+# on a fresh clone.
+/app/next/leads/*.json
+!/app/next/leads/example-*.json

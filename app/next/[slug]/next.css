@@ -1,0 +1,196 @@
+/* /next/<slug> only. Every rule is scoped to .next-page so nothing here can
+   reach the rest of the portal.
+
+   The page is the portal's own design language (cream, warm ink, terracotta,
+   Fraunces over Hanken) carrying the pamphlet's editorial moves: an italic
+   terracotta accent on the last words of a headline, eyebrows with a leading
+   rule, terracotta tick marks instead of bullets. That pairing is the point.
+   The family meets this page first and the demo portal second, in the room with
+   Ryan, so the two have to read as one product rather than as a brochure and an
+   app that happen to share a client. */
+
+/* ── Contrast, re-derived ───────────────────────────────────────────────────
+   The shipped --color-ink-faint (#a89e8f) measures 2.4:1 on the cream page.
+   That is under the 4.5:1 floor for the eyebrows, captions and the essay
+   attribution, all of which are small body text here rather than the 10px
+   chrome the token was drawn for. Re-derived from the same hue, same values the
+   /demo board verified arithmetically: light #726858 = 5.19:1 on cream, dark
+   #9a9998 = 6.17:1 on the dark ground. Scoped, so the product keeps its token. */
+.next-page {
+  --color-ink-faint: #726858;
+}
+@media (prefers-color-scheme: dark) {
+  .next-page {
+    --color-ink-faint: #9a9998;
+  }
+}
+
+/* ── The italic terracotta accent ───────────────────────────────────────────
+   The strongest signal in the house language: the last one to four words of a
+   headline go italic in the accent colour and carry the period. It is the only
+   ornament on the page, which is what lets it work. */
+.next-page h1 em,
+.next-page h2 em {
+  font-style: italic;
+  color: var(--color-terracotta-deep);
+  font-weight: inherit;
+}
+
+/* ── Eyebrow with a leading rule ────────────────────────────────────────────
+   Sentence case rather than the pamphlet's tracked-out uppercase. Uppercase
+   micro-type at 9px is the loudest AI tell on a screen and this page is read
+   once, on a phone, by a parent who has never seen it. Same structure, same
+   leading rule, a register that survives being read rather than scanned. */
+.next-page .eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--color-ink-faint);
+}
+.next-page .eyebrow::before {
+  content: '';
+  width: 1.75rem;
+  height: 1px;
+  background: currentColor;
+  flex: none;
+}
+
+/* ── Tick marks, not bullets ────────────────────────────────────────────────
+   Short terracotta rules. 2px, never 1px: at 1px the rule disappears on a
+   non-retina screen and the list silently loses its markers. */
+.next-page .ticks li {
+  list-style: none;
+  position: relative;
+  padding-left: 1.6rem;
+}
+.next-page .ticks li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.72em;
+  width: 0.85rem;
+  height: 2px;
+  background: var(--color-terracotta);
+}
+
+/* ── Focus ──────────────────────────────────────────────────────────────────
+   The page has four kinds of thing a keyboard can reach: the two held times,
+   the calendar's fallback link, the sticky bar, and the footer's phone and
+   email. The browser default ring is a thin blue that belongs to no palette
+   here and disappears entirely against the cream. This is the palette's own,
+   at the 3:1 the floor asks of a focus indicator (terracotta-deep on cream
+   measures 5.46:1). */
+.next-page :focus-visible,
+.sticky-book :focus-visible {
+  outline: 2px solid var(--color-terracotta-deep);
+  outline-offset: 3px;
+  border-radius: 0.75rem;
+}
+
+/* ── The photograph ─────────────────────────────────────────────────────────
+   Full bleed, because a band crop that sits inside the text column reads as a
+   stock illustration and this is the one real thing on the page.
+
+   The natural crop is 2550x465, which at 390px of phone comes to 71px of image:
+   a decorative strip, too short to show that there are people in it. The
+   min-height holds it at 132px and object-fit crops inward from the sides. The
+   group stands between 28% and 65% of the frame's width, so the crop is
+   anchored at 46% rather than centred, which keeps every person in shot at the
+   narrowest width the page supports. */
+.next-page .band {
+  display: block;
+  width: 100%;
+  aspect-ratio: 2550 / 465;
+  min-height: 132px;
+  object-fit: cover;
+  object-position: 46% 50%;
+  /* CONSENT CAP, not a layout preference. Five students are recognizable in
+     this frame and their consent is not on file; the register's rule is that a
+     page may print the band but not faces at portrait size. Measured on the
+     source: a face is about 50px tall in a 2550px-wide image, so on-screen face
+     height is 50 x (rendered width / 2550), and 20px of face needs the render
+     held under 1020px. Capped at 960px, which puts the largest face at about
+     19px at every width at or above the cap.
+
+     Below the cap the min-height above crops INWARD rather than scaling up: at
+     390px the image renders 724px wide behind a 132px window, so a face is
+     about 14px. The cap is therefore the only binding constraint, and it binds
+     on the desktop end. Widen it and the faces grow; that is the whole reason
+     the number is written down here. */
+  max-width: 60rem;
+  margin-inline: auto;
+}
+
+/* ── The booked state ───────────────────────────────────────────────────────
+   One attribute on <html>, set before paint by the page's inline script, swaps
+   the booking block for a confirmation. CSS rather than React state, so nothing
+   on this route has to be a client component and the swap cannot be delayed by
+   a stalled hydration. Default is unbooked, which is the state a page reached
+   from an email is in. */
+.next-page .booked-only,
+.sticky-book.booked-only {
+  display: none;
+}
+[data-booked='1'] .next-page .booked-only {
+  display: block;
+}
+[data-booked='1'] .next-page .unbooked-only,
+[data-booked='1'] .sticky-book.unbooked-only {
+  display: none;
+}
+
+/* ── The sticky bar ─────────────────────────────────────────────────────────
+   A phone reads this page in a stack, and the booking block is the fifth thing
+   down. The bar keeps the door one tap away from the first screen without
+   putting a second door on the page: it is an anchor, it scrolls, it opens
+   nothing.
+
+   It sits above the home indicator on iOS rather than under it, and it is a
+   real 56px target with the page's own padding, because a bar you have to aim
+   at is worse than no bar. */
+.sticky-book {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  padding: 0.75rem 1rem calc(0.75rem + env(safe-area-inset-bottom));
+  background: linear-gradient(
+    to top,
+    var(--color-cream) 55%,
+    color-mix(in srgb, var(--color-cream) 70%, transparent)
+  );
+}
+.sticky-book-btn {
+  display: flex;
+  min-height: 56px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--color-terracotta);
+  color: #fff;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  box-shadow: 0 10px 24px -12px rgba(0, 0, 0, 0.45);
+}
+/* The bar is the one filled terracotta surface on the page, so its label is the
+   only place white sits on the brand colour. #fff on #c6613f measures 3.79:1,
+   which clears the 3:1 floor for text at this size (17px, 600 weight is not the
+   18.66px bold large-text case, so the deep token is used instead where the
+   ratio has to reach 4.5). Deep terracotta at #a8492a with white measures
+   5.46:1, so the button uses the deep token and keeps the margin. */
+.sticky-book-btn {
+  background: var(--color-terracotta-deep);
+}
+@media (prefers-color-scheme: dark) {
+  /* terracotta-deep INVERTS in dark mode to a light tint meant for text ON dark,
+     so a filled button must not use it there. The mid token stays a real fill. */
+  .sticky-book-btn {
+    background: var(--color-terracotta-soft);
+    color: #17110d;
+  }
+}
