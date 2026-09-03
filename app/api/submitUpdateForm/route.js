@@ -10,10 +10,11 @@ import { setBookingToken } from '@/lib/bookingTokens';
 import { sheetSafe } from '@/lib/sheetSafe';
 import { resolveCheckinStudent, buildGradeWriteData } from '@/lib/checkinIdentity';
 import { getStudentContactBySheetId, stampCheckin } from '@/lib/identity';
+import { recordCheckin, recentCheckins, setCheckinOutcome } from '@/lib/checkinRecords';
 
-const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
-const MASTER_TAB = '👩‍🎓 All Data';
-const CHECKIN_TAB = 'CheckinForm';
+// The Master sheet id / tab names are gone with the last write to them. The only
+// Google call left in this route is the 🎓 Transcript grid write below, whose
+// spreadsheet id is the student's own and comes from the roster.
 
 
 // Convert letter grade to GPA points
@@ -171,7 +172,7 @@ export async function POST(request) {
       await stampCheckin(studentSheetId, 'both', now);
     }
 
-    // ── 3. Build concatenated strings for CheckinForm ────────────────────────
+    // ── 3. Build the concatenated strings the check-in record stores ─────────
     const gradeSnapshot = classes?.length
       ? buildGradeSnapshot(classes, grades.map(g => g.grade))
       : '';
@@ -180,26 +181,27 @@ export async function POST(request) {
       .map(({ task, status }) => `${task}: ${status}`)
       .join('; ');
 
-    // ── 4. Append new row to CheckinForm ─────────────────────────────────────
-    // Column order: A=Timestamp, B=Name, C=Grades, D=Tests&Deadlines,
-    // E=Task Updates, F=Q/C Category, G=Q/C Text, H=Self-Rating, I=Response Pref
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${CHECKIN_TAB}!A:I`,
-      valueInputOption: 'USER_ENTERED',
-      insertDataOption: 'INSERT_ROWS',
-      requestBody: {
-        values: [[
-          now,                                 // A: Timestamp (server-generated)
-          studentName || '',                   // B: Name (server-resolved; matched raw downstream — do NOT sheetSafe)
-          sheetSafe(gradeSnapshot),            // C: Grades (concatenated)
-          sheetSafe(testsAndDeadlines || ''),  // D: Tests & Deadlines
-          sheetSafe(actionItemsString || ''),  // E: Task Updates (concatenated)
-          sheetSafe(questionsCategory || ''),  // F: Questions/Concerns Category
-          sheetSafe(questionsText || ''),      // G: Questions/Concerns Text
-          sheetSafe(selfRating || ''),         // H: Self-Rating
-          sheetSafe(responsePreference || ''), // I: Response Preference
-        ]],
+    // ── 4. Record the check-in ───────────────────────────────────────────────
+    // Was an append to MASTER `CheckinForm!A:I`. Single-write to `checkins`; the
+    // payload keys match the 353 rows the backfill already wrote (lib/checkinRecords).
+    // sheetSafe() is gone with the sheet: it existed to stop a leading "=" being
+    // evaluated as a formula, which is a spreadsheet hazard, not a Postgres one.
+    // The name is no longer stored at all — the row carries the FK instead, which
+    // is what retires the name-matching that needed NAME_ALIASES to survive.
+    const checkinId = await recordCheckin({
+      studentSheetId,
+      instructor: 'ryan',
+      submittedAt: now,
+      payload: {
+        grades: gradeSnapshot || null,
+        tests_and_deadlines: testsAndDeadlines || null,
+        task_updates: actionItemsString || null,
+        concern_category: questionsCategory || null,
+        concern_text: questionsText || null,
+        self_rating: selfRating || null,
+        response_preference: responsePreference || null,
+        agenda: null,
+        routing_reason: null,
       },
     });
 
@@ -222,22 +224,19 @@ export async function POST(request) {
     }
 
     // ── 5. Fetch grade history (last 3 submissions) for AI context ───────────
-    const checkinRes = await sheets.spreadsheets.values.get({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${CHECKIN_TAB}!A:I`,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
-
-    const allCheckins = checkinRes.data.values || [];
-    // Filter to this student's rows (col B = name), skip header if present
-    const studentCheckins = allCheckins
-      .filter(r => r[1] === studentName)
-      .slice(-4, -1); // last 3 before current submission
-
-    const gradeHistory = studentCheckins.map(r => ({
-      timestamp: r[0],
-      snapshot: parseGradeSnapshot(r[2]),
-    }));
+    // Was: read the whole MASTER CheckinForm tab and filter rows whose col B ===
+    // studentName. Now keyed on the FK, which is strictly more correct — the name
+    // filter silently returned nothing for the students whose Master and Overview
+    // spellings diverge, and "no history" means "no grade drops detected", which
+    // feeds an unreviewed meeting-grant decision.
+    const priorCheckins = await recentCheckins(studentSheetId, 'ryan', 3, checkinId);
+    const gradeHistory = priorCheckins
+      .slice()
+      .reverse() // oldest → newest, matching the old .slice(-4,-1) ordering
+      .map((r) => ({
+        timestamp: r.submitted_at,
+        snapshot: parseGradeSnapshot(r.payload?.grades || ''),
+      }));
 
     // Current snapshot
     const currentSnapshot = parseGradeSnapshot(gradeSnapshot);
@@ -411,29 +410,13 @@ GRADE CHANGES vs LAST CHECK-IN: ${gradeDropsText}`;
     // Decision landed — NOW mark the week's check-in done (see the note at step 2).
     await stampCheckin(studentSheetId, 'ryan', now);
 
-    // ── 8. Stamp the just-appended CheckinForm row: K=reason, L=status ────────
-    const allRowsRes = await sheets.spreadsheets.values.get({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${CHECKIN_TAB}!A:L`,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
-    const checkinRows = allRowsRes.data.values || [];
-    let lastMatchIndex = -1;
-    checkinRows.forEach((r, i) => { if (r[1] === studentName) lastMatchIndex = i; });
-    const checkinRow = lastMatchIndex + 1; // 1-based sheet row of this submission
-
-    if (lastMatchIndex > -1) {
-      await sheets.spreadsheets.values.batchUpdate({
-        spreadsheetId: MASTER_SHEET_ID,
-        requestBody: {
-          valueInputOption: 'USER_ENTERED',
-          data: [
-            { range: `${CHECKIN_TAB}!K${checkinRow}`, values: [[sheetSafe(reason || '')]] },
-            { range: `${CHECKIN_TAB}!L${checkinRow}`, values: [[decision]] },
-          ],
-        },
-      });
-    }
+    // ── 8. Stamp the outcome on THIS check-in ────────────────────────────────
+    // Was: re-read the whole CheckinForm tab, walk it for the LAST row whose col B
+    // equalled studentName, and write cols K/L of that row number. Two failure
+    // modes retired at once — a name that did not match wrote the decision NOWHERE
+    // (silently, the `lastMatchIndex > -1` guard), and a concurrent submission by a
+    // same-named student could win the "last row" race. We hold the row's own id.
+    await setCheckinOutcome(checkinId, { decision, reason, existingPayload: null });
 
     // ── 9. Act on the outcome ────────────────────────────────────────────────
     if (outcome === 'granted') {
