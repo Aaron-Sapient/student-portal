@@ -5,8 +5,10 @@
  *   node scripts/reconcileBookings.cjs --write                # apply time changes + hand-deletions + discovered rows
  *   node scripts/reconcileBookings.cjs --write --push-pending # ALSO create events for rows whose calendar sync is pending
  *
- * ⚠ NOT SCHEDULED. There is no cron entry for this script anywhere yet — it runs only
- * when a human runs it. The cadence suggestion at the bottom is a suggestion.
+ * SCHEDULED 2026-09-03: hourly at :35 inside the NAS reconcile-cron container
+ * (scripts/nas/reconcile-cron/Dockerfile), as `--write` WITHOUT --push-pending, so the
+ * pass is read-only against Calendar. It hand-carries via deploy.sh like every other
+ * script there (the repo is not synced to the NAS).
  *
  * Why this exists (review F9 / plan §2 amendment): Aaron hand-edits events outside
  * the portal — drags them to a new time, deletes them. Without a Calendar→Postgres
@@ -81,7 +83,12 @@ async function main() {
   const calendar = google.calendar({ version: 'v3', auth });
   const sb = createClient(get('SUPABASE_URL'), get('SUPABASE_SERVICE_ROLE_KEY'), { auth: { persistSession: false } });
 
-  const { data: rows, error } = await sb.from('bookings').select('*').eq('status', 'active').order('meeting_date');
+  // Same lower bound as the discovery window. Without it the hourly pass would
+  // events.get EVERY historical row (~900 after the backfill, growing forever) and —
+  // worse — flip past rows to 'cancelled' when a recurring series is edited or ended,
+  // because Google drops the old instance ids. History is the record; leave it alone.
+  const floor = DateTime.now().setZone(ZONE).minus({ days: DISCOVER_BACK_DAYS }).toISODate();
+  const { data: rows, error } = await sb.from('bookings').select('*').eq('status', 'active').gte('meeting_date', floor).order('meeting_date');
   if (error) throw new Error(`bookings read failed (table applied?): ${error.message}`);
 
   const now = DateTime.now().setZone(ZONE);

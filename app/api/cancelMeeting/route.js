@@ -196,8 +196,14 @@ export async function POST(request) {
       if (instructor.tokenIsTimestamp) {
         if (!isReschedule) newValue = '';
       } else {
-        const recordedLength = cancelledRow?.minutes ? `${cancelledRow.minutes}min` : null;
-        newValue = isReschedule ? 'no' : (recordedLength || duration || '15min');
+        // The token vocabulary is '15min' | '30min' (validateBooking / bookMeeting
+        // accept nothing else). A hand-made calendar meeting carries any length —
+        // 45, 60 — and restoring "45min" would replace a real grant with a value no
+        // booking path accepts, i.e. destroy it. Clamp both sources to the vocabulary.
+        const TOKENS = ['15min', '30min'];
+        const recordedLength = TOKENS.includes(`${cancelledRow?.minutes}min`) ? `${cancelledRow.minutes}min` : null;
+        const clientLength = TOKENS.includes(duration) ? duration : null;
+        newValue = isReschedule ? 'no' : (recordedLength || clientLength || '15min');
       }
       if (newValue !== null) {
         // Authoritative restore (Supabase booking_tokens; '' = ART clear →

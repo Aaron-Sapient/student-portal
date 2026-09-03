@@ -21,11 +21,16 @@ RUN npm install -g googleapis @supabase/supabase-js luxon && npm cache clean --f
 RUN ln -s /usr/local/lib/node_modules /node_modules
 ENV NODE_PATH=/usr/local/lib/node_modules TZ=America/Los_Angeles
 # --fast (roster + score_params, 2 cheap Master reads) every 10 min; full reconcile
-# (adds the heavy ~40-read scores pass) hourly at :05. The lockfile in reconcile.cjs
+# (adds the heavy ~40-read scores pass) hourly at :05. ADDED 2026-09-03 (zero-google
+# lane C): the Calendar→`bookings` reconcile pass hourly at :35 — it cancels rows whose
+# event was hand-deleted, follows hand-dragged times, and gives a row to every
+# hand-made event carrying a student's full name (scripts/lib/bookingDiscovery.cjs).
+# Read-only against Calendar (no --push-pending); pending rows are only LISTED. The lockfile in reconcile.cjs
 # skips overlapping runs. Scripts read creds from /app/.env.local (a FILE, not env),
 # so cron's minimal environment is fine.
 RUN ( \
       echo "*/10 * * * * cd /app && PATH=/usr/local/bin:/usr/bin:/bin NODE_PATH=/usr/local/lib/node_modules node scripts/reconcile.cjs --fast >> /logs/reconcile.log 2>&1"; \
-      echo "5 * * * * cd /app && PATH=/usr/local/bin:/usr/bin:/bin NODE_PATH=/usr/local/lib/node_modules node scripts/reconcile.cjs >> /logs/reconcile.log 2>&1" \
+      echo "5 * * * * cd /app && PATH=/usr/local/bin:/usr/bin:/bin NODE_PATH=/usr/local/lib/node_modules node scripts/reconcile.cjs >> /logs/reconcile.log 2>&1"; \
+      echo "35 * * * * cd /app && PATH=/usr/local/bin:/usr/bin:/bin NODE_PATH=/usr/local/lib/node_modules node scripts/reconcileBookings.cjs --write >> /logs/reconcileBookings.log 2>&1" \
     ) | crontab -
 CMD ["cron", "-f"]

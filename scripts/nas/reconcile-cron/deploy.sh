@@ -17,7 +17,7 @@ REPO="$(cd "$HERE/../../.." && pwd)"
 DOCKER='/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker'
 DENV='export HOME=/share/Container/coach DOCKER_CONFIG=/share/Container/coach/.docker'
 
-ssh -i "$KEY" "$HOST" "mkdir -p $BASE/app/scripts $BASE/app/lib $BASE/logs"
+ssh -i "$KEY" "$HOST" "mkdir -p $BASE/app/scripts $BASE/app/scripts/lib $BASE/app/lib $BASE/logs"
 # Every script named in reconcile.cjs's ALL_STEPS must be hand-carried (the repo is NOT
 # synced to the NAS). Wave 1 added checkins, student-hub, transcript,
 # college lists, and comps to the prior roster/params/scores set. Wave 3 added
@@ -50,7 +50,11 @@ scp -i "$KEY" \
   "$REPO/scripts/reconcileTranscript.cjs" \
   "$REPO/scripts/mirrorCollegeLists.cjs" \
   "$REPO/scripts/mirrorComps.cjs" \
+  "$REPO/scripts/reconcileBookings.cjs" \
   "$HOST:$BASE/app/scripts/"
+# ADDED 2026-09-03: the hourly Calendar→bookings pass (Dockerfile :35 line) and the
+# discovery module it shares with backfillBookings.cjs.
+scp -i "$KEY" "$REPO/scripts/lib/bookingDiscovery.cjs" "$HOST:$BASE/app/scripts/lib/"
 # mirrorCollegeLists.cjs dynamic-imports lib/collegeList.js (ESM), which statically imports
 # lib/supabase.js + lib/readFlags.js. They must live at $BASE/app/lib so the script's
 # `../lib/...` resolves. (The Dockerfile symlinks /node_modules → the global install so the
