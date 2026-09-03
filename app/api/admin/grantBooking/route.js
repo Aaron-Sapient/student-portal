@@ -6,6 +6,7 @@ import { getSeniorBySheetId, createOneoffGrant } from '@/lib/seniors';
 import { sendMeetingGrantedEmail } from '@/lib/checkinEmails';
 import { getSupabaseClient, MEETING_CAP_SUMMARY } from '@/lib/supabase';
 import { setBookingToken } from '@/lib/bookingTokens';
+import { getStudentContactBySheetId } from '@/lib/identity';
 
 // Admin tool: grant a student a ONE-OFF meeting that bypasses the weekly check-in
 // gate and unlocks booking in their Meetings tab. Two tracks, auto-detected:

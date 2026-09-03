@@ -5,10 +5,8 @@ import { sendStudentCancellationEmail } from '@/lib/studentEmails';
 import { cancelBookingByEventId, cancelOneoffByEventId } from '@/lib/seniors';
 import { cancelProjectBookingByEventId } from '@/lib/projectMeetings';
 import { cancelStandardBookingByEventId } from '@/lib/bookings';
-import { setBookingToken, sheetIdFromPortalUrl } from '@/lib/bookingTokens';
-
-const MASTER_SHEET_ID = '1YJK05oU_12wX0qK-vTqJJfaS8eVI7JMzdGP0gVso1G4';
-const MASTER_TAB = '👩‍🎓 All Data';
+import { setBookingToken } from '@/lib/bookingTokens';
+import { getStudentByEmail } from '@/lib/identity';
 
 function getServiceAuth() {
   return new google.auth.GoogleAuth({
@@ -16,10 +14,7 @@ function getServiceAuth() {
       client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
       private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
     },
-    scopes: [
-      'https://www.googleapis.com/auth/calendar',
-      'https://www.googleapis.com/auth/spreadsheets',
-    ],
+    scopes: ['https://www.googleapis.com/auth/calendar'],
   });
 }
 
@@ -36,7 +31,6 @@ export async function POST(request) {
     const instructor = getInstructor(instructorSlug);
     const authClient = getServiceAuth();
     const calendar = google.calendar({ version: 'v3', auth: authClient });
-    const sheets = google.sheets({ version: 'v4', auth: authClient });
 
     await calendar.events.delete({ calendarId: instructor.calendarId, eventId });
 
@@ -63,17 +57,21 @@ export async function POST(request) {
     // Restore the student's booking token. Lookup by studentEmail (admin is logged in,
     // not the student — so we cannot use sessionClaims.email like the student-facing route does).
     if (studentEmail) {
-      const masterRes = await sheets.spreadsheets.values.get({
-        spreadsheetId: MASTER_SHEET_ID,
-        range: `${MASTER_TAB}!G:J`,
-        valueRenderOption: 'UNFORMATTED_VALUE',
-      });
-      const rows = masterRes.data.values || [];
-      const rowIndex = rows.findIndex(r => r[3] === studentEmail) + 1;
-      const cancelSheetId = rowIndex > 0 ? sheetIdFromPortalUrl(rows[rowIndex - 1][0]) : null;
+      // Was a Master G:J scan for email -> portal URL -> sheet id. The roster read
+      // can throw (getStudentByEmail rethrows a Supabase error so a blip is never
+      // read as "no such student"); catching it here keeps the SEV-2 posture the
+      // rest of this handler already has — the event is deleted, so log loudly and
+      // finish the cancel rather than 500 something that half-happened.
+      let cancelSheetId = null;
+      try {
+        const student = await getStudentByEmail(studentEmail);
+        cancelSheetId = student?.student_sheet_id ?? null;
+      } catch (rosterErr) {
+        console.error(`developer cancelMeeting: roster lookup failed for ${studentEmail} — token NOT restored, re-grant manually:`, rosterErr?.message || rosterErr);
+      }
 
-      // Project meetings have their own ledger (freed above) — never restore a Master token.
-      if (rowIndex > 0 && !wasProject) {
+      // Project meetings have their own ledger (freed above) — never restore a standard token.
+      if (cancelSheetId && !wasProject) {
         const newValue = instructor.tokenIsTimestamp ? '' : (duration || '15min');
         // Authoritative restore (Supabase booking_tokens; '' = ART clear →
         // delete the row). Best-effort at this point — the event is already
