@@ -45,10 +45,14 @@ export default function PortalShell({ iconNames, className = '', children }) {
           glyphs via icon_names so the payload is tiny; display=block avoids the
           ligature-text flash before the font loads. icon_names is normalized to
           alphabetical order above (Google 400s an unsorted list). */}
-      <link
-        rel="stylesheet"
-        href={`https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-25..0&icon_names=${sortedIconNames}&display=block`}
-      />
+      {/* A surface with no Material glyphs (e.g. /demo, which has no dock) passes
+          an empty list; Google 400s `icon_names=` so skip the request entirely. */}
+      {sortedIconNames && (
+        <link
+          rel="stylesheet"
+          href={`https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-25..0&icon_names=${sortedIconNames}&display=block`}
+        />
+      )}
       {/* Atmospheric backdrop: warm radial wash + faint grain, fixed so it
           never scrolls or shifts layout. */}
       <div

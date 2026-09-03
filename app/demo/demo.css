@@ -1,0 +1,534 @@
+/* /demo only. Every rule is scoped to .demo-board so nothing here can reach the
+   real portal.
+
+   The whole file exists because this surface has a use scene the portal was
+   never designed for: a 1080-tall office television, read from across a room,
+   by someone who has never seen the product before and will see it once. */
+
+/* ── 1. Scale ───────────────────────────────────────────────────────────────
+   The portal's type is sized for a phone held at arm's length: 10px labels,
+   14px body. Stretched to 1920 those are specks. Rather than re-authoring
+   every component at a second size, the whole board is zoomed. One
+   declaration, no component drift, and radii, strokes and shadows scale with
+   the type. `zoom` (unlike `transform: scale`) reflows, so the grid still lays
+   out correctly at the zoomed width. */
+.demo-board {
+  zoom: 1;
+}
+@media (min-width: 1400px) {
+  .demo-board {
+    zoom: 1.08;
+  }
+}
+@media (min-width: 1750px) {
+  .demo-board {
+    zoom: 1.2;
+  }
+}
+
+/* ── 2. Contrast, re-derived for the room ───────────────────────────────────
+   Measured on the shipped tokens: --color-ink-faint (#a89e8f) is 2.51:1 on the
+   cream page and 2.25:1 on the card gradient's dark end. That is under the 3:1
+   floor for large text, let alone 4.5:1 for the 10px labels the portal uses it
+   on. It is survivable on a phone at 30cm; it is illegible on a television at
+   four metres. Re-derived from the same hue, verified arithmetically:
+     light #726858 -> 5.19:1 on page, 4.67:1 on card
+     dark  #9a9998 -> 6.17:1 on page, 5.37:1 on card
+   Scoped to the board, so the product's own surfaces keep their token. */
+.demo-board {
+  --color-ink-faint: #726858;
+}
+@media (prefers-color-scheme: dark) {
+  .demo-board {
+    --color-ink-faint: #9a9998;
+  }
+}
+
+/* ── 3. One card shell ──────────────────────────────────────────────────────
+   The portal's cards were authored per tab and carry three radii (2rem /
+   2.5rem / 1.75rem) and three insets. On a phone they are never seen side by
+   side; on a board they sit in one row and every mismatch reads as a jog.
+   Normalise the shell once, here, and let content differences do the work. */
+.demo-board section.neu-raised {
+  border-radius: 2.5rem;
+  padding: 1.75rem;
+}
+
+/* A row marked .row-tie shares one bottom edge, because the eye reads across a
+   row and a 430px card beside a 250px one is a jog. It is opt-in, not blanket:
+   forcing every row level inflates a genuinely short card with hundreds of
+   pixels of empty ground, which reads worse than the jog it fixed. */
+.demo-board .row-tie > div {
+  display: flex;
+  flex-direction: column;
+}
+.demo-board .row-tie > div > section {
+  flex: 1 1 auto;
+}
+
+/* The Choice Score is the one number the room is there to see, and the portal
+   sizes it for a phone. Scaled up in place rather than re-authored, so it stays
+   the real component. Padding is divided back out so its heading still starts
+   on the same baseline as the unzoomed card beside it. */
+/* A gauge card is short by nature: a title and one ring-plus-bars row. Once the
+   row equalises heights that leaves the ring high with dead cream under it. Let
+   the gauge row take the slack and centre in it. */
+.demo-board .card-fill > section {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+}
+.demo-board .card-fill > section > :last-child {
+  flex: 1 1 auto;
+}
+
+@media (max-width: 959px) {
+  .demo-board .card-hero > section > :last-child {
+    max-width: 34rem;
+  }
+}
+
+/* ── 4. Motion: one moment, not one per card ────────────────────────────────
+   Every card used to rise on entry with a staggered delay, which is the same
+   entrance repeated eight times and, worse, starts every element at opacity 0.
+   On a television that reads as the page failing to load. The board's single
+   authored moment is the score ring drawing itself, which the product component
+   already owns. Everything else is simply present. */
+.demo-board .portal-rise {
+  animation: none;
+}
+
+/* ── 5. Browser surfaces ────────────────────────────────────────────────────
+   The parts nobody draws still carry the design, and they ship with defaults
+   belonging to no design system. On a demo screen a stock blue selection
+   highlight or a grey scrollbar is the one pixel that says "web page". */
+.demo-board ::selection {
+  background: color-mix(in srgb, var(--color-terracotta) 26%, transparent);
+  color: var(--color-ink);
+}
+.demo-board {
+  caret-color: var(--color-terracotta);
+  /* Figures line up in columns instead of dancing. Every number on this board
+     sits in a list beside another number. */
+  font-variant-numeric: tabular-nums;
+  scrollbar-color: var(--color-ink-faint) transparent;
+  scrollbar-width: thin;
+}
+.demo-board *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.demo-board *::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-ink-faint) 55%, transparent);
+  border-radius: 999px;
+}
+.demo-board *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* A real focus ring, in the palette. The rail is the only thing on the board
+   that can take focus, and it is the thing a keyboard user will reach for. */
+.demo-board :focus-visible {
+  outline: 2px solid var(--color-terracotta);
+  outline-offset: 3px;
+  border-radius: 1rem;
+}
+.demo-nav-item {
+  min-height: 44px;
+}
+
+/* The reused score card titles itself with the portal's all-caps micro label,
+   while every card the demo authors uses a real heading. Side by side that is
+   two titling systems in one row. Restyled here to match, rather than editing
+   the shipped component: same words, same voice as its neighbour. */
+.demo-board .card-hero > section > div:first-child > p {
+  font-family: var(--font-fraunces), Georgia, serif;
+  font-size: 1.3rem;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--color-ink);
+}
+
+/* ── 5b. Kickers ────────────────────────────────────────────────────────────
+   The shipped components label themselves with 9 and 10px all-caps letterspaced
+   micro-type: ACADEMIC, EXTRACURRICULAR, LEADERSHIP, OVERALL, SCORE MOVEMENT
+   ACROSS CHECK-INS, and the chart's own date ticks. That is the loudest AI tell
+   on the page and it is unreadable across a room at 9px. Restyled here, never
+   forked: same component, same words, sentence case at a size that carries. The
+   1.25em bump is relative, so each label grows from whatever the component set. */
+.demo-board .uppercase {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 1.1em;
+}
+/* The score card's own labels carry further than the chart's axis chrome does,
+   so they get the larger step. A blanket bump inflated the chart's tick labels
+   to body size and collided them with its caption. */
+/* Split by element, because the score card's two label roles have different room:
+   the sub-score names (spans) sit in an open column and carry the reading, while
+   the ring caption (a p) sits inside the ring's own hole and collides with the
+   stroke if it grows much. */
+.demo-board .card-hero span.uppercase {
+  font-size: 1.18em;
+}
+.demo-board .card-hero p.uppercase {
+  font-size: 1.05em;
+}
+
+/* ── 6. The score card ──────────────────────────────────────────────────────
+   The demo renders the SHIPPED score component and wraps it in its own card, so
+   the ring, the three bars, the delta chips and the data are the product's. Two
+   presentational overrides, no fork:
+
+   1. The shipped component draws its own card. Stripped to nothing here, so the
+      wrapper is the only card and nothing is nested inside anything.
+   2. Its own label row is hidden, because the wrapper titles the card. That is
+      what lets the demo say "Choice SuperScore" and carry its own Beta chip
+      without editing a component the live portal renders. */
+.demo-board .demo-score-card > section.neu-raised {
+  background: none;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 0;
+  margin-top: 1.5rem;
+}
+.demo-board .demo-score-card > section.neu-raised > div:first-child {
+  display: none;
+}
+
+/* ── 7. The ring stacks above the bars, at every width ──────────────────────
+   The shipped layout is ring-beside-bars, which is right in a phone column and
+   right in a five-column card. This was scoped to half screen and is now
+   unconditional, for two reasons. Side by side, the ring and the bars drift
+   apart as the card widens and neither ends up with room. And stacked, the card
+   grows tall enough to stand level with the read beside it, which is what closes
+   the empty ground that sat under a short gauge card on a 1080 board. */
+.demo-board .demo-score-card > section > div:last-child {
+  flex-direction: column;
+  align-items: center;
+  gap: 1.75rem;
+}
+.demo-board .demo-score-card > section > div:last-child > div:last-child {
+  width: 100%;
+  max-width: 26rem;
+}
+
+/* ── 8. No truncated words, at any width ────────────────────────────────────
+   "Extracurricular" is the longest label the component owns and the one it
+   truncates first. Two changes: the ring gives back some diameter so the label
+   column has room, and the component's own `truncate` is lifted inside this
+   card. An abbreviation in front of a family reads as a defect, not a style. */
+.demo-board .demo-score-card .truncate {
+  overflow: visible;
+  text-overflow: clip;
+}
+/* The ring keeps its shipped diameter. Shrinking it to buy label width put the
+   "overall" caption on top of the stroke, and `overflow: visible` above already
+   solved the truncation on its own. */
+
+/* ── 7. Reduced motion ──────────────────────────────────────────────────────
+   The alternative has to preserve the state, not delete it: with the transition
+   removed the ring is simply drawn at its final value on first paint, which is
+   the information the animation was carrying. */
+@media (prefers-reduced-motion: reduce) {
+  .demo-board .neu-pulse {
+    animation: none;
+  }
+  .demo-board circle {
+    transition: none !important;
+  }
+}
+
+
+/* ── 9. The rail ────────────────────────────────────────────────────────────
+   Icons only, 44px targets, and the label arrives as a tooltip on hover AND on
+   keyboard focus, so it is not gated behind a pointer. Current section is the
+   icon's own colour plus a hairline indicator: a filled pill was reading louder
+   than the content it was pointing at. */
+.demo-nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
+}
+.demo-nav-item:hover {
+  color: var(--color-ink);
+  background: color-mix(in srgb, var(--color-ink) 6%, transparent);
+}
+.demo-nav-item.is-on {
+  color: var(--color-terracotta-deep);
+}
+/* The indicator sits under the icon on the horizontal strip and beside it on the
+   vertical rail, so "you are here" reads the same way in both orientations. */
+.demo-nav-item.is-on::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  width: 18px;
+  height: 2px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: currentColor;
+}
+@media (min-width: 1025px) {
+  .demo-nav-item.is-on::before {
+    left: -8px;
+    bottom: auto;
+    top: 50%;
+    width: 2px;
+    height: 20px;
+    transform: translateY(-50%);
+  }
+}
+
+.demo-tip {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 8px);
+  transform: translateX(-50%);
+  white-space: nowrap;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: var(--color-ink);
+  color: var(--color-paper);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+  z-index: 40;
+}
+@media (min-width: 1025px) {
+  .demo-tip {
+    left: calc(100% + 10px);
+    top: 50%;
+    transform: translateY(-50%);
+  }
+}
+.demo-nav-item:hover .demo-tip,
+.demo-nav-item:focus-visible .demo-tip {
+  opacity: 1;
+}
+
+/* ── 10. Mouse response ─────────────────────────────────────────────────────
+   Containers answer the pointer. Shadow and background only, never transform or
+   padding: a card that grows on hover shoves the row beside it, and on a board
+   being narrated that reads as the page twitching. The cursor stays default on
+   everything that does not do something; only the rail gets a pointer. */
+.demo-board section.neu-raised {
+  transition: box-shadow 0.18s ease;
+}
+.demo-board section.neu-raised:hover {
+  box-shadow:
+    8px 8px 18px var(--neu-lo),
+    -8px -8px 18px var(--neu-hi);
+}
+/* A card INSIDE a card never answers the pointer. The score card wraps the
+   shipped component, whose own <section class="neu-raised"> is stripped to
+   nothing by section 6 above -- but the hover rule then handed its shadow back,
+   so pointing at the card lit up the bars panel instead of the card. The
+   container is the thing being hovered; only the outermost one may respond. */
+.demo-board section.neu-raised section.neu-raised:hover {
+  box-shadow: none;
+}
+
+/* Rows answer the pointer as a whole CELL, not as a strip behind the glyphs.
+   The padding is cancelled by an equal negative margin, so the text keeps the
+   exact alignment it had and only the hover ground grows: without this the
+   background starts at the "AP" or the date and the left-most column reads as
+   though it is falling out of the row. The inset is smaller than the card's own
+   1.75rem padding, so a full-bleed row still sits inside the card. */
+.demo-board ul > li {
+  padding-left: 0.9rem;
+  padding-right: 0.9rem;
+  margin-left: -0.9rem;
+  margin-right: -0.9rem;
+  transition: background-color 0.14s ease;
+  border-radius: 12px;
+}
+.demo-board ul > li:hover {
+  background: color-mix(in srgb, var(--color-ink) 4%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .demo-board section.neu-raised,
+  .demo-board li,
+  .demo-nav-item,
+  .demo-tip {
+    transition: none;
+  }
+}
+
+/* ── 11. The back door ──────────────────────────────────────────────────────
+   The Overview's "next up" line is the one element on the board that navigates,
+   so it is the one element besides the rail that takes a pointer cursor. It is
+   a <button>, not a <section>, which is why it cannot inherit the card hover in
+   section 10 and states it here instead. */
+.demo-board .demo-jump {
+  cursor: pointer;
+  transition: box-shadow 0.18s ease;
+}
+.demo-board .demo-jump:hover {
+  box-shadow:
+    8px 8px 18px var(--neu-lo),
+    -8px -8px 18px var(--neu-hi);
+}
+@media (prefers-reduced-motion: reduce) {
+  .demo-board .demo-jump {
+    transition: none;
+  }
+}
+
+/* ── 12. Modals ─────────────────────────────────────────────────────────────
+   Three surfaces share one shell: the document reader, the check-in, and the
+   booking flow. A modal rather than a route because the board's premise is that
+   nothing loads between a click and a render -- the section behind stays
+   mounted, so closing is instant and never re-paints mid-sentence. */
+.demo-modal-root {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3vh 2rem;
+}
+.demo-modal-scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  background: color-mix(in srgb, #2a2115 42%, transparent);
+  backdrop-filter: blur(3px);
+}
+@media (prefers-color-scheme: dark) {
+  .demo-modal-scrim {
+    background: color-mix(in srgb, #000 62%, transparent);
+  }
+}
+.demo-modal-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(46rem, 100%);
+  max-height: 94vh;
+  border-radius: 2.25rem;
+  padding: 1.75rem;
+  outline: none;
+}
+.demo-modal-panel.is-wide {
+  width: min(72rem, 100%);
+}
+.demo-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-ink-faint) 30%, transparent);
+}
+.demo-modal-x {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+.demo-modal-x:hover {
+  color: var(--color-ink);
+}
+.demo-modal-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  /* The sticky check-in footer bleeds to the panel edge with negative margins,
+     which otherwise buys a horizontal scrollbar nobody asked for. */
+  overflow-x: hidden;
+  padding-top: 1.25rem;
+}
+
+/* A list row whose whole rectangle is the control. The padding that keeps text
+   off the hover edge lives on the <li> (section 10), so the button inside must
+   not add its own or the two insets stack. */
+.demo-board .demo-row-button {
+  cursor: pointer;
+  background: none;
+  border: 0;
+}
+
+/* The modal's own scroll region gets the quieter bar too: the board's is sized
+   to be seen across a room, which inside a panel reads as a rule down the edge. */
+.demo-modal-body {
+  scrollbar-color: color-mix(in srgb, var(--color-ink-faint) 45%, transparent) transparent;
+}
+.demo-modal-body::-webkit-scrollbar {
+  width: 8px;
+}
+.demo-modal-body::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-ink-faint) 32%, transparent);
+}
+
+/* The check-in's Back/Next row rides the bottom of the modal's scroll area
+   rather than the bottom of the form, so it is on screen at every step
+   regardless of how tall that step's controls are. */
+.demo-checkin-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  padding: 1.25rem 0 0.5rem;
+  /* No negative-margin bleed to the panel edge. It looked tidier, but a child
+     wider than the scroll container lets the browser scroll that container
+     horizontally to reveal a focused button -- overflow-x:hidden does not stop
+     a programmatic or focus-driven scroll -- and the whole modal ended up
+     shunted left with its labels clipped. The fade sells the edge on its own. */
+  background: linear-gradient(to bottom, transparent, var(--color-cream-dim) 45%);
+}
+
+/* ── 13. Scrubbing the score chart ──────────────────────────────────────────
+   Ported from the Personal Dashboard's week-by-week chart. The hit layer spills
+   slightly past the plot so the pointer does not have to be inside the ink to
+   read a week, and `pan-y` keeps a vertical page scroll started on the chart
+   working as a scroll rather than a scrub. */
+.demo-board .demo-sc-hit {
+  position: absolute;
+  inset: 0.25rem;
+  z-index: 3;
+  border-radius: 1rem;
+  cursor: crosshair;
+  touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+.demo-board .demo-sc-line {
+  position: absolute;
+  top: 0.75rem;
+  bottom: 0.75rem;
+  width: 1px;
+  margin-left: -0.5px;
+  background: var(--color-ink-soft);
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .demo-board .demo-sc-line {
+    transition: none;
+  }
+}
