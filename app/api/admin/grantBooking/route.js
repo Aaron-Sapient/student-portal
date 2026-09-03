@@ -46,29 +46,18 @@ export async function POST(request) {
   const instructor = getInstructor(slug);
 
   try {
-    const authClient = getServiceAuth();
-    const sheets = google.sheets({ version: 'v4', auth: authClient });
-
-    // Resolve the student from the Master sheet by sheet id (portal URL, col G).
-    const masterRes = await sheets.spreadsheets.values.get({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${MASTER_TAB}!A:L`,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
-    const rows = masterRes.data.values || [];
-    const rowIdx = rows.findIndex((r) => String(r[6] || '').includes(studentSheetId));
-    const row = rowIdx >= 0 ? rows[rowIdx] : null;
-
+    // Email identity from `students` + `guardians` (was a Master A:L scan matched on
+    // col G containing the sheet id). Fall back to the seniors row for a senior
+    // whose roster row didn't resolve, exactly as before.
+    const contact = await getStudentContactBySheetId(studentSheetId);
     const senior = await getSeniorBySheetId(studentSheetId);
 
-    // Identity for the email (Master cols A=name, J=email, K/L=parent emails). Fall
-    // back to the seniors row for a senior whose Master row didn't resolve.
-    const studentName = (row?.[0] || senior?.student_name || '').trim();
-    const studentEmail = (row?.[9] || senior?.student_email || '').trim();
-    const parentEmails = [row?.[10], row?.[11]].filter((e) => e && String(e).includes('@'));
+    const studentName = (contact?.name || senior?.student_name || '').trim();
+    const studentEmail = (contact?.studentEmail || senior?.student_email || '').trim();
+    const parentEmails = contact?.parentEmails ?? [];
 
-    if (!senior && !row) {
-      return Response.json({ error: 'Student not found in the Master sheet' }, { status: 404 });
+    if (!senior && !contact) {
+      return Response.json({ error: 'Student not found' }, { status: 404 });
     }
 
     let kind;
