@@ -75,6 +75,7 @@
    the gauge row take the slack and centre in it. */
 .demo-board .card-fill > section {
   display: flex;
+  height: 100%;
   flex-direction: column;
 }
 .demo-board .card-fill > section > :last-child {
@@ -197,21 +198,21 @@
   display: none;
 }
 
-/* ── 7. The ring stacks above the bars at half screen ───────────────────────
+/* ── 7. The ring stacks above the bars, at every width ──────────────────────
    The shipped layout is ring-beside-bars, which is right in a phone column and
-   right in a five-column card. In between, at half screen, the card is wide
-   enough that the pair drifts apart and short enough that neither gets room.
-   Stacked and centred is the composition that reads as deliberate. */
-@media (max-width: 1024px) {
-  .demo-board .demo-score-card > section > div:last-child {
-    flex-direction: column;
-    align-items: center;
-    gap: 1.75rem;
-  }
-  .demo-board .demo-score-card > section > div:last-child > div:last-child {
-    width: 100%;
-    max-width: 26rem;
-  }
+   right in a five-column card. This was scoped to half screen and is now
+   unconditional, for two reasons. Side by side, the ring and the bars drift
+   apart as the card widens and neither ends up with room. And stacked, the card
+   grows tall enough to stand level with the read beside it, which is what closes
+   the empty ground that sat under a short gauge card on a 1080 board. */
+.demo-board .demo-score-card > section > div:last-child {
+  flex-direction: column;
+  align-items: center;
+  gap: 1.75rem;
+}
+.demo-board .demo-score-card > section > div:last-child > div:last-child {
+  width: 100%;
+  max-width: 26rem;
 }
 
 /* ── 8. No truncated words, at any width ────────────────────────────────────
@@ -334,9 +335,28 @@
     8px 8px 18px var(--neu-lo),
     -8px -8px 18px var(--neu-hi);
 }
-.demo-board li {
+/* A card INSIDE a card never answers the pointer. The score card wraps the
+   shipped component, whose own <section class="neu-raised"> is stripped to
+   nothing by section 6 above -- but the hover rule then handed its shadow back,
+   so pointing at the card lit up the bars panel instead of the card. The
+   container is the thing being hovered; only the outermost one may respond. */
+.demo-board section.neu-raised section.neu-raised:hover {
+  box-shadow: none;
+}
+
+/* Rows answer the pointer as a whole CELL, not as a strip behind the glyphs.
+   The padding is cancelled by an equal negative margin, so the text keeps the
+   exact alignment it had and only the hover ground grows: without this the
+   background starts at the "AP" or the date and the left-most column reads as
+   though it is falling out of the row. The inset is smaller than the card's own
+   1.75rem padding, so a full-bleed row still sits inside the card. */
+.demo-board ul > li {
+  padding-left: 0.9rem;
+  padding-right: 0.9rem;
+  margin-left: -0.9rem;
+  margin-right: -0.9rem;
   transition: background-color 0.14s ease;
-  border-radius: 10px;
+  border-radius: 12px;
 }
 .demo-board ul > li:hover {
   background: color-mix(in srgb, var(--color-ink) 4%, transparent);
@@ -347,6 +367,168 @@
   .demo-board li,
   .demo-nav-item,
   .demo-tip {
+    transition: none;
+  }
+}
+
+/* ── 11. The back door ──────────────────────────────────────────────────────
+   The Overview's "next up" line is the one element on the board that navigates,
+   so it is the one element besides the rail that takes a pointer cursor. It is
+   a <button>, not a <section>, which is why it cannot inherit the card hover in
+   section 10 and states it here instead. */
+.demo-board .demo-jump {
+  cursor: pointer;
+  transition: box-shadow 0.18s ease;
+}
+.demo-board .demo-jump:hover {
+  box-shadow:
+    8px 8px 18px var(--neu-lo),
+    -8px -8px 18px var(--neu-hi);
+}
+@media (prefers-reduced-motion: reduce) {
+  .demo-board .demo-jump {
+    transition: none;
+  }
+}
+
+/* ── 12. Modals ─────────────────────────────────────────────────────────────
+   Three surfaces share one shell: the document reader, the check-in, and the
+   booking flow. A modal rather than a route because the board's premise is that
+   nothing loads between a click and a render -- the section behind stays
+   mounted, so closing is instant and never re-paints mid-sentence. */
+.demo-modal-root {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3vh 2rem;
+}
+.demo-modal-scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  background: color-mix(in srgb, #2a2115 42%, transparent);
+  backdrop-filter: blur(3px);
+}
+@media (prefers-color-scheme: dark) {
+  .demo-modal-scrim {
+    background: color-mix(in srgb, #000 62%, transparent);
+  }
+}
+.demo-modal-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(46rem, 100%);
+  max-height: 94vh;
+  border-radius: 2.25rem;
+  padding: 1.75rem;
+  outline: none;
+}
+.demo-modal-panel.is-wide {
+  width: min(72rem, 100%);
+}
+.demo-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-ink-faint) 30%, transparent);
+}
+.demo-modal-x {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+.demo-modal-x:hover {
+  color: var(--color-ink);
+}
+.demo-modal-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  /* The sticky check-in footer bleeds to the panel edge with negative margins,
+     which otherwise buys a horizontal scrollbar nobody asked for. */
+  overflow-x: hidden;
+  padding-top: 1.25rem;
+}
+
+/* A list row whose whole rectangle is the control. The padding that keeps text
+   off the hover edge lives on the <li> (section 10), so the button inside must
+   not add its own or the two insets stack. */
+.demo-board .demo-row-button {
+  cursor: pointer;
+  background: none;
+  border: 0;
+}
+
+/* The modal's own scroll region gets the quieter bar too: the board's is sized
+   to be seen across a room, which inside a panel reads as a rule down the edge. */
+.demo-modal-body {
+  scrollbar-color: color-mix(in srgb, var(--color-ink-faint) 45%, transparent) transparent;
+}
+.demo-modal-body::-webkit-scrollbar {
+  width: 8px;
+}
+.demo-modal-body::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-ink-faint) 32%, transparent);
+}
+
+/* The check-in's Back/Next row rides the bottom of the modal's scroll area
+   rather than the bottom of the form, so it is on screen at every step
+   regardless of how tall that step's controls are. */
+.demo-checkin-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  padding: 1.25rem 0 0.5rem;
+  /* No negative-margin bleed to the panel edge. It looked tidier, but a child
+     wider than the scroll container lets the browser scroll that container
+     horizontally to reveal a focused button -- overflow-x:hidden does not stop
+     a programmatic or focus-driven scroll -- and the whole modal ended up
+     shunted left with its labels clipped. The fade sells the edge on its own. */
+  background: linear-gradient(to bottom, transparent, var(--color-cream-dim) 45%);
+}
+
+/* ── 13. Scrubbing the score chart ──────────────────────────────────────────
+   Ported from the Personal Dashboard's week-by-week chart. The hit layer spills
+   slightly past the plot so the pointer does not have to be inside the ink to
+   read a week, and `pan-y` keeps a vertical page scroll started on the chart
+   working as a scroll rather than a scrub. */
+.demo-board .demo-sc-hit {
+  position: absolute;
+  inset: 0.25rem;
+  z-index: 3;
+  border-radius: 1rem;
+  cursor: crosshair;
+  touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+.demo-board .demo-sc-line {
+  position: absolute;
+  top: 0.75rem;
+  bottom: 0.75rem;
+  width: 1px;
+  margin-left: -0.5px;
+  background: var(--color-ink-soft);
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .demo-board .demo-sc-line {
     transition: none;
   }
 }

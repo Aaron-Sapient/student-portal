@@ -68,22 +68,27 @@ export default function DemoApp({ data, initial }) {
         {/* Whose portal this is. Small, quiet, ruled off, and identical on every
             section, so the room never has to remember which student is on
             screen and no section has to spend a headline saying it. */}
-        <header className="mb-8 flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-ink-faint/25 pb-4">
-          <span className="font-display text-[1.15rem] font-semibold leading-none text-ink">
-            {data.student.name}
-          </span>
-          <span className="text-[14px] text-ink-soft">
-            {data.student.year}, class of {data.student.gradYear}
-          </span>
-          <span className="text-[14px] text-ink-soft">{data.student.school}</span>
+        {/* The identity row is centred inside the SAME 44px the rail's buttons
+            occupy, so the student's name sits on the compass icon's own centre
+            line. The rail and this column are siblings in one flex row, so they
+            start at the same y; matching the height is all the alignment takes,
+            and it holds at every width without a magic offset. */}
+        <header className="mb-8 border-b border-ink-faint/25 pb-4">
+          <div className="flex min-h-[44px] items-center">
+            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+              <span className="font-display text-[1.4rem] font-semibold leading-none text-ink">
+                {data.student.name}
+              </span>
+              <span className="text-[14px] text-ink-soft">
+                {data.student.year}, class of {data.student.gradYear}
+              </span>
+              <span className="text-[14px] text-ink-soft">{data.student.school}</span>
+            </div>
+          </div>
         </header>
 
-        <View data={data} />
+        <View data={data} go={setActive} />
 
-        {/* Honesty marker, deliberately the quietest thing on screen: the room is
-            told out loud that this is a sample, so this only has to survive a
-            screenshot leaving the room. Delete this one element to remove it. */}
-        <p className="mt-14 text-[13px] text-ink-soft">Sample portal. Fictional student.</p>
       </main>
     </div>
   );

@@ -1,5 +1,7 @@
 import { DateTime } from 'luxon';
 import { ZONE } from '@/app/(portal)/portalUtils';
+import { SAMPLE_DOCS } from './sampleDocs';
+import WRITE_LINKS from './writeLinks.json';
 
 /* ── The spoof student ──────────────────────────────────────────────────────
    Every value on /demo comes from this file. There is no fetch, no Supabase,
@@ -25,8 +27,6 @@ export const STUDENT = {
   first: 'Maya',
   year: 'Senior',
   school: 'Northwood High School',
-  counselor: 'Ryan Choice',
-  essayCoach: 'Aaron Blumenthal',
 };
 
 export function now() {
@@ -126,7 +126,11 @@ export function buildDemo(base = now()) {
     weekOf: DateTime.fromISO(history[history.length - 1].date, { zone: ZONE }).toFormat('LLLL d'),
     first: DateTime.fromISO(history[0].date, { zone: ZONE }).toFormat('LLL d'),
     last: DateTime.fromISO(history[history.length - 1].date, { zone: ZONE }).toFormat('LLL d'),
+    /* Each point carries its OWN week label. Scrubbing the chart reads a past
+       week's four numbers, and a readout that kept saying the latest date while
+       the line moved would be quietly lying about what it is showing. */
     points: history.map((h) => ({
+      weekOf: DateTime.fromISO(h.date, { zone: ZONE }).toFormat('LLLL d'),
       overall: h.overall,
       academic: h.academic,
       ec: h.ec,
@@ -159,13 +163,17 @@ export function buildDemo(base = now()) {
       ],
     },
 
+    /* One list, two containers. The UC campuses carry `uc: true` and are pulled
+       out in the Colleges section: a family applies to the whole UC system with
+       ONE application and one set of PIQs, so the campuses are a single decision
+       sitting next to nine independent ones. Keeping them inline made the list
+       read as though Berkeley were negotiable separately from Irvine. Their
+       range (reach, target, likely) is still real and still shown, which is why
+       they stay inside their group here rather than becoming a fourth group. */
     colleges: {
-      onList: 12,
-      confirmed: 8,
       groups: [
         {
           range: 'Reach',
-          note: 'Admit rates under 10 percent. Two of these carry a binding or restrictive round.',
           schools: [
             { name: 'Stanford University', term: 'Restrictive Early Action', due: 'Nov 1', pct: 0.35, confirmed: true },
             { name: 'Duke University', term: 'Early Decision', due: 'Nov 1', pct: 0.6, confirmed: true },
@@ -176,16 +184,22 @@ export function buildDemo(base = now()) {
               pct: 0.1,
               confirmed: false,
             },
-            { name: 'UC Berkeley', term: 'Regular Decision', due: 'Dec 1', pct: 0.45, confirmed: true },
+            {
+              name: 'Cornell University',
+              term: 'Regular Decision',
+              due: 'Jan 2',
+              pct: 0.15,
+              confirmed: false,
+            },
+            { name: 'UC Berkeley', term: 'Regular Decision', due: 'Dec 1', pct: 0.45, confirmed: true, uc: true },
           ],
         },
         {
           range: 'Target',
-          note: 'Her academic profile sits at or above the middle 50 percent at all five.',
           schools: [
             { name: 'USC', term: 'Early Action', due: 'Nov 1', pct: 0.55, confirmed: true },
-            { name: 'UCLA', term: 'Regular Decision', due: 'Dec 1', pct: 0.45, confirmed: true },
-            { name: 'UC San Diego', term: 'Regular Decision', due: 'Dec 1', pct: 0.45, confirmed: true },
+            { name: 'UCLA', term: 'Regular Decision', due: 'Dec 1', pct: 0.45, confirmed: true, uc: true },
+            { name: 'UC San Diego', term: 'Regular Decision', due: 'Dec 1', pct: 0.45, confirmed: true, uc: true },
             {
               name: 'University of Michigan',
               term: 'Early Action',
@@ -193,14 +207,27 @@ export function buildDemo(base = now()) {
               pct: 0.3,
               confirmed: true,
             },
+            {
+              name: 'University of Washington',
+              term: 'Regular Decision',
+              due: 'Nov 15',
+              pct: 0.25,
+              confirmed: true,
+            },
             { name: 'Boston University', term: 'Early Decision II', due: 'Jan 4', pct: 0.0, confirmed: false },
           ],
         },
         {
           range: 'Likely',
-          note: 'Strong outcomes she can count on, so the reaches stay genuinely optional.',
           schools: [
-            { name: 'UC Irvine', term: 'Regular Decision', due: 'Dec 1', pct: 0.45, confirmed: true },
+            { name: 'UC Irvine', term: 'Regular Decision', due: 'Dec 1', pct: 0.45, confirmed: true, uc: true },
+            {
+              name: 'Oregon State University',
+              term: 'Early Action',
+              due: 'Nov 1',
+              pct: 0.4,
+              confirmed: true,
+            },
             { name: 'Purdue University', term: 'Early Action', due: 'Nov 1', pct: 0.2, confirmed: false },
             { name: 'Cal Poly SLO', term: 'Regular Decision', due: 'Nov 30', pct: 0.0, confirmed: false },
           ],
@@ -210,7 +237,7 @@ export function buildDemo(base = now()) {
 
     nextMeeting: {
       kind: 'Essay session',
-      who: 'Aaron',
+      who: 'Ryan',
       minutes: 45,
       dayLabel: meetingAt.toFormat('cccc, LLLL d'),
       timeLabel: meetingAt.toFormat('h:mm a'),
@@ -221,7 +248,7 @@ export function buildDemo(base = now()) {
       {
         id: 's1',
         dateLabel: label(base, 3),
-        who: 'Aaron',
+        who: 'Ryan',
         topic: 'Common App personal statement',
         note: 'Cut the opening two paragraphs. The essay starts at the tide pool.',
         homework: 'done',
@@ -237,7 +264,7 @@ export function buildDemo(base = now()) {
       {
         id: 's3',
         dateLabel: label(base, 17),
-        who: 'Aaron',
+        who: 'Ryan',
         topic: 'UC essay 1, leadership',
         note: 'The Coastal Cleanup story is the strongest thing she has. Lead with it.',
         homework: 'partly',
@@ -245,7 +272,7 @@ export function buildDemo(base = now()) {
       {
         id: 's4',
         dateLabel: label(base, 24),
-        who: 'Aaron',
+        who: 'Ryan',
         topic: 'Activities list',
         note: 'Ten slots filled and ordered by hours. Reordered by weight instead.',
         homework: 'done',
@@ -282,7 +309,7 @@ export function buildDemo(base = now()) {
         name: 'Personal insight question 1, leadership',
         where: 'UC application',
         round: 'UC, due Dec 1',
-        stage: 'Draft 3 with Aaron',
+        stage: 'Draft 3 with Ryan',
         pct: 0.7,
       },
       {
@@ -327,26 +354,81 @@ export function buildDemo(base = now()) {
       },
     ],
 
-    files: [
-      { id: 'f1', name: 'Personal statement, draft 4', kind: 'Common App', dateLabel: label(base, 3) },
-      { id: 'f2', name: '“Why Duke”, draft 2', kind: 'Supplemental', dateLabel: label(base, 5) },
-      { id: 'f3', name: 'UC essay 1, draft 3', kind: 'UC', dateLabel: label(base, 9) },
-      { id: 'f4', name: 'Activities list, final', kind: 'Common App', dateLabel: label(base, 16) },
-      { id: 'f5', name: `Résumé, ${label(base, 23, 'LLLL yyyy')}`, kind: 'Shared', dateLabel: label(base, 23) },
-      { id: 'f6', name: 'SAT score report', kind: 'Testing', dateLabel: label(base, 31) },
-    ],
+    /* Built from SAMPLE_DOCS, which is also what the seeding script writes into
+       Supabase, so the row a family clicks and the document that opens in the
+       real editor are the same text by construction. writeLinks.json is written
+       by that script and maps each file to its live doc and tab ids; a file with
+       no entry simply has no link yet. */
+    files: SAMPLE_DOCS.map((d) => ({
+      id: d.id,
+      name: d.monthOf ? `${d.name}, ${label(base, d.monthOf, 'LLLL yyyy')}` : d.name,
+      kind: d.kind,
+      dateLabel: label(base, d.daysAgo),
+      href: WRITE_LINKS[d.id]
+        ? `/write/${WRITE_LINKS[d.id].docId}?tab=${WRITE_LINKS[d.id].tabId}`
+        : null,
+    })),
 
-    /* The plan: what was promised in writing. Course plan, then activities and
-       projects with status bars, then the season. */
-    coursePlan: {
+    /* Booking, on the non-senior path. Availability is baked: openDays are the
+       days the instructor has hours, and the slot list is one day's worth reused
+       for every day, because a demo needs a calendar that always has something
+       in it rather than one that is honest about a fictional person's diary.
+       September 1 2026 falls on a Tuesday, hence startWeekday 2 (0 = Sunday). */
+    booking: {
+      month: { label: 'September', days: 30, startWeekday: 2 },
+      instructors: [
+        {
+          key: 'essays',
+          label: 'Essay session with Ryan',
+          blurb: 'The writing itself. Drafts, line edits, and what to do before the next one.',
+          duration: '45 minutes, weekly',
+          openDays: [3, 4, 8, 10, 11, 15, 17, 18, 22, 24, 25, 29],
+          slots: [
+            { label: '3:30 PM' },
+            { label: '4:00 PM', recommended: true },
+            { label: '4:30 PM' },
+            { label: '5:00 PM' },
+            { label: '5:30 PM', recommended: true },
+            { label: '6:00 PM' },
+          ],
+        },
+        {
+          /* Two cards, one teacher, told apart by what the meeting IS. That is
+             the product's own model: a student can hold several weekly plans
+             with the SAME teacher, and the plan's label is what distinguishes
+             them on the card, in the calendar title and in the email. */
+          key: 'strategy',
+          label: 'Strategy session with Ryan',
+          blurb: 'The list, the rounds, and what the season asks for next.',
+          duration: '30 minutes, monthly',
+          openDays: [9, 16, 23, 30],
+          slots: [
+            { label: '4:00 PM' },
+            { label: '4:30 PM', recommended: true },
+            { label: '5:00 PM' },
+            { label: '5:30 PM' },
+          ],
+        },
+      ],
+    },
+
+    /* The transcript, not a course plan. `prev` is last week's mark for the same
+       course, which is what makes the delta honest rather than decorative: the
+       real portal takes a transcript update once a week, so a row genuinely has
+       a previous value to compare against and a family can see which way a
+       grade is moving without reading two screens. A course whose mark has not
+       changed carries no marker at all. */
+    transcript: {
       summary: 'Seven AP courses across four years, five of them in the last two.',
+      gpa: '4.31 weighted',
+      updatedLabel: 'Updated Monday',
       courses: [
-        { id: 'c1', name: 'Calculus BC', tag: 'AP', why: 'Core for engineering applications' },
-        { id: 'c2', name: 'Physics C, Mechanics', tag: 'AP', why: 'Pairs with the research work' },
-        { id: 'c3', name: 'English Literature', tag: 'AP', why: 'Writing load supports the essays' },
-        { id: 'c4', name: 'Environmental Science', tag: 'AP', why: 'Ties directly to Coastal Cleanup' },
-        { id: 'c5', name: 'Spanish IV', tag: 'Honors', why: 'Fourth year of language, as UCs prefer' },
-        { id: 'c6', name: 'Marine Biology Seminar', tag: 'Elective', why: 'Regional symposium credit' },
+        { id: 'c1', name: 'Calculus BC', tag: 'AP', why: 'Core for engineering applications', grade: 'A-', prev: 'B+' },
+        { id: 'c2', name: 'Physics C, Mechanics', tag: 'AP', why: 'Pairs with the research work', grade: 'B+', prev: 'B+' },
+        { id: 'c3', name: 'English Literature', tag: 'AP', why: 'Writing load supports the essays', grade: 'A', prev: 'A-' },
+        { id: 'c4', name: 'Environmental Science', tag: 'AP', why: 'Ties directly to Coastal Cleanup', grade: 'A', prev: 'A' },
+        { id: 'c5', name: 'Spanish IV', tag: 'Honors', why: 'Fourth year of language, as UCs prefer', grade: 'B+', prev: 'A-' },
+        { id: 'c6', name: 'Marine Biology Seminar', tag: 'Elective', why: 'Regional symposium credit', grade: 'A', prev: 'A' },
       ],
     },
 
