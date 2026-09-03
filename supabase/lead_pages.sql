@@ -1,0 +1,49 @@
+-- Per-lead post-consult pages (/next/<slug>). Idempotent — safe to re-run.
+--
+-- WHY THIS TABLE EXISTS. The route originally read one JSON file per lead from
+-- app/next/leads/ at build time. That cannot ship: a lead file carries a minor's
+-- first name, a parent's email address and phone number, and the answers they
+-- typed into an intake form, and THIS REPOSITORY IS PUBLIC
+-- (github.com/Aaron-Sapient/student-portal). The files are gitignored for the
+-- same reason the proposal generator's records are, which left the data with
+-- nowhere to live at build time on Vercel: Vercel builds from git, so a
+-- gitignored file is simply absent and the page would not exist in production.
+--
+-- The row is the home. The page reads it per request with the service-role
+-- client, so a new family is one INSERT and needs no rebuild and no deploy.
+--
+-- Same conventions as sat_schema.sql / writing_schema.sql: timestamptz columns,
+-- RLS enabled with NO POLICIES, so the ONLY thing that can read or write this
+-- table is the service-role client in lib/supabase.js. That matters more here
+-- than on any other table in this schema: the student-hubs project's publishable
+-- key is student-visible, and these rows contain both a minor's contact details
+-- and a family's quoted prices. A single permissive policy on this table would
+-- publish every family's pricing to anyone holding that key.
+--
+-- The slug is the primary key rather than a surrogate uuid because the slug IS
+-- the address (<lead>-<6 hex>) and there is exactly one page per slug. The hex
+-- is the capability: possession of an unguessable URL is what authorizes a
+-- family to read their own page, the same model /write and /proposal already run
+-- on, which is why /next/ is Clerk-public in proxy.js.
+
+create table if not exists lead_pages (
+  slug       text        primary key,
+  data       jsonb       not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table lead_pages enable row level security;
+
+-- No policies, deliberately. Do not add one. If a future surface needs to read a
+-- lead page without the service role, it needs its own narrowed view, not a
+-- policy on this table.
+
+-- updated_at is maintained by the writer (the seed script upserts it) rather
+-- than by a trigger, matching how the rest of this schema handles it: nothing
+-- here has an update trigger, and a trigger that exists on one table and not the
+-- others is the kind of asymmetry a later session misreads as intentional.
+comment on table lead_pages is
+  'Per-lead /next/<slug> page data. Service-role only: rows contain a minor''s name, parent contact details and quoted prices. Seeded by scripts/seedLeadPages.mjs from app/next/leads/*.json (gitignored).';
+comment on column lead_pages.data is
+  'The whole lead JSON, verbatim. Shape is documented by app/next/leads/example-a1b2c3.json, which is the committed template.';

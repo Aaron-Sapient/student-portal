@@ -1,62 +1,84 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { LEAD_PAGES, getSupabaseClient } from '@/lib/supabase';
 
-/* The slug registry.
+/* Where a lead page's data comes from.
    ─────────────────────────────────────────────────────────────────────────
-   One JSON file per lead in app/next/leads/, read from disk at BUILD time.
-   Both callers (generateStaticParams and the page body) are server-only and
-   run during the build, so nothing here ships to a browser.
+   Supabase, read per request with the service-role client the app already
+   uses (lib/supabase.js getSupabaseClient — there is exactly one server-side
+   client in this repo and this is it). On-disk JSON is a DEVELOPMENT fallback
+   and nothing else.
 
-   Why the directory is read rather than each lead being imported by name:
-   THIS REPOSITORY IS PUBLIC (github.com/Aaron-Sapient/student-portal). A lead
-   file carries a minor's first name, a parent's email address and phone
-   number, and the grade and priority they typed into an intake form. That is
-   the same class of data the proposal generator's records hold, and those are
-   gitignored for exactly this reason. An `import lead from '../leads/<lead>-<hex>'`
-   line forces the file into git or breaks the build; reading the directory
-   lets the mechanism live in the repo while the families live only on the
-   machine that builds the page.
+   Why not the filesystem, which is where this started: a lead file carries a
+   minor's first name, a parent's email address and phone number, and the
+   answers they typed into an intake form, and THIS REPOSITORY IS PUBLIC. The
+   files are gitignored for the same reason the proposal generator's records
+   are. Vercel builds from git, so a gitignored file is absent at build time and
+   the page would not exist in production. The row is the home; the files are
+   now just a local convenience and the seed script's input.
 
-   Consequence worth knowing before any deploy: Vercel builds from git, so a
-   gitignored lead file is not present at build and its page will not exist in
-   production. Shipping this for real needs a decision about where lead data
-   lives (a private path, an env-injected blob, or a Supabase row read at build
-   time). That decision is open. Locally, and for review, the files on disk are
-   the source and everything works.
+   Why per request rather than at build: a new family is an INSERT. No rebuild,
+   no deploy, no waiting on a pipeline to put a page in front of someone Ryan
+   just spoke to.
 
-   The slug IS the file name, minus .json, and takes the form <lead>-<6 hex>.
-   The hex is not decoration: the page carries prices, so an enumerable address
-   (/next/<first name>) would hand one family's quote to anyone who guessed a first
-   name. Same capability model the /write route already runs on, which is why
-   this route is Clerk-public in proxy.js. */
+   THE THREE OUTCOMES, kept distinct on purpose:
+
+     row found            → render it.
+     table reachable,
+       no such row        → null, and the route 404s. This is an ANSWER, not a
+                            failure, so it must NOT fall through to disk: a
+                            deleted row silently resurrected from a stale local
+                            file is exactly how a family reads a page someone
+                            meant to retract.
+     table unreachable    → in development, fall back to disk so the page can be
+                            worked on with no database at all. In production,
+                            THROW. A 404 there would tell a family their page
+                            does not exist, which is both false and something
+                            they cannot act on; an error is at least honest and
+                            it is the state an operator can see. */
 
 const LEADS_DIR = path.join(process.cwd(), 'app', 'next', 'leads');
+const isDev = process.env.NODE_ENV !== 'production';
 
-function readLeads() {
-  let files = [];
+function readDiskLead(slug) {
+  /* The slug reaches the filesystem, so it is checked against the exact shape a
+     slug can take before it is ever joined to a path. Without this a request for
+     /next/..%2f..%2fetc%2fpasswd would be a file read. */
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) return null;
   try {
-    files = fs.readdirSync(LEADS_DIR).filter((f) => f.endsWith('.json'));
+    return JSON.parse(fs.readFileSync(path.join(LEADS_DIR, `${slug}.json`), 'utf8'));
   } catch {
-    /* No directory at all is a legitimate state (a clone with no lead files),
-       and it must produce zero pages rather than a build failure. */
-    return {};
+    return null;
   }
-  const out = {};
-  for (const f of files) {
-    try {
-      out[f.replace(/\.json$/, '')] = JSON.parse(fs.readFileSync(path.join(LEADS_DIR, f), 'utf8'));
-    } catch {
-      /* One malformed file must not take the other families' pages down with
-         it. It is skipped, and its slug simply 404s like any unknown one. */
-    }
-  }
-  return out;
 }
 
-export const LEADS = readLeads();
+export async function getLead(slug) {
+  if (typeof slug !== 'string' || !slug) return null;
 
-export function getLead(slug) {
-  return Object.prototype.hasOwnProperty.call(LEADS, slug) ? LEADS[slug] : null;
+  let client;
+  try {
+    client = getSupabaseClient();
+  } catch (err) {
+    /* Not configured at all (no SUPABASE_URL / SERVICE_ROLE_KEY). Treated as
+       unreachable, which is what it is. */
+    if (isDev) return readDiskLead(slug);
+    throw err;
+  }
+
+  const { data, error } = await client
+    .from(LEAD_PAGES)
+    .select('data')
+    .eq('slug', slug)
+    .maybeSingle();
+
+  if (error) {
+    if (isDev) return readDiskLead(slug);
+    throw new Error(`lead_pages read failed for "${slug}": ${error.message}`);
+  }
+
+  /* maybeSingle returns null data for "no such row" and does NOT set error, so
+     this branch is the reachable-but-absent case: a real 404, no disk fallback. */
+  return data?.data ?? null;
 }
 
 /* The Calendly link, assembled in one place so no surface can build a
@@ -73,13 +95,13 @@ export function getLead(slug) {
    @ cannot break the link.
 
    The a1..a10 answers are POSITIONAL, so they are only safe against a question
-   set someone has actually read. The first lead's were checked against the live event on
-   2026-09-03 (GET /event_types, event 88554dee: "Consultation", 30 minutes,
-   four custom questions, grade level a single-select whose options include the
-   exact string "10th"). A lead whose event has a different question order must
-   have its own prefill checked the same way, or leave a1..a4 out: a positional
-   answer against an unread question set files the phone number under whatever
-   question happens to be first.
+   set someone has actually read. The first lead's were checked against the live
+   event on 2026-09-03 (GET /event_types, event 88554dee: "Consultation", 30
+   minutes, four custom questions, grade level a single-select whose options
+   include the exact string "10th"). A lead whose event has a different question
+   order must have its own prefill checked the same way, or leave a1..a4 out: a
+   positional answer against an unread question set files the phone number under
+   whatever question happens to be first.
 
    utm_content is taken from the lead's `id` rather than typed into the JSON, so
    the tag and the ledger handle cannot drift apart. */

@@ -12,6 +12,22 @@ const nextConfig = {
   // portal is /parent (singular). Parents still have /parents bookmarked, so
   // forward it to the new portal. Temporary (307) on purpose — not browser-
   // cached, so it's reversible if /parents is ever needed as a public funnel.
+  // Belt-and-braces noindex for the per-lead pages. The route already sets
+  // `robots: { index: false, follow: false, nocache: true }` in its metadata, but
+  // that only helps a crawler that parses the head. A /next/<slug> page carries a
+  // minor's first name, a parent's contact details and that family's quoted
+  // prices, so the header says the same thing at the transport layer, on every
+  // response, including ones no parser ever reaches.
+  async headers() {
+    return [
+      {
+        source: '/next/:path*',
+        headers: [
+          { key: 'X-Robots-Tag', value: 'noindex, nofollow, noarchive, nosnippet, noimageindex' },
+        ],
+      },
+    ];
+  },
   async redirects() {
     return [
       { source: '/parents', destination: '/parent', permanent: false },

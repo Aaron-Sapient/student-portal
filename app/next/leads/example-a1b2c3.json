@@ -1,5 +1,5 @@
 {
-  "_note": "EXAMPLE lead, committed so the /next route stays buildable and reviewable on a fresh clone. Every family-identifying value here is a placeholder. Real lead files are gitignored: this repository is public and a real file carries a minor's first name, a parent's email and a phone number. Copy this file to app/next/leads/<lead>-<6 hex>.json, fill it from the lead's own record, and leave it out of git. Firm-side copy below (pamphlet sentences, the price ladder, the stats and the results line) is what the pamphlets already print and is safe to keep.",
+  "_note": "EXAMPLE lead, committed so the /next route stays buildable and reviewable on a fresh clone. Every family-identifying value here is a placeholder. Real lead files are gitignored: this repository is public and a real file carries a minor's first name, a parent's email and a phone number. Copy this file to app/next/leads/<lead>-<6 hex>.json, fill it from the lead's own record, and leave it out of git. Firm-side copy below (pamphlet sentences, the price ladder and the stats) is what the pamphlets already print and is safe to keep.",
   "id": "example-lead",
   "_idNote": "Goes out as utm_content on every Calendly URL, so it must stay stable and lowercase-hyphen. The SLUG is the file name; the id is the analytics handle.",
   "student": "Alex",
@@ -116,10 +116,9 @@
       }
     ],
     "essay": "When my mentor suggested rerouting a section of my PCB to reduce crosstalk, I initially felt defensive; however, once I implemented the change, the signal integrity improved dramatically. I realized I had been thinking like a student, not an engineer. Real engineering involves iteration, trial and error. When the 3D-printed prototype finally came together, I watched as my board powered up under the telescope mount.",
-    "essayLabel": "From a student's Common App essay, shared with permission",
-    "results": "2025–2026 Underclassmen Results: Project OMNI · Lexibooks · internships placed at the UN, Deloitte, and Felicitas Global Partners. Harvard Crimson Global finalist · John Locke shortlists · Wharton Global Youth · COSMOS · Iowa Young Writers' Workshop · Hotchkiss Hersey Scholarship."
+    "essayLabel": "From a student's Common App essay, shared with permission"
   },
-  "_proofNote": "Photograph and caption from Claude_Real_Assets.md; the caption is the exact string the International Families pamphlet prints under the same band. The three figures and their labels are copied verbatim off the 9-11 packages pamphlet cover and are never recomputed or extended. The essay fragment is from the STEM sample and starts AFTER the sentence naming Caltech, so the page makes no placement claim and names no institution; the student is unnamed, consent is on file (Aaron, 2026-09-03). The results line is the one the pamphlet already prints; the separate recognition list in the assets folder is out of date per Aaron and is NOT used.",
+  "_proofNote": "Photograph and caption from Claude_Real_Assets.md. The three figures and their labels are copied verbatim off the 9-11 packages pamphlet cover and are never recomputed or extended. The essay fragment names no institution and no student, and consent is on file. The pamphlet's 2025-26 results line is deliberately NOT carried here: it reads 'internships placed at ...', and 'placed' reads to a family as a promise of placement.",
   "packages": {
     "heading": "Packages for tenth grade.",
     "tiers": [

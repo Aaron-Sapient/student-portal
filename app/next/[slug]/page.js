@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { LEADS, bookingUrl, getLead } from './leads';
+import { bookingUrl, getLead } from './leads';
 
 /* /next/<slug> — the page a family lands on from the first post-consult email.
    ─────────────────────────────────────────────────────────────────────────
@@ -40,21 +40,33 @@ import { LEADS, bookingUrl, getLead } from './leads';
    every review. Calendly's own widget loads the same way, as a plain async
    script tag React hoists for us. */
 
-export const dynamic = 'force-static';
-
-/* Prerender every lead we have and refuse everything else. dynamicParams false
-   is what turns an unknown slug into a plain 404 with no code of ours running:
-   no lookup, no error page, no hint that the address space exists. */
-export const dynamicParams = false;
-
-export function generateStaticParams() {
-  return Object.keys(LEADS).map((slug) => ({ slug }));
-}
+/* Rendered per request, not prerendered. The lead data lives in a Supabase row
+   rather than in a file the build can see (app/next/[slug]/leads.js explains
+   why), so a new family is an INSERT and needs no rebuild and no deploy. An
+   unknown slug still ends at notFound(), which is a plain 404. */
+export const dynamic = 'force-dynamic';
 
 export async function generateMetadata({ params }) {
   const { slug } = await params;
-  const lead = getLead(slug);
-  return { title: lead ? `Admissions.Partners · ${lead.student}` : 'Admissions.Partners' };
+  const lead = await getLead(slug);
+  return {
+    title: lead ? `Admissions.Partners · ${lead.student}` : 'Admissions.Partners',
+    /* Repeated here as well as on the layout because this is the object that
+       wins for this route, and a page carrying a family's contact details and
+       their quoted prices must never be indexed, followed, cached as a snippet,
+       or turned into a search preview. noindex alone would still let a crawler
+       walk the Calendly link out of the page. The X-Robots-Tag header in
+       next.config.mjs says the same thing at the transport layer, so a crawler
+       that never parses the head is covered too. */
+    robots: { index: false, follow: false, nocache: true },
+    /* Cross-origin requests from this page (Calendly's widget, its iframe, the
+       fallback link) send only the ORIGIN, never the path. The path IS the
+       secret: the unguessable slug is what authorizes a family to read their
+       own prices, and a full-URL Referer would hand it to a third party on every
+       load. This is the browser default in modern engines and is stated anyway,
+       because a default is not a decision. */
+    referrer: 'strict-origin-when-cross-origin',
+  };
 }
 
 /* The text column. One measure for the whole page (about 68 characters at the
@@ -100,8 +112,11 @@ function Accent({ text }) {
    thing, because the fallback sentence is what the server rendered.
 
    The clock is computed from the two zone names via Intl, never from a typed
-   offset, so it stays right through a daylight-saving change. "yesterday"
-   appears on the Irvine side only when the two calendar dates actually differ.
+   offset, so it stays right through a daylight-saving change. Each side names
+   its own DAY rather than describing the other one: "5:12 pm Friday in Irvine"
+   is a fact the reader can act on, where "5:12 pm yesterday" makes them work
+   out whose yesterday it is, in the one sentence on the page whose entire job
+   is to stop them doing time-zone arithmetic.
 
    The booked state flips one attribute on <html> and lets CSS do the swap, so
    nothing needs to re-render and the booking block does not have to be a
@@ -134,14 +149,16 @@ const BROWSER_SCRIPT = `(function(){
     var t = new Intl.DateTimeFormat('en-US', {
       timeZone: zone, hour: 'numeric', minute: '2-digit', hour12: true
     }).format(now).toLowerCase().replace(/\\s/g, ' ');
-    var d = new Intl.DateTimeFormat('en-CA', { timeZone: zone }).format(now);
-    return { time: t, date: d };
+    var day = new Intl.DateTimeFormat('en-US', {
+      timeZone: zone, weekday: 'long'
+    }).format(now);
+    return { time: t, day: day };
   }
   try {
     var sg = part('Asia/Singapore');
     var la = part('America/Los_Angeles');
-    var tail = la.date < sg.date ? ' yesterday' : (la.date > sg.date ? ' tomorrow' : '');
-    el.textContent = 'It is ' + sg.time + ' in Singapore and ' + la.time + tail + ' in Irvine.';
+    el.textContent = 'It is ' + sg.time + ' ' + sg.day + ' in Singapore and '
+      + la.time + ' ' + la.day + ' in Irvine.';
   } catch (e) {}
   }
   if (document.readyState === 'loading') {
@@ -153,7 +170,7 @@ const BROWSER_SCRIPT = `(function(){
 
 export default async function NextPage({ params }) {
   const { slug } = await params;
-  const lead = getLead(slug);
+  const lead = await getLead(slug);
   if (!lead) notFound();
 
   const b = lead.booking || {};
@@ -279,6 +296,7 @@ export default async function NextPage({ params }) {
                     <li key={h.labelSGT}>
                       <a
                         href={bookingUrl(lead, h)}
+                        referrerPolicy="strict-origin-when-cross-origin"
                         className="neu-slot flex min-h-[64px] flex-col justify-center rounded-[1.5rem] px-6 py-4"
                       >
                         <span className="font-display text-[1.15rem] font-semibold leading-snug text-ink">
@@ -313,7 +331,11 @@ export default async function NextPage({ params }) {
                   <script src="https://assets.calendly.com/assets/external/widget.js" async />
                   <p className="mt-4 text-[14px] leading-relaxed text-ink-faint">
                     If the calendar does not load,{' '}
-                    <a className="text-terracotta-deep underline underline-offset-2" href={booking}>
+                    <a
+                      className="text-terracotta-deep underline underline-offset-2"
+                      href={booking}
+                      referrerPolicy="strict-origin-when-cross-origin"
+                    >
                       open it here
                     </a>
                     .
@@ -322,6 +344,7 @@ export default async function NextPage({ params }) {
               ) : (
                 <a
                   href={booking}
+                  referrerPolicy="strict-origin-when-cross-origin"
                   className="neu-raised mt-6 flex min-h-[56px] items-center justify-center rounded-full px-8 text-[17px] font-semibold text-terracotta-deep"
                 >
                   {held.length > 0 ? 'Another time' : 'Choose a time'}
@@ -438,9 +461,13 @@ export default async function NextPage({ params }) {
             </figure>
           </Col>
 
-          <Col className="mt-12">
-            <p className="text-[15px] leading-relaxed text-ink-soft">{lead.proof.results}</p>
-          </Col>
+          {/* The pamphlet's 2025-26 results line was here and is deliberately
+              GONE. It reads "internships placed at the UN, Deloitte, and
+              Felicitas Global Partners", and "placed" reads to a family as a
+              promise of placement rather than as a record of what past students
+              did. The three figures above carry the same reassurance without
+              committing the firm to an outcome. This is not a formatting cut:
+              do not restore the line without a ruling on that word. */}
         </section>
 
         {/* ── 9. The packages ─────────────────────────────────────────────────
