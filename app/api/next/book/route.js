@@ -5,7 +5,7 @@ import { verifySlotStillFree } from '@/lib/bookingSlots';
 import { buildEventTitle } from '@/lib/calendarTitles';
 import { sendBookingEmail } from '@/lib/bookingEmail';
 import { describeSlot, inFamilyMorning, NEXT_DURATION_MINUTES } from '@/lib/nextBooking';
-import { getLead, recordLeadBooking } from '@/app/next/[slug]/leads';
+import { getLead, maskEmail, recordLeadBooking } from '@/app/next/[slug]/leads';
 
 /* POST /api/next/book  { slug, start, dryRun? }
    ─────────────────────────────────────────────────────────────────────────
@@ -109,10 +109,15 @@ export async function POST(request) {
        own day and what lib/calendarTitles' matching rules and the omnibar key
        off. The page addresses the student as they asked to be addressed; the
        calendar names the household Ryan filed them under. */
+    /* A rehearsal books the real calendar and sends the real invitation, which
+       is the whole point: Aaron needs to see what the Mins will see. What it
+       must NOT do is reach anyone who would act on it, so the title says what
+       it is on Ryan's own screen and support@ is not told (below). */
     const eventTitle = buildEventTitle({
       studentName: b.calendarName || lead.student,
       duration: durationLabel,
       agenda: b.agenda || 'Second conversation',
+      prefix: lead.rehearsal ? 'REHEARSAL: ' : '',
     });
     const eventDescription = `Zoom: ${instructor.zoomLink}\nAgenda: ${b.agenda || 'Second conversation'}`;
 
@@ -152,10 +157,9 @@ export async function POST(request) {
           requestBody,
         },
         wouldCancelEventId: existing?.event_id || null,
-        wouldEmail: {
-          to: [b.familyEmail, instructor.bookingEmail].filter(Boolean),
-          via: 'lib/bookingEmail.sendBookingEmail',
-        },
+        wouldEmail: lead.rehearsal
+          ? { to: [b.familyEmail], note: 'rehearsal: calendar invitation only, support@ NOT notified' }
+          : { to: [b.familyEmail, instructor.bookingEmail].filter(Boolean), via: 'lib/bookingEmail.sendBookingEmail' },
         wouldRecordOn: `lead_pages.${slug}`,
         booked: bookedPayload(
           { start: startTime.toISO(), event_id: '(dry run: no event created)', booked_at: DateTime.now().toISO() },
@@ -214,8 +218,13 @@ export async function POST(request) {
       }
     }
 
-    // 5. support@ hears about it in exactly the shape a student booking sends.
-    try {
+    // 5. support@ hears about it in exactly the shape a student booking sends,
+    //    UNLESS this is a rehearsal: the invitation still goes to the attendee
+    //    (receiving it is the exercise), but nobody on the team should be told a
+    //    family booked when no family did.
+    if (lead.rehearsal) {
+      console.log(`[rehearsal] ${slug}: booking notification skipped by design`);
+    } else try {
       await sendBookingEmail(
         instructor,
         b.calendarName || lead.student,
@@ -253,5 +262,9 @@ function bookedPayload(booking, b, timezone, zoneLabel) {
     timezone,
     zoneLabel
   );
-  return { start: booking.start, email: b.familyEmail || null, slot };
+  /* Masked. With a first-name slug the booked state is reachable by anyone who
+     guesses the child's name, and a full address there would be the one piece of
+     contact data the page hands out. Enough survives for the family to confirm
+     the invitation went to the right inbox, which is all this line is for. */
+  return { start: booking.start, email: maskEmail(b.familyEmail), slot };
 }

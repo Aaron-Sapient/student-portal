@@ -97,8 +97,12 @@ for (const f of files) {
      silent on the page rather than loud: a slug that is not <lead>-<6 hex> is
      guessable, and the page addresses the family by `student` and tags the
      booking with `id`. */
-  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*-[0-9a-f]{6}$/.test(slug)) {
-    console.error(`  SKIP ${slug}: slug is not <lead>-<6 hex>. The hex is the capability.`);
+  /* The slug is the student's FIRST NAME, lowercase ASCII (conor), or
+     first-last when two live leads share one (conor-min). The old <lead>-<6 hex>
+     requirement is gone by Aaron's call on 2026-09-03: a guessable address is
+     the deliberate cost of a page that reads as high-touch. */
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
+    console.error(`  SKIP ${slug}: slug must be lowercase ASCII, one name or first-last.`);
     failed++;
     continue;
   }

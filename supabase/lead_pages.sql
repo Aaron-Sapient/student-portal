@@ -71,3 +71,24 @@ comment on column lead_pages.booked_event_id is
   'Google Calendar event id of the CURRENT booking. Replaced on reschedule, not appended.';
 
 create index if not exists lead_pages_booked_start_idx on lead_pages (booked_start);
+
+-- ── Lifecycle (2026-09-03) ──────────────────────────────────────────────────
+-- Slugs became first names on 2026-09-03 (Aaron: "conor-c44061 is not as
+-- high-touch as /conor"), which makes them guessable and makes retiring one a
+-- real operation rather than a theoretical one. A page is CLOSED, never deleted:
+-- the family followed a link somebody gave them, so a closed slug renders a
+-- quiet notice with a 200. A 404 there would tell a person they typed something
+-- wrong when they did not. Only a slug we have never issued 404s.
+--
+-- Closing is also what frees a first name for the next family with it.
+alter table lead_pages add column if not exists status    text        not null default 'active';
+alter table lead_pages add column if not exists closed_at timestamptz;
+
+do $$ begin
+  alter table lead_pages add constraint lead_pages_status_check
+    check (status in ('active', 'closed'));
+exception when duplicate_object then null;
+end $$;
+
+comment on column lead_pages.status is
+  'active | closed. A closed page renders a graceful notice with a 200, never a 404.';

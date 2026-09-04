@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { headers } from 'next/headers';
 import { DateTime } from 'luxon';
-import { getLead } from './leads';
+import { getLead, maskEmail } from './leads';
 import BookingBlock from './BookingBlock';
 import { describeSlot } from '@/lib/nextBooking';
 
@@ -180,6 +180,32 @@ export default async function NextPage({ params }) {
 
   const b = lead.booking || {};
 
+  /* A closed page. The family followed a link somebody gave them, so this is a
+     200 and a quiet sentence, never a 404: a 404 tells a person they typed
+     something wrong when they did not, and it gives them nothing to do next.
+     This one gives them the one thing that works. Nothing else on the page
+     renders, so a closed lead exposes no prices and no calendar. */
+  if (lead.status === 'closed') {
+    return (
+      <main className="next-page relative z-10 pt-24">
+        <Col>
+          <h1 className="font-display text-[2.2rem] font-normal leading-[1.1] tracking-[-0.02em] text-ink sm:text-[2.6rem]">
+            This page has <em>closed.</em>
+          </h1>
+          <p className="mt-6 text-[17px] leading-relaxed text-ink-soft">
+            Reply to Ryan&rsquo;s email and he will send a fresh one.
+          </p>
+          <div className="mt-12 border-t border-ink-faint/25 pt-8 text-[14px] leading-relaxed text-ink-faint">
+            <p className="font-display text-[1.05rem] font-semibold text-ink-soft">
+              {lead.footer?.name}
+            </p>
+            <p className="mt-1">{lead.footer?.firm}</p>
+          </div>
+        </Col>
+      </main>
+    );
+  }
+
   /* Availability is read on THIS render, from Ryan's live calendar, so the
      first paint carries times that were true a moment ago rather than times a
      build baked in.
@@ -220,7 +246,7 @@ export default async function NextPage({ params }) {
   const bookedState = lead.booked
     ? {
         start: lead.booked.start,
-        email: b.familyEmail || null,
+        email: maskEmail(b.familyEmail),
         slot: describeSlot(
           {
             start: lead.booked.start,
@@ -239,6 +265,18 @@ export default async function NextPage({ params }) {
       <script dangerouslySetInnerHTML={{ __html: BROWSER_SCRIPT }} />
 
       <main className="next-page relative z-10 pb-32 pt-16 sm:pb-24 sm:pt-24">
+        {/* A rehearsal page books Ryan's REAL calendar and sends a REAL
+            invitation, which is the point of it, so the one thing it must never
+            do is pass for a family's page. The pill renders only on a row that
+            asked for it. */}
+        {lead.rehearsal && (
+          <div className="pointer-events-none absolute right-4 top-4 z-20">
+            <span className="neu-chip rounded-full px-3 py-1 text-[12px] font-semibold text-terracotta-deep">
+              rehearsal
+            </span>
+          </div>
+        )}
+
         {/* ── 1. The greeting ─────────────────────────────────────────────── */}
         <Col>
           <h1 className="font-display text-[2.6rem] font-normal leading-[1.05] tracking-[-0.02em] text-ink sm:text-[3.4rem]">

@@ -35,16 +35,47 @@ import { LEAD_PAGES, getSupabaseClient } from '@/lib/supabase';
                             THROW. A 404 there would tell a family their page
                             does not exist, which is both false and something
                             they cannot act on; an error is at least honest and
-                            it is the state an operator can see. */
+                            it is the state an operator can see.
+
+   THE SLUG IS THE STUDENT'S FIRST NAME, lowercase and ASCII: /next/conor,
+   book.ryanchoice.com/conor. If a second LIVE lead shares a first name, BOTH
+   move to first-last (conor-min), so no family's address quietly changes
+   meaning while they are holding it.
+
+   Aaron's call, 2026-09-03: "conor-c44061 is not as high-touch as /conor; every
+   thing that can be changed should be a choice." The tradeoff is accepted, not
+   overlooked, and it is this: a guessable slug exposes the student's first
+   name, the price ladder for their grade, and the ability to book or reschedule
+   that family's slot. The page shows no email address and no phone number, and
+   the one place an address would otherwise appear, the booked state, is masked.
+   That is the whole of the exposure and the whole of the mitigation.
+
+   A slug that is no longer live is CLOSED, not deleted: status 'closed' renders
+   a quiet notice with a 200, because the family followed a link somebody gave
+   them and a 404 would tell them they did something wrong. Only a slug we have
+   never heard of 404s. */
 
 const LEADS_DIR = path.join(process.cwd(), 'app', 'next', 'leads');
+
+/* One lowercase ASCII token, or two joined by a hyphen: `conor`, `conor-min`.
+   Checked before the slug is ever joined to a path, so a request for
+   /next/..%2f..%2fetc%2fpasswd cannot become a file read. */
+export const SLUG_SHAPE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/* Mask an address for display. The booked state is the only place the page
+   would otherwise print one, and with a guessable slug that would hand a
+   family's email to anyone who typed their child's first name. Enough remains
+   for the family to recognise their own address and confirm the invitation went
+   to the right one, which is all that view is for. */
+export function maskEmail(email) {
+  const [user, domain] = String(email || '').split('@');
+  if (!user || !domain) return null;
+  return `${user.slice(0, 1)}•••@${domain}`;
+}
 const isDev = process.env.NODE_ENV !== 'production';
 
 function readDiskLead(slug) {
-  /* The slug reaches the filesystem, so it is checked against the exact shape a
-     slug can take before it is ever joined to a path. Without this a request for
-     /next/..%2f..%2fetc%2fpasswd would be a file read. */
-  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) return null;
+  if (!SLUG_SHAPE.test(slug)) return null;
   try {
     return JSON.parse(fs.readFileSync(path.join(LEADS_DIR, `${slug}.json`), 'utf8'));
   } catch {
