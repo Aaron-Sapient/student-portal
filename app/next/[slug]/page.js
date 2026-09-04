@@ -3,6 +3,8 @@ import { headers } from 'next/headers';
 import { DateTime } from 'luxon';
 import { getLead, maskEmail } from './leads';
 import BookingBlock from './BookingBlock';
+import HeardStrip from './heard';
+import { LiveClock, BookedFlag } from './LiveBits';
 import { describeSlot } from '@/lib/nextBooking';
 
 /* /next/<slug> — the page a family lands on from the first post-consult email.
@@ -39,13 +41,14 @@ import { describeSlot } from '@/lib/nextBooking';
    No auth. The lead data is one Supabase row and the availability is one live
    read of Ryan's calendar, both on this render.
 
-   ONE client component, BookingBlock, and only because picking a time is
-   genuinely interactive. It still renders to HTML on the server, so the first
-   paint carries real times on both clocks before any JavaScript runs. The live
-   clock and the ?booked=1 state stay OFF React entirely, in a small inline
-   script, because the Clerk dev-instance handshake can stall hydration for a
-   whole route over plain HTTP, and a clock that only works in production is a
-   clock that lied during every review. */
+   Client components are few and small: BookingBlock, because picking a time is
+   genuinely interactive, and the two bits in LiveBits.js (the live clock, the
+   ?booked=1 flag) that only a browser can know. All of them still render to
+   HTML on the server, so the first paint carries real times on both clocks
+   and the true dateless clock sentence before any JavaScript runs. Review the
+   page over the HTTPS surface: over plain HTTP the Clerk dev-instance
+   handshake can stall hydration for the whole route, and then nothing here
+   becomes tappable. */
 
 /* Rendered per request, not prerendered. The lead data lives in a Supabase row
    rather than in a file the build can see (app/next/[slug]/leads.js explains
@@ -110,68 +113,14 @@ function Accent({ text }) {
   );
 }
 
-/* The live clock and the booked state, as one inline script.
-
-   Why not a client component: this route has none, and adding one would make
-   both features depend on React hydration, which the Clerk dev instance can
-   stall indefinitely over plain HTTP. This runs on parse, before paint, on any
-   browser with scripting on. With scripting OFF the page still says the true
-   thing, because the fallback sentence is what the server rendered.
-
-   The clock is computed from the two zone names via Intl, never from a typed
-   offset, so it stays right through a daylight-saving change. Each side names
-   its own DAY rather than describing the other one: "5:12 pm Friday in Irvine"
-   is a fact the reader can act on, where "5:12 pm yesterday" makes them work
-   out whose yesterday it is, in the one sentence on the page whose entire job
-   is to stop them doing time-zone arithmetic.
-
-   The ?booked=1 state flips one attribute on <html> and lets CSS do the swap.
-   It is now the SECONDARY path: the authoritative booked state comes from the
-   lead's own row, server-rendered, so it survives the family closing the tab
-   and coming back on another device. The query flag is what a confirmation link
-   in an email can carry, and it costs one attribute to honour. */
-const BROWSER_SCRIPT = `(function(){
-  /* The booked flag is set IMMEDIATELY, before the browser has painted, so a
-     family who already booked never sees a calendar flash on screen first. It
-     only touches documentElement, which exists the moment this script runs. */
-  try {
-    var p = new URLSearchParams(location.search);
-    if (p.get('booked') === '1' || p.get('event_start_time')) {
-      document.documentElement.setAttribute('data-booked', '1');
-    }
-  } catch (e) {}
-
-  /* The clock CANNOT run immediately: this script is the first thing in the
-     body and its target span is several sections below it, so an early call
-     finds null and silently leaves the fallback sentence on screen, which is
-     exactly how a "live" clock ships dead. Wait for the document, or run now if
-     it is already parsed. */
-  function clock() {
-  var el = document.getElementById('local-clock');
-  if (!el) return;
-  function part(zone) {
-    var now = new Date();
-    var t = new Intl.DateTimeFormat('en-US', {
-      timeZone: zone, hour: 'numeric', minute: '2-digit', hour12: true
-    }).format(now).toLowerCase().replace(/\\s/g, ' ');
-    var day = new Intl.DateTimeFormat('en-US', {
-      timeZone: zone, weekday: 'long'
-    }).format(now);
-    return { time: t, day: day };
-  }
-  try {
-    var sg = part('Asia/Singapore');
-    var la = part('America/Los_Angeles');
-    el.textContent = 'It is ' + sg.time + ' ' + sg.day + ' in Singapore and '
-      + la.time + ' ' + la.day + ' in Irvine.';
-  } catch (e) {}
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', clock);
-  } else {
-    clock();
-  }
-})();`;
+/* The live clock and the ?booked=1 flag are two small client components
+   (LiveBits.js) that run AFTER hydration. They used to be one inline script
+   that ran before it, and that is exactly why the dev overlay showed two issues
+   on every load: the script rewrote the clock's text under React's feet and
+   the whole tree was regenerated on the client. The clock's fallback sentence
+   is what the server renders; the effect replaces it the instant the page is
+   interactive. Nothing in the repo produces ?booked=1 today; the flag is kept
+   because it costs ten lines and is what a confirmation link would carry. */
 
 export default async function NextPage({ params }) {
   const { slug } = await params;
@@ -230,13 +179,20 @@ export default async function NextPage({ params }) {
   const host = h.get('host');
   const proto = h.get('x-forwarded-proto') || (host?.startsWith('localhost') || host?.startsWith('127.') ? 'http' : 'https');
 
-  let availability = { days: [] };
+  /* One month, the family's current one (or the next, if this one is spent),
+     with the first open day's times already in it. Null on failure: the block
+     then shows its quiet empty sentence rather than an empty grid pretending
+     to be knowledge. */
+  let month = null;
   try {
     const res = await fetch(
       `${proto}://${host}/api/next/slots?slug=${encodeURIComponent(slug)}`,
       { cache: 'no-store' }
     );
-    if (res.ok) availability = await res.json();
+    if (res.ok) {
+      const json = await res.json();
+      if (json?.month) month = json;
+    }
   } catch (err) {
     console.error(`/next/${slug}: could not load availability`, err);
   }
@@ -262,7 +218,7 @@ export default async function NextPage({ params }) {
 
   return (
     <>
-      <script dangerouslySetInnerHTML={{ __html: BROWSER_SCRIPT }} />
+      <BookedFlag />
 
       <main className="next-page relative z-10 pb-32 pt-16 sm:pb-24 sm:pt-24">
         {/* A rehearsal page books Ryan's REAL calendar and sends a REAL
@@ -277,34 +233,30 @@ export default async function NextPage({ params }) {
           </div>
         )}
 
-        {/* ── 1. The greeting ─────────────────────────────────────────────── */}
+        {/* ── 1. The greeting, then the three things ───────────────────────────
+            No paragraph under the name. The line that used to sit here
+            ("This page is for you and your parents: what I heard, what happens
+            next, and a place to pick a time") described the page it sat on,
+            which is the deck-paragraph tic the pamphlets were swept for on
+            2026-08-17: a reader skims it because they have correctly spotted
+            that the page below already says it. What replaces it is the thing
+            it was announcing: what Ryan heard, as three modules with a glyph
+            each (app/next/[slug]/heard.js), so the second thing on the page is
+            already about this student rather than about the page. */}
         <Col>
           <h1 className="font-display text-[2.6rem] font-normal leading-[1.05] tracking-[-0.02em] text-ink sm:text-[3.4rem]">
             Hi <em>{lead.student}.</em>
           </h1>
-          <p className="mt-6 text-[17px] leading-relaxed text-ink-soft">{lead.opening}</p>
-          <p className="mt-4 font-display text-[1.1rem] font-semibold text-ink">{lead.signature}</p>
+          <p className="eyebrow mt-8">What Ryan heard</p>
         </Col>
-
-        {/* ── 2. What I heard ─────────────────────────────────────────────────
-            Four short blocks, each led by the thing itself in bold. A list of
-            named facts is read; the same four facts inside a paragraph are
-            skimmed, and being read is the entire point of this section. */}
-        <Col className="mt-14">
-          <p className="eyebrow">What I heard</p>
-          <div className="mt-5">
-            {lead.heard.map((item, i) => (
-              <div
-                key={item.lead}
-                className={`py-4 ${i > 0 ? 'border-t border-ink-faint/20' : ''}`}
-              >
-                <p className="text-[17px] leading-relaxed text-ink-soft">
-                  <strong className="font-semibold text-ink">{item.lead}</strong> {item.body}
-                </p>
-              </div>
-            ))}
-          </div>
-        </Col>
+        {/* The strip takes the page's measure exception at the wide breakpoint,
+            like the tier cards: it is a diagram, not prose, and three modules
+            inside a prose column wrap every line three times. The eyebrow above
+            it stays on the page's own left edge with everything else that is
+            read as text. */}
+        <div className="mx-auto mt-5 w-full max-w-[38rem] px-6 sm:px-8 lg:max-w-[54rem]">
+          <HeardStrip items={lead.heard} />
+        </div>
 
         {/* ── 3. The video slot ───────────────────────────────────────────────
             Rendered only when this lead has a film. An empty frame promising a
@@ -343,9 +295,12 @@ export default async function NextPage({ params }) {
             is the whole reason the sentence is not typed. */}
         <Col className="mt-12">
           <p className="text-[16px] leading-relaxed text-ink-soft">
-            <span id="local-clock" className="font-semibold text-ink">
-              {lead.clockFallback}
-            </span>{' '}
+            <LiveClock
+              className="font-semibold text-ink"
+              fallback={lead.clockFallback}
+              familyZone={b.timezone || 'Asia/Singapore'}
+              familyCity={(b.zoneLabel || 'Singapore time').replace(/\s+time$/i, '')}
+            />{' '}
             {lead.clockTail}
           </p>
         </Col>
@@ -386,19 +341,20 @@ export default async function NextPage({ params }) {
 
             <div className="unbooked-only">
               <p className="mt-4 text-[16px] leading-relaxed text-ink-soft">{b.sub}</p>
-              {b.zoneNote && (
-                <p className="mt-2 text-[16px] leading-relaxed text-ink-soft">{b.zoneNote}</p>
-              )}
+              {/* The row's zoneNote ("Friday evening in California is Saturday
+                  morning in Singapore") is deliberately NOT rendered any more:
+                  every chip and every day now carries both clocks, so the
+                  sentence restated what the control shows. */}
 
               <BookingBlock
                 slug={slug}
-                initial={{ days: availability.days || [], booked: bookedState }}
+                initial={{ month, booked: bookedState }}
                 copy={{
                   booked: b.booked || { heading: 'Booked.', body: 'Nothing to prepare.' },
                   confirmLabel: b.confirmLabel || 'Confirm this time',
                   emptyLabel:
                     b.emptyLabel ||
-                    'No mornings are open in the next two weeks. Email us and we will find one.',
+                    "Ryan's calendar could not be loaded just now. Refresh the page, or email us and we will find a time.",
                 }}
               />
             </div>

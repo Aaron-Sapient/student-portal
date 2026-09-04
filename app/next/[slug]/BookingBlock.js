@@ -1,40 +1,70 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { DateTime } from 'luxon';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 /* The booking control. The ONLY client component on this route.
    ─────────────────────────────────────────────────────────────────────────
-   It is handed the first days of real availability as a prop, already computed
-   on the server, so the block renders with real times in the HTML before any
-   JavaScript runs. A family on a slow phone in Singapore sees Ryan's actual
-   Saturday mornings in the first paint; what JavaScript adds is the ability to
-   tap one.
+   A month grid in the FAMILY's own calendar, the way the portal's booking
+   calendar and every scheduling product a parent has used draw it: the days
+   with open mornings are the ones that look like buttons, everything else is a
+   number. Tap a day and its times appear under the grid, on both clocks. Tap a
+   time and the confirm appears. Two taps to choose, one to book.
 
-   Two taps, deliberately. Select, then confirm. A one-tap-books control on a
-   phone books the wrong time roughly as often as a thumb is imprecise, and the
-   cost of that error lands on a family who then has to work out how to undo it.
-   The second tap is also where the live re-check happens, so the confirm is the
-   moment the offer is tested rather than trusted.
+   The first month arrives already computed from the server, with the first
+   open day pre-selected, so the first paint carries real times before any
+   JavaScript runs; what JavaScript adds is the ability to change them. Paging
+   to another month is one fetch of /api/next/slots?month=, cached per month
+   for the life of the page.
 
    NOTHING IS HELD while they decide. The times shown were free when the page
    was rendered and are checked again server-side at confirm; if someone else
    took the slot in between, the answer comes back as a plain sentence and the
-   list refreshes. That race is the honest cost of not pencilling a family into
+   month refreshes. That race is the honest cost of not pencilling a family into
    Ryan's calendar before they have agreed to anything. */
 
-/* One time, as a chip rather than a full-width card.
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+/* How far ahead the arrows go. Each month is one live calendar read, and a
+   family booking a second conversation is choosing between next week and the
+   one after, not next season. */
+const MONTHS_AHEAD = 3;
 
-   Ryan's hours produce up to eight slots a day across eight days, and a card
-   each was fifty full-width tiles on a phone: a scroll wall, and every label
-   wrapped to two lines because it repeated the day the heading above it had
-   just said. The day belongs to the GROUP, so the chip carries only what
-   distinguishes it from its neighbours: the family's time, large, with the same
-   instant on Ryan's clock underneath.
+function monthKeyOf(iso) {
+  return iso.slice(0, 7);
+}
 
-   Both clocks stay on every chip. The offset is fifteen hours and the two are
-   usually different days, so a time without its counterpart is the exact
-   ambiguity this page exists to remove. The aria-label spells the whole thing
-   out, because a screen reader gets no help from the visual grouping. */
+function addMonths(monthKey, n) {
+  return DateTime.fromFormat(monthKey, 'yyyy-LL', { zone: 'utc' }).plus({ months: n }).toFormat('yyyy-LL');
+}
+
+/* The 35 or 42 cells of one month's grid, from the range the server computed
+   (Sunday on or before the 1st through Saturday on or after the last). Dates
+   are compared as ISO strings throughout, in the family's zone, which is the
+   only zone this grid knows about. */
+function cellsOf(month) {
+  if (!month?.range) return [];
+  const out = [];
+  let d = DateTime.fromISO(month.range.start, { zone: 'utc' });
+  const end = DateTime.fromISO(month.range.end, { zone: 'utc' });
+  while (d <= end) {
+    out.push({ iso: d.toISODate(), day: d.day, inMonth: d.toFormat('yyyy-LL') === month.month });
+    d = d.plus({ days: 1 });
+  }
+  return out;
+}
+
+function firstOpenDay(month) {
+  const inMonth = (month?.days || []).find((d) => monthKeyOf(d.date) === month.month);
+  return inMonth?.date || null;
+}
+
+/* One time, as a chip. The day belongs to the heading above the list, so the
+   chip carries only what distinguishes it from its neighbours: the family's
+   time, large, with the same instant on Ryan's clock underneath. Both clocks
+   stay on every chip: the offset is fifteen hours and the two are usually
+   different days, so a time without its counterpart is the exact ambiguity
+   this page exists to remove. */
 function Slot({ slot, selected, onSelect }) {
   return (
     <li>
@@ -59,28 +89,63 @@ function Slot({ slot, selected, onSelect }) {
 }
 
 export default function BookingBlock({ slug, initial, copy }) {
-  const [days, setDays] = useState(initial?.days || []);
+  const [months, setMonths] = useState(() =>
+    initial?.month?.month ? { [initial.month.month]: initial.month } : {}
+  );
+  const [monthKey, setMonthKey] = useState(initial?.month?.month || null);
+  const [selectedDate, setSelectedDate] = useState(() => firstOpenDay(initial?.month));
   const [selected, setSelected] = useState(null);
   const [booked, setBooked] = useState(initial?.booked || null);
   const [busy, setBusy] = useState(false);
+  const [loadingMonth, setLoadingMonth] = useState(false);
   const [error, setError] = useState(null);
-  const [showAll, setShowAll] = useState(false);
 
-  /* Three days by default. Rendered on the server too, so the first paint is
-     the same three a family sees after hydration and nothing reflows under
-     their thumb. */
-  const shown = showAll ? days : days.slice(0, 3);
+  const month = monthKey ? months[monthKey] : null;
+  const today = month?.today || initial?.month?.today || null;
+  const cells = useMemo(() => cellsOf(month), [month]);
+  const openDates = useMemo(() => new Set((month?.days || []).map((d) => d.date)), [month]);
+  const dayData = selectedDate ? (month?.days || []).find((d) => d.date === selectedDate) : null;
 
-  async function refresh() {
+  const firstKey = today ? monthKeyOf(today) : monthKey;
+  const canPrev = Boolean(monthKey && firstKey && monthKey > firstKey);
+  const canNext = Boolean(monthKey && firstKey && monthKey < addMonths(firstKey, MONTHS_AHEAD));
+
+  async function loadMonth(key, { force = false } = {}) {
+    if (!force && months[key]) return months[key];
+    setLoadingMonth(true);
     try {
-      const res = await fetch(`/api/next/slots?slug=${encodeURIComponent(slug)}`, {
-        cache: 'no-store',
-      });
-      if (res.ok) setDays((await res.json()).days || []);
+      const res = await fetch(
+        `/api/next/slots?slug=${encodeURIComponent(slug)}&month=${encodeURIComponent(key)}`,
+        { cache: 'no-store' }
+      );
+      if (!res.ok) throw new Error('bad month');
+      const data = await res.json();
+      setMonths((m) => ({ ...m, [data.month]: data }));
+      return data;
     } catch {
-      /* Leave the list as it was. A failed refresh must not blank the only
-         control on the page. */
+      setError('That month could not be loaded. Please try again.');
+      return null;
+    } finally {
+      setLoadingMonth(false);
     }
+  }
+
+  async function go(delta) {
+    if (!monthKey) return;
+    const key = addMonths(monthKey, delta);
+    setError(null);
+    setSelected(null);
+    const data = await loadMonth(key);
+    if (!data) return;
+    setMonthKey(key);
+    setSelectedDate(firstOpenDay(data));
+  }
+
+  function pickDay(iso) {
+    if (!openDates.has(iso)) return;
+    setSelectedDate(iso);
+    setSelected(null);
+    setError(null);
   }
 
   async function confirm() {
@@ -97,9 +162,9 @@ export default function BookingBlock({ slug, initial, copy }) {
       if (!res.ok) {
         setError(json.error || 'That time could not be booked.');
         setSelected(null);
-        /* Almost always because someone else took it. Re-ask the server rather
-           than leaving a list we now know is stale on screen. */
-        await refresh();
+        /* Almost always because someone else took it. Re-ask the server for
+           this month rather than leaving a grid we now know is stale. */
+        if (monthKey) await loadMonth(monthKey, { force: true });
         return;
       }
       setBooked(json.booked);
@@ -131,21 +196,77 @@ export default function BookingBlock({ slug, initial, copy }) {
     );
   }
 
-  if (!days.length) {
+  if (!month) {
     return <p className="mt-6 text-[16px] leading-relaxed text-ink-soft">{copy.emptyLabel}</p>;
   }
 
+  const monthLabel = month.monthLabel || DateTime.fromFormat(month.month, 'yyyy-LL').toFormat('LLLL yyyy');
+
   return (
     <div className="mt-6">
-      {shown.map((day) => (
-        <div key={day.date} className="mt-7 first:mt-0">
-          {/* The day heading is smaller and quieter than the times under it: it
-              groups them, it is not one of them. It also carries the day and
-              date so no chip has to repeat them. Same rule the portal's college
-              list follows. */}
-          <p className="eyebrow">{day.label}</p>
+      {/* ── The month ──────────────────────────────────────────────────── */}
+      <div className="cal" aria-busy={loadingMonth}>
+        <div className="cal-head">
+          <button
+            type="button"
+            className="cal-nav"
+            onClick={() => go(-1)}
+            disabled={!canPrev || loadingMonth}
+            aria-label="Previous month"
+          >
+            <ChevronLeft size={22} strokeWidth={2} aria-hidden="true" />
+          </button>
+          <p className="cal-title" aria-live="polite">
+            {monthLabel}
+          </p>
+          <button
+            type="button"
+            className="cal-nav"
+            onClick={() => go(1)}
+            disabled={!canNext || loadingMonth}
+            aria-label="Next month"
+          >
+            <ChevronRight size={22} strokeWidth={2} aria-hidden="true" />
+          </button>
+        </div>
+
+        {/* Plain buttons, not an ARIA grid: a grid role promises row/cell
+            keyboard navigation this control does not implement, and a
+            pressed button says "this is the chosen day" in every reader. */}
+        <div className="cal-grid" aria-label={monthLabel}>
+          {WEEKDAYS.map((w) => (
+            <span key={w} className="cal-wd" aria-hidden="true">
+              {w}
+            </span>
+          ))}
+          {cells.map((c) => {
+            const open = c.inMonth && openDates.has(c.iso);
+            const isToday = c.iso === today;
+            const isSelected = c.iso === selectedDate;
+            const state = isSelected ? 'selected' : open ? 'open' : c.inMonth ? 'closed' : 'overflow';
+            return (
+              <button
+                key={c.iso}
+                type="button"
+                className={`cal-day cal-day-${state}${isToday ? ' cal-day-today' : ''}`}
+                disabled={!open}
+                aria-pressed={isSelected}
+                aria-label={DateTime.fromISO(c.iso, { zone: 'utc' }).toFormat('cccc d LLLL')}
+                onClick={() => pickDay(c.iso)}
+              >
+                {c.day}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── The times for the chosen day ────────────────────────────────── */}
+      {dayData ? (
+        <div className="mt-7">
+          <p className="eyebrow">{dayData.label}</p>
           <ul className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-            {day.slots.map((slot) => (
+            {dayData.slots.map((slot) => (
               <Slot
                 key={slot.start}
                 slot={slot}
@@ -155,21 +276,12 @@ export default function BookingBlock({ slug, initial, copy }) {
             ))}
           </ul>
         </div>
-      ))}
-
-      {/* Eight days at once is a wall. The first three carry the soonest times,
-          which is what almost every family picks from; the rest are one tap
-          away for the one who is travelling that week. Not a paywall and not a
-          nudge, just the difference between a page you scan and a page you
-          scroll past. */}
-      {days.length > shown.length && (
-        <button
-          type="button"
-          onClick={() => setShowAll(true)}
-          className="neu-chip mt-7 min-h-[48px] w-full rounded-full px-6 text-[15px] font-semibold text-terracotta-deep"
-        >
-          Show more times
-        </button>
+      ) : (
+        <p className="mt-6 text-[15px] leading-relaxed text-ink-soft">
+          {month.days.length
+            ? 'Tap a day to see its times.'
+            : `No mornings are open in ${monthLabel}. Try the next month.`}
+        </p>
       )}
 
       {error && (

@@ -194,3 +194,321 @@
     color: #17110d;
   }
 }
+
+/* ── What Ryan heard: the module strip ──────────────────────────────────────
+   Three authored modules (app/next/[slug]/heard.js), each a glyph, a lead and
+   one line, joined by the pamphlet's "sequenced" arrow. On a phone it is a
+   vertical rail: glyphs down the left edge, the arrow between them turned to
+   point down, so the three read as stations on one line. From 640px it turns
+   into a row, the pamphlet's phase-grid shape (1fr auto 1fr auto 1fr), and at
+   the wide breakpoint it takes the page's one measure exception, the same one
+   the tier cards take, because three modules inside a 68-character prose
+   column wrap every line three times.
+
+   The glyph tile is the page's small raised chip; the rail and the arrows are
+   terracotta, the only colour on the strip, so blurred the strip reads as
+   three warm dots on a line under the greeting, which is the hierarchy. */
+.next-page .heard {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0;
+}
+.next-page .heard-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 3.5rem 1fr;
+  grid-template-areas:
+    'glyph lead'
+    'glyph body';
+  column-gap: 1rem;
+  row-gap: 0.15rem;
+  align-items: start;
+}
+.next-page .heard-item + .heard-item {
+  margin-top: 1.75rem;
+}
+.next-page .heard-glyph {
+  grid-area: glyph;
+  display: flex;
+  align-items: center;
+  width: 3.5rem;
+  height: 3.5rem;
+}
+.next-page .heard-tile {
+  display: flex;
+  flex: none;
+  width: 3.5rem;
+  height: 3.5rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--color-terracotta-deep);
+  background: var(--neu-bg);
+  box-shadow: 3px 3px 7px var(--neu-lo), -3px -3px 7px var(--neu-hi);
+}
+.next-page .heard-lead {
+  grid-area: lead;
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+  align-self: end;
+  padding-top: 0.1rem;
+}
+.next-page .heard-body {
+  grid-area: body;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--color-ink-soft);
+}
+/* The connector: a rail segment ending in an arrow, drawn in the gap ABOVE
+   the item it belongs to, centred on the glyph column. */
+.next-page .heard-conn {
+  position: absolute;
+  left: 1.75rem;
+  top: -1.75rem;
+  height: 1.75rem;
+  width: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  color: var(--color-terracotta);
+}
+.next-page .heard-conn::before {
+  content: '';
+  position: absolute;
+  top: 0.15rem;
+  bottom: 0.9rem;
+  width: 2px;
+  background: var(--color-terracotta);
+  opacity: 0.55;
+}
+.next-page .heard-conn svg {
+  transform: rotate(90deg);
+  flex: none;
+}
+
+@media (min-width: 640px) {
+  /* The row. The rail is continuous: each module's glyph wrapper spans its
+     column and draws a line from the tile's edge to the column's end, the
+     connector column draws the rest of the line and the arrowhead, and the
+     columns touch (no gap) so the line never breaks. Text gets its breathing
+     room from padding on the module instead. */
+  .next-page .heard {
+    grid-template-columns: 1fr 2.75rem 1fr 2.75rem 1fr;
+    column-gap: 0;
+    align-items: start;
+  }
+  .next-page .heard-item > .heard-glyph {
+    width: 100%;
+  }
+  .next-page .heard-item:not(:last-child) > .heard-glyph::after {
+    content: '';
+    flex: 1;
+    height: 2px;
+    background: var(--color-terracotta);
+    opacity: 0.55;
+  }
+  .next-page .heard-item > .heard-lead,
+  .next-page .heard-item > .heard-body {
+    padding-right: 1.25rem;
+  }
+  .next-page .heard-item {
+    display: contents;
+  }
+  .next-page .heard-item + .heard-item {
+    margin-top: 0;
+  }
+  /* Each module is re-assembled as a column: glyph, lead, body, all left-aligned
+     on the module's own edge. `display: contents` lets the li's children sit
+     directly in the row grid so the connectors get their own columns. */
+  .next-page .heard-glyph,
+  .next-page .heard-lead,
+  .next-page .heard-body {
+    grid-area: auto;
+  }
+  .next-page .heard-item > .heard-glyph {
+    grid-row: 1;
+  }
+  .next-page .heard-item > .heard-lead {
+    grid-row: 2;
+    margin-top: 1rem;
+    align-self: start;
+    /* A touch smaller in the row than in the rail: three leads side by side at
+       tablet width otherwise wrap "The US or the UK." onto two lines while
+       "Poetry." sits on one, and the three stop reading as one set. */
+    font-size: 1.25rem;
+  }
+  .next-page .heard-item > .heard-body {
+    grid-row: 3;
+    margin-top: 0.35rem;
+  }
+  /* Columns are pinned, not auto-placed: auto-placement would drop the second
+     module's lead into the connector column (the first free cell in row 2). */
+  .next-page .heard-item:nth-child(1) > .heard-glyph,
+  .next-page .heard-item:nth-child(1) > .heard-lead,
+  .next-page .heard-item:nth-child(1) > .heard-body {
+    grid-column: 1;
+  }
+  .next-page .heard-item:nth-child(2) > .heard-glyph,
+  .next-page .heard-item:nth-child(2) > .heard-lead,
+  .next-page .heard-item:nth-child(2) > .heard-body {
+    grid-column: 3;
+  }
+  .next-page .heard-item:nth-child(3) > .heard-glyph,
+  .next-page .heard-item:nth-child(3) > .heard-lead,
+  .next-page .heard-item:nth-child(3) > .heard-body {
+    grid-column: 5;
+  }
+  .next-page .heard-item:nth-child(2) > .heard-conn {
+    grid-column: 2;
+  }
+  .next-page .heard-item:nth-child(3) > .heard-conn {
+    grid-column: 4;
+  }
+  .next-page .heard-conn {
+    position: static;
+    grid-row: 1;
+    height: 3.5rem;
+    width: auto;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    align-self: start;
+  }
+  .next-page .heard-conn::before {
+    content: '';
+    position: static;
+    flex: 1;
+    height: 2px;
+    width: auto;
+    background: var(--color-terracotta);
+    opacity: 0.55;
+  }
+  .next-page .heard-conn svg {
+    transform: none;
+    margin-left: -6px;
+  }
+}
+
+/* ── The month grid ─────────────────────────────────────────────────────────
+   The portal's booking calendar, in the family's own zone: the days with open
+   mornings look like buttons, the rest are numbers. Circles rather than the
+   portal's rounded squares, because the sticky "Pick a time" pill and the
+   confirm button on this page are round and a day you can tap should look like
+   the other things you can tap. Cells are fluid sevenths of the column, which
+   at 390px is a 45px target with the gap, above the 44px floor. */
+/* The grid is capped at a phone's width on every screen: seven 80px circles in
+   a desktop column read as a poster, and a calendar is the one control here
+   whose proportions people already know by heart. */
+.next-page .cal {
+  max-width: 26rem;
+}
+.next-page .cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.next-page .cal-title {
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--color-ink);
+  text-align: center;
+  flex: 1;
+}
+.next-page .cal-nav {
+  display: flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--color-terracotta-deep);
+  background: var(--neu-bg);
+  box-shadow: 3px 3px 7px var(--neu-lo), -3px -3px 7px var(--neu-hi);
+}
+.next-page .cal-nav:disabled {
+  color: var(--color-ink-faint);
+  opacity: 0.45;
+  box-shadow: none;
+  background: transparent;
+}
+.next-page .cal-grid {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.35rem 0.25rem;
+}
+.next-page .cal-wd {
+  padding-bottom: 0.25rem;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-ink-faint);
+}
+.next-page .cal-day {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border-radius: 999px;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--color-ink-faint);
+  transition: background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+.next-page .cal-day-overflow {
+  opacity: 0.45;
+}
+.next-page .cal-day-open {
+  color: var(--color-terracotta-deep);
+  font-weight: 700;
+  background: color-mix(in srgb, var(--color-terracotta) 12%, transparent);
+}
+@media (hover: hover) {
+  .next-page .cal-day-open:hover {
+    background: color-mix(in srgb, var(--color-terracotta) 22%, transparent);
+  }
+}
+.next-page .cal-day-open:active {
+  transform: scale(0.94);
+}
+.next-page .cal-day-selected {
+  color: var(--color-cream);
+  font-weight: 700;
+  background: var(--color-terracotta-deep);
+}
+@media (prefers-color-scheme: dark) {
+  /* terracotta-deep is a light tint on dark (it is the text-on-dark token), so
+     a filled cell uses the mid token and dark ink on it. */
+  .next-page .cal-day-selected {
+    background: var(--color-terracotta);
+    color: #17110d;
+  }
+}
+/* Today: a dot under the numeral, the calendar's own way of saying "now". */
+.next-page .cal-day-today::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 0.3rem;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 999px;
+  background: currentColor;
+}
+.next-page .cal[aria-busy='true'] .cal-grid {
+  opacity: 0.5;
+}
+@media (prefers-reduced-motion: reduce) {
+  .next-page .cal-day,
+  .next-page .cal-day-open:active {
+    transition: none;
+    transform: none;
+  }
+}
