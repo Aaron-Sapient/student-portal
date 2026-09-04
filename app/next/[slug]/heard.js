@@ -4,6 +4,7 @@ import {
   DraftingCompass,
   SignpostBig,
   Landmark,
+  Route,
   Sparkles,
   ArrowRight,
 } from 'lucide-react';
@@ -31,9 +32,18 @@ import {
    its interest's glyph; everything else is fixed per kind, so a family can
    never be shown the wrong idea by a typo in a data file. */
 
-const INTEREST_ICONS = {
+/* Glyphs a ROW may name for itself, whatever its kind. This used to be reachable
+   only from an `interest`, which meant a module about a railways research paper
+   could not be given the train: the kind's default won, and a drafting compass
+   said "a project" where the page had something far more specific to say. A row
+   still cannot invent a glyph, only choose from this list, so a typo in a data
+   file falls back to the kind's default rather than showing a family nothing. */
+const ICONS = {
   train: TrainFront,
   feather: Feather,
+  compass: DraftingCompass,
+  signpost: SignpostBig,
+  route: Route,
 };
 
 const KINDS = {
@@ -41,6 +51,10 @@ const KINDS = {
   project: { Icon: DraftingCompass },
   destination: { Icon: SignpostBig },
   visits: { Icon: Landmark },
+  /* What the family is buying, in the student's own words on the call. A route
+     rather than a map: a map shows the ground, a route is the line drawn across
+     it, which is the thing that does not exist yet. */
+  roadmap: { Icon: Route },
 };
 
 /* Older rows carry no `kind`. Three items in the original order are the three
@@ -50,7 +64,7 @@ const BY_POSITION = ['interest', 'project', 'destination'];
 function resolve(item, i) {
   const kind = item.kind || BY_POSITION[i] || 'interest';
   const def = KINDS[kind] || KINDS.interest;
-  const Icon = (kind === 'interest' && INTEREST_ICONS[item.icon]) || def.Icon;
+  const Icon = ICONS[item.icon] || def.Icon;
   return { ...item, kind, Icon };
 }
 
@@ -67,7 +81,13 @@ export default function HeardStrip({ items }) {
               the list order already says "then". */}
           {i > 0 && (
             <span className="heard-conn" aria-hidden="true">
-              <ArrowRight size={18} strokeWidth={2} />
+              {/* strokeWidth is in the glyph's own 24-unit space, so a stroke
+                  renders at strokeWidth x size / 24. At size 18 the usual 2
+                  lands on 1.5px, which is thinner than the 2px shaft it is
+                  drawn on the end of. 2.67 puts the head back on 2px so the
+                  arrow is one weight from tail to tip. Colour comes from
+                  .heard-conn for the same reason. */}
+              <ArrowRight size={18} strokeWidth={2.67} />
             </span>
           )}
           {/* The tile sits inside a wrapper so that, in the row layout, the rail

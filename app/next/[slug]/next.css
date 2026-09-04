@@ -267,6 +267,20 @@
 }
 /* The connector: a rail segment ending in an arrow, drawn in the gap ABOVE
    the item it belongs to, centred on the glyph column. */
+/* ONE arrow, not a line plus a separate arrowhead (fixed 2026-09-04, Aaron
+   pixel-peeped it). The shaft was terracotta at opacity .55 and the head was a
+   Lucide glyph at FULL terracotta, so the two halves of a single primitive were
+   different colours; and the head, drawn at size 18 with strokeWidth 2, renders
+   its stroke at 2 x 18/24 = 1.5px against the shaft's 2px, so they were
+   different widths too. Both faults now have one cause and one cure: the tint
+   lives on .heard-conn as a real colour, the shaft inherits it with
+   currentColor and no opacity of its own, and the glyph's stroke is scaled so
+   it lands on 2px like everything else on this rail. --heard-rail is the single
+   place the weight is written down. */
+.next-page .heard {
+  --heard-rail: 2px;
+  --heard-line: color-mix(in srgb, var(--color-terracotta) 55%, transparent);
+}
 .next-page .heard-conn {
   position: absolute;
   left: 1.75rem;
@@ -276,16 +290,15 @@
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  color: var(--color-terracotta);
+  color: var(--heard-line);
 }
 .next-page .heard-conn::before {
   content: '';
   position: absolute;
   top: 0.15rem;
   bottom: 0.9rem;
-  width: 2px;
-  background: var(--color-terracotta);
-  opacity: 0.55;
+  width: var(--heard-rail);
+  background: currentColor;
 }
 .next-page .heard-conn svg {
   transform: rotate(90deg);
@@ -309,9 +322,8 @@
   .next-page .heard-item:not(:last-child) > .heard-glyph::after {
     content: '';
     flex: 1;
-    height: 2px;
-    background: var(--color-terracotta);
-    opacity: 0.55;
+    height: var(--heard-rail);
+    background: var(--heard-line);
   }
   .next-page .heard-item > .heard-lead,
   .next-page .heard-item > .heard-body {
@@ -384,10 +396,9 @@
     content: '';
     position: static;
     flex: 1;
-    height: 2px;
+    height: var(--heard-rail);
     width: auto;
-    background: var(--color-terracotta);
-    opacity: 0.55;
+    background: currentColor;
   }
   .next-page .heard-conn svg {
     transform: none;
@@ -511,4 +522,261 @@
     transition: none;
     transform: none;
   }
+}
+
+/* ── The booking layout: two columns from 1024px ────────────────────────────
+   A phone reads the block as a stack, month then times then confirm, because
+   that is the order a thumb travels. A desktop has the width to put the times
+   BESIDE the month, and that is a different layout rather than the same one
+   scaled up: the day circle and the chips it produced sit in one field of
+   view, so the grid is visibly answering the tap, and the confirm button
+   lands under the chip that raised it instead of a calendar's height below.
+
+   The month column is pinned to the width the grid already wanted (26rem,
+   seven circles a thumb can hit) and the times take what is left. Letting the
+   calendar grow with the viewport is the failure this avoids: seven 80px
+   circles read as a poster, and a calendar is the one control on this page
+   whose proportions a parent already knows by heart. */
+.next-page .book-times {
+  margin-top: 1.75rem;
+}
+.next-page .book-slots {
+  margin-top: 0.75rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+@media (min-width: 640px) {
+  .next-page .book-slots {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1024px) {
+  .next-page .book-grid {
+    display: grid;
+    grid-template-columns: 26rem minmax(0, 1fr);
+    column-gap: 3rem;
+    align-items: start;
+  }
+  .next-page .book-times {
+    margin-top: 0;
+  }
+  /* The two columns start on one line. The month's header is a pair of 44px
+     nav buttons, so the times column is given a header of the same height
+     rather than each column being padded on its own terms: the day label and
+     the month name share a baseline, and the first chip meets the weekday
+     letters. Without this the right column floats a nav button's height too
+     high and the eye reads two unrelated blocks. */
+  .next-page .book-times-head {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+  }
+  /* Back to two across: the right column is narrower than the phone's full
+     width, and three chips there clip "Wed 4:00 pm Irvine". */
+  .next-page .book-slots {
+    margin-top: 1rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ── The time chip ──────────────────────────────────────────────────────────
+   One line: the family's time, then its zone code in the faint weight, so a
+   column of eight reads as a column of times rather than a column of little
+   two-line cards. The code sits on the same baseline as the time rather than
+   under it, because it is the same fact, not a second one.
+
+   The SELECTED chip is filled terracotta, not pressed clay. Choosing a day and
+   choosing a time are the same act, and the day grid answers it with a solid
+   fill; an inset shadow answered it with a whisper, so the two halves of one
+   control disagreed about how loud a choice is. Blur the block now and the
+   chosen day and the chosen time are the only two marks that survive, which is
+   exactly the pair the family is deciding between. */
+.next-page .slot-abbr {
+  margin-left: 0.4rem;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-ink-faint);
+}
+.next-page .slot-on {
+  background: var(--color-terracotta-deep);
+  color: var(--color-cream);
+  box-shadow: none;
+  transition: box-shadow 0.18s ease, transform 0.18s ease, color 0.18s ease;
+}
+.next-page .slot-on .slot-abbr {
+  color: inherit;
+  opacity: 0.75;
+}
+@media (prefers-color-scheme: dark) {
+  /* terracotta-deep inverts to a light text-on-dark tint, so the fill uses the
+     mid token and dark ink, the same swap the selected day cell makes. */
+  .next-page .slot-on {
+    background: var(--color-terracotta);
+    color: #17110d;
+  }
+}
+
+/* ── What happens in that conversation: the running order ───────────────────
+   Was four paragraphs of body copy in the prose column. It is not prose: it is
+   three things that happen in a thirty-minute meeting, in order, and a line
+   saying the family need not prepare. A reader scanning four paragraphs cannot
+   see that shape; a list hands it to them without a word spent describing it.
+
+   Glyphs are Lucide on the 24px / 2px grid, inline and terracotta, with no
+   raised tile and no connector: the strip under the greeting uses tiles and
+   arrows to say "these follow from each other", and this list must not borrow
+   that sentence, because a meeting agenda is a running order rather than a
+   consequence. The rule above each item is the eyebrow's hairline, reused. */
+.next-page .nextlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1.6rem;
+}
+.next-page .nextlist-item {
+  display: grid;
+  grid-template-columns: 1.85rem 1fr;
+  grid-template-areas:
+    'icon lead'
+    'icon body';
+  column-gap: 0.85rem;
+  row-gap: 0.2rem;
+  align-items: start;
+}
+.next-page .nextlist-icon {
+  grid-area: icon;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  height: 1.9rem;
+  color: var(--color-terracotta-deep);
+}
+.next-page .nextlist-lead {
+  grid-area: lead;
+  align-self: center;
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+}
+.next-page .nextlist-body {
+  grid-area: body;
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--color-ink-soft);
+}
+/* The line that is not a stage. It needs to sit clear of the list, and at lg it
+   needs to sit clear of the FIRST COLUMN in particular: left-aligned under a
+   three-column grid, a stray paragraph reads as that column's last line. The
+   space does the separating, because the alternative (centring it) would be the
+   only centred text on a page that is left-aligned throughout. */
+.next-page .nextlist-after {
+  margin-top: 2rem;
+  max-width: 34rem;
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--color-ink-soft);
+}
+@media (min-width: 1024px) {
+  .next-page .nextlist-after {
+    margin-top: 3.25rem;
+  }
+}
+@media (min-width: 1024px) {
+  /* Three across, on the page's wide-figure measure. Each item becomes its own
+     column under a hairline: rule, glyph, lead, line. The hairlines read as one
+     broken rule across the page, which is what makes three columns look like
+     one list rather than three cards. */
+  .next-page .nextlist {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 2.25rem;
+  }
+  .next-page .nextlist-item {
+    grid-template-columns: 1fr;
+    grid-template-areas: 'icon' 'lead' 'body';
+    row-gap: 0;
+    border-top: 1px solid color-mix(in srgb, var(--color-terracotta) 45%, transparent);
+    padding-top: 1.15rem;
+    /* Rows pack to the top. Without this the items stretch to the tallest of
+       the three and the slack is shared out among the rows, so a short body
+       pushes its own lead DOWN: measured 2026-09-04 at 1440, the three leads
+       sat at 1239, 1256 and 1264 while their glyphs all sat at 1202. Three
+       leads on three different baselines is the alignment defect that reads as
+       sloppy without ever looking like anything in particular. */
+    align-content: start;
+  }
+  .next-page .nextlist-icon {
+    height: auto;
+    margin-bottom: 0.85rem;
+  }
+  .next-page .nextlist-lead {
+    align-self: start;
+  }
+  .next-page .nextlist-body {
+    margin-top: 0.4rem;
+  }
+}
+
+/* ── The welcome line ───────────────────────────────────────────────────────
+   "Hi Conor." on its own read as bare. The cure is not a paragraph, which is
+   the deck-tic this page already removed once: it is the two things a form
+   letter cannot carry, WHEN they spoke and WHO is speaking. The date is said on
+   the family's clock, which is the page doing its one job in its first three
+   lines rather than announcing that it will.
+
+   The signature is set as a rule then a name, the same hairline the eyebrows
+   use, so the top of the page and the section labels below share one device
+   instead of introducing a second. */
+.next-page .welcome {
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--color-ink-soft);
+}
+.next-page .welcome-from {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1.1rem;
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-ink);
+}
+.next-page .welcome-from::before {
+  content: '';
+  width: 1.75rem;
+  height: 1px;
+  flex: none;
+  background: var(--color-terracotta);
+}
+
+/* ── The one figure ─────────────────────────────────────────────────────────
+   What is left of a deleted three-up row of numerals. Alone it can be read as
+   a sentence rather than scanned as a statistic, so it is set on one line, the
+   figure in the display face at the size a lead-in wants and the label in body
+   text beside it. Deliberately NOT a tile: a single stat in a card is a card
+   with one thing in it. */
+.next-page .intl-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-bottom: 0.65rem;
+  flex-wrap: wrap;
+}
+.next-page .intl-stat-figure {
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--color-terracotta-deep);
+}
+.next-page .intl-stat-label {
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--color-ink-faint);
 }

@@ -33,8 +33,8 @@
   "clockTail": "Ryan's late afternoon is your next morning, which is where meetings sit.",
   "_clockNote": "The live line is COMPUTED in the browser from the two zones, never typed, because a typed clock is wrong within the hour. Singapore is UTC+8 with no daylight saving; Irvine follows America/Los_Angeles, which does observe it, so the offset is 15 hours now and 16 in the winter. The fallback string is what a reader with scripting off sees, and it is the only place a number is hard-coded; it is correct until US clocks change on 2026-11-01.",
   "booking": {
-    "heading": "Pick a time for the second conversation.",
-    "sub": "Thirty minutes on Zoom with Ryan. Times are shown in your clock and in his.",
+    "heading": "Pick a time.",
+    "sub": "Thirty minutes on Zoom with Ryan. Every time below is on your own clock.",
     "zoneNote": "Friday evening in California is Saturday morning in Singapore.",
     "stickyLabel": "Pick a time",
     "booked": {
@@ -53,26 +53,42 @@
     "calendarName": "Alex Example",
     "familyEmail": "parent@example.com",
     "confirmLabel": "Confirm this time",
-    "emptyLabel": "No mornings are open in the next two weeks. Email us and we will find one."
+    "emptyLabel": "No mornings are open in the next two weeks. Email us and we will find one.",
+    "_subNote": "The chips stopped carrying Ryan's clock on 2026-09-04, so this sentence stopped promising it. Both clocks still appear on the confirm sentence, which is where the family commits."
   },
   "_bookingNote": "The page books Ryan's real calendar through the portal's own engine; it does NOT punt to Calendly, and there is no Calendly link, embed or UTM anywhere in this flow. Slots come from the same availability code app/api/getAvailableSlots serves students from, so a family is never offered a time the booking gate would refuse. NOTHING IS HELD: the offer is computed live at render and re-verified live at confirm, because a pre-reserved slot is a meeting Ryan cannot see and nothing ever releases it. `morning` is the family's own clock, 07:00 to 11:00: Ryan's standing hours (Tue-Thu 16-20, Fri 16-19 Pacific) already land entirely inside a Singapore morning, so his ordinary availability IS the offer and no special arrangement is needed. `calendarName` is the internal filing handle Ryan reads in his own day, deliberately different from the greeting name the page addresses the student by. Attribution rides on the row and the calendar event (leadSlug), which is what replaced the UTMs.",
   "next": {
-    "heading": "What happens in that conversation.",
+    "heading": "What happens next.",
     "lines": [
-      "Ryan walks you through the family portal: what parents see week to week, projects with progress bars, upcoming meetings, and shared files.",
-      "Then two or three options for Alex, built from what we discussed, starting from the prices on this page.",
-      "You choose. Everything after that follows the conversation.",
-      "There is nothing to prepare."
+      {
+        "icon": "globe",
+        "lead": "The portal.",
+        "body": "Ryan walks you through what parents see week to week: projects with progress bars, upcoming meetings, and shared files."
+      },
+      {
+        "icon": "list-todo",
+        "lead": "Two or three options.",
+        "body": "Built for Alex from what we discussed, starting from the prices on this page."
+      },
+      {
+        "icon": "badge-check",
+        "lead": "You choose.",
+        "body": "Everything after that follows the conversation."
+      }
     ]
   },
-  "_nextNote": "The portal list names only what the parent surface actually serves today. No 'agreement', no DocuSign, no payment, anywhere on the page: Ryan's two-email ruling, Claude_Services.md section 6. 'There is nothing to prepare' appears exactly once on the page, here.",
+  "_nextNote": "A row with a lead is a stage in the meeting and joins the list; a bare string is a paragraph after it. The portal list names only what the parent surface actually serves today. No 'agreement', no DocuSign, no payment, anywhere on the page: Ryan's two-email ruling, Claude_Services.md section 6. 'There is nothing to prepare' appears exactly once on the page, here.",
   "international": {
-    "heading": "The distance changes the calendar, not the counseling.",
+    "heading": "Distance changes the calendar.",
     "lines": [
       "Meetings are scheduled around the time difference. Every meeting runs on Zoom.",
       "Ryan Choi knows the UK school system and the UK application well.",
       "Families abroad choose from the same tiers as families in the United States, priced in US dollars. Nothing is marked up for distance."
-    ]
+    ],
+    "stat": {
+      "figure": "12+",
+      "label": "Countries where our students have enrolled"
+    }
   },
   "_internationalNote": "Every sentence verbatim from the International Families pamphlet, including the heading. The pamphlet's own next clause ('so the meeting does not have to come out of a school night') is deliberately NOT carried over: it is true of a Saturday morning and false of a weekday, and no page may imply a meeting fits before a student's school day. For a family fifteen hours ahead, 5 pm in Irvine is 8 am the NEXT day for them, which is the middle of first period.",
   "uk_us_shape": false,
@@ -175,5 +191,9 @@
     "phone": "(949) 910-5366",
     "email": "support@admissions.partners"
   },
-  "status": "active"
+  "status": "active",
+  "welcome": "It was good to talk on Wednesday morning your time.",
+  "welcomeFrom": "Ryan Choi",
+  "_welcomeNote": "Two facts a form letter cannot hold: WHEN the consult happened, stated on the FAMILY's clock rather than ours, and WHO is speaking. Derive the day from the consult's own timestamp in the family's timezone, never from the date it sits in our calendar; for a family far enough east these are different days. The test for this slot is whether the sentence could appear unchanged on another family's page; a date and a name cannot. Never let it grow into a description of the page itself, which is the deck-paragraph tic removed on 2026-09-03.",
+  "_headingNote": "Shortened 2026-09-04 (Aaron: cut each hero so it does not wrap). Was 'Pick a time for the second conversation.', 'What happens in that conversation.' and 'The distance changes the calendar, not the counseling.' The international one is the only one that lost SENSE with its length: the pamphlet's 'not the counseling' half is the actual claim, and it now rests on the section body instead of the heading. Worth a look."
 }

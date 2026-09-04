@@ -60,11 +60,14 @@ function firstOpenDay(month) {
 }
 
 /* One time, as a chip. The day belongs to the heading above the list, so the
-   chip carries only what distinguishes it from its neighbours: the family's
-   time, large, with the same instant on Ryan's clock underneath. Both clocks
-   stay on every chip: the offset is fifteen hours and the two are usually
-   different days, so a time without its counterpart is the exact ambiguity
-   this page exists to remove. */
+   chip carries only what distinguishes it from its neighbours: one line, the
+   family's own time and its zone code, "7:00 am SGT".
+
+   Ryan's clock used to ride along underneath. It went on 2026-09-04 (Aaron):
+   eight chips repeating one fifteen-hour offset is noise, not information, and
+   the family is not choosing between the two clocks, only between the times.
+   Both survive where the choice is actually made, on the confirm sentence, and
+   in the aria-label here, which costs a sighted reader nothing. */
 function Slot({ slot, selected, onSelect }) {
   return (
     <li>
@@ -73,16 +76,14 @@ function Slot({ slot, selected, onSelect }) {
         onClick={() => onSelect(slot)}
         aria-pressed={selected}
         aria-label={`${slot.family.day} ${slot.family.time} ${slot.family.zone}, ${slot.pacific.day} ${slot.pacific.time} in Irvine`}
-        className={`min-h-[64px] w-full rounded-[1.25rem] px-4 py-3 text-left ${
-          selected ? 'neu-inset' : 'neu-slot'
+        className={`min-h-[52px] w-full rounded-[1.25rem] px-4 py-3 text-center ${
+          selected ? 'slot-on' : 'neu-slot'
         }`}
       >
-        <span className="block font-display text-[1.1rem] font-semibold leading-tight text-ink">
+        <span className="font-display text-[1.1rem] font-semibold leading-tight">
           {slot.family.time}
         </span>
-        <span className="mt-0.5 block text-[13px] leading-tight text-ink-soft">
-          {slot.pacific.day.slice(0, 3)} {slot.pacific.time} Irvine
-        </span>
+        {slot.family.abbr && <span className="slot-abbr">{slot.family.abbr}</span>}
       </button>
     </li>
   );
@@ -203,7 +204,7 @@ export default function BookingBlock({ slug, initial, copy }) {
   const monthLabel = month.monthLabel || DateTime.fromFormat(month.month, 'yyyy-LL').toFormat('LLLL yyyy');
 
   return (
-    <div className="mt-6">
+    <div className="book-grid mt-6">
       {/* ── The month ──────────────────────────────────────────────────── */}
       <div className="cal" aria-busy={loadingMonth}>
         <div className="cal-head">
@@ -261,54 +262,66 @@ export default function BookingBlock({ slug, initial, copy }) {
         </div>
       </div>
 
-      {/* ── The times for the chosen day ────────────────────────────────── */}
-      {dayData ? (
-        <div className="mt-7">
-          <p className="eyebrow">{dayData.label}</p>
-          <ul className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-            {dayData.slots.map((slot) => (
-              <Slot
-                key={slot.start}
-                slot={slot}
-                selected={selected?.start === slot.start}
-                onSelect={setSelected}
-              />
-            ))}
-          </ul>
-        </div>
-      ) : (
-        <p className="mt-6 text-[15px] leading-relaxed text-ink-soft">
-          {month.days.length
-            ? 'Tap a day to see its times.'
-            : `No mornings are open in ${monthLabel}. Try the next month.`}
-        </p>
-      )}
+      {/* ── The chosen day, and everything that follows from choosing one ──
+          On a phone this is the next thing down the stack, which is the order
+          a thumb reads. From 1024px it is the second COLUMN, beside the month
+          rather than under it, and that is not the phone layout scaled up: the
+          day you tapped and the times it produced are in one field of view, so
+          the grid visibly answers the tap, and the confirm sits under the chip
+          that raised it instead of a calendar's height below it. */}
+      <div className="book-times">
+        {dayData ? (
+          <>
+            <div className="book-times-head">
+              <p className="eyebrow">{dayData.label}</p>
+            </div>
+            <ul className="book-slots">
+              {dayData.slots.map((slot) => (
+                <Slot
+                  key={slot.start}
+                  slot={slot}
+                  selected={selected?.start === slot.start}
+                  onSelect={setSelected}
+                />
+              ))}
+            </ul>
+          </>
+        ) : (
+          <div className="book-times-head">
+            <p className="text-[15px] leading-relaxed text-ink-soft">
+              {month.days.length
+                ? 'Tap a day to see its times.'
+                : `No mornings are open in ${monthLabel}. Try the next month.`}
+            </p>
+          </div>
+        )}
 
-      {error && (
-        <p role="status" className="mt-6 text-[15px] leading-relaxed text-terracotta-deep">
-          {error}
-        </p>
-      )}
-
-      {/* The confirm appears only once a time is chosen. An always-present
-          disabled button is a control that spends the page's loudest slot
-          saying "not yet". */}
-      {selected && (
-        <div className="mt-7">
-          <button
-            type="button"
-            onClick={confirm}
-            disabled={busy}
-            className="sticky-book-btn w-full disabled:opacity-70"
-          >
-            {busy ? 'Booking…' : copy.confirmLabel}
-          </button>
-          <p className="mt-3 text-[14px] leading-relaxed text-ink-faint">
-            {selected.family.day} {selected.family.time} {selected.family.zone}, which is{' '}
-            {selected.pacific.day} {selected.pacific.time} in Irvine.
+        {error && (
+          <p role="status" className="mt-6 text-[15px] leading-relaxed text-terracotta-deep">
+            {error}
           </p>
-        </div>
-      )}
+        )}
+
+        {/* The confirm appears only once a time is chosen. An always-present
+            disabled button is a control that spends the page's loudest slot
+            saying "not yet". */}
+        {selected && (
+          <div className="mt-7">
+            <button
+              type="button"
+              onClick={confirm}
+              disabled={busy}
+              className="sticky-book-btn w-full disabled:opacity-70"
+            >
+              {busy ? 'Booking…' : copy.confirmLabel}
+            </button>
+            <p className="mt-3 text-[14px] leading-relaxed text-ink-faint">
+              {selected.family.day} {selected.family.time} {selected.family.zone}, which is{' '}
+              {selected.pacific.day} {selected.pacific.time} in Irvine.
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

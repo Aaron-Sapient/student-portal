@@ -4,7 +4,8 @@ import { DateTime } from 'luxon';
 import { getLead, maskEmail } from './leads';
 import BookingBlock from './BookingBlock';
 import HeardStrip from './heard';
-import { LiveClock, BookedFlag } from './LiveBits';
+import NextList from './nextlist';
+import { BookedFlag } from './LiveBits';
 import { describeSlot } from '@/lib/nextBooking';
 
 /* /next/<slug> — the page a family lands on from the first post-consult email.
@@ -79,13 +80,33 @@ export async function generateMetadata({ params }) {
   };
 }
 
-/* The text column. One measure for the whole page (about 68 characters at the
-   body size), set once here rather than per section, so every first glyph on
-   the page sits on the same left edge at every width. The photograph is the one
-   thing that leaves it. */
+/* ONE left edge for the whole page (2026-09-04, Aaron: "every hero should be
+   left-aligned").
+   ─────────────────────────────────────────────────────────────────────────
+   Before this the page had two centred measures, a 38rem prose column and a
+   54rem figure exception, so every wide block bled past the headings on BOTH
+   sides and no two left edges agreed. Centring a narrow column also parks the
+   headings in the middle third of a desktop screen, which is what made them
+   read as floating rather than as the start of anything.
+
+   Now one 54rem band is centred on the viewport and everything inside it
+   starts at that band's left edge: prose stops at 34rem for measure, figures
+   run the full width to the right. Trace the first glyph of any heading down
+   the page and it is the same x as the calendar, the module strip and the tier
+   cards. */
 function Col({ children, className = '', ...rest }) {
   return (
-    <div className={`mx-auto w-full max-w-[38rem] px-6 sm:px-8 ${className}`} {...rest}>
+    <Wide className={className} {...rest}>
+      <div className="max-w-[34rem]">{children}</div>
+    </Wide>
+  );
+}
+
+/* The same band, without the prose cap: for anything that is looked at rather
+   than read (the month grid, the module strip, the tier cards). */
+function Wide({ children, className = '', ...rest }) {
+  return (
+    <div className={`mx-auto w-full max-w-[54rem] px-6 sm:px-8 ${className}`} {...rest}>
       {children}
     </div>
   );
@@ -234,29 +255,43 @@ export default async function NextPage({ params }) {
         )}
 
         {/* ── 1. The greeting, then the three things ───────────────────────────
-            No paragraph under the name. The line that used to sit here
-            ("This page is for you and your parents: what I heard, what happens
-            next, and a place to pick a time") described the page it sat on,
-            which is the deck-paragraph tic the pamphlets were swept for on
-            2026-08-17: a reader skims it because they have correctly spotted
-            that the page below already says it. What replaces it is the thing
-            it was announcing: what Ryan heard, as three modules with a glyph
-            each (app/next/[slug]/heard.js), so the second thing on the page is
-            already about this student rather than about the page. */}
+            "Hi Conor." on its own read as bare (2026-09-04, Aaron), and the
+            reason is that it is a greeting from nobody: a name, no sender, no
+            occasion. What warms it is not a paragraph, it is the two facts a
+            form letter cannot hold. WHEN they spoke, said on the family's own
+            clock rather than ours, which is the page quietly doing the time-zone
+            work it spends the rest of its length doing. And WHO is speaking,
+            signed, because every other word here is Ryan's.
+
+            The line that used to sit here ("This page is for you and your
+            parents: what I heard, what happens next, and a place to pick a
+            time") is still gone and stays gone: it described the page it sat
+            on, which is the deck-paragraph tic the pamphlets were swept for on
+            2026-08-17. The test for anything in this slot is whether it could
+            appear on another family's page unchanged. A date and a name cannot.
+
+            The "What Ryan heard" eyebrow over the modules is also gone
+            (2026-09-04, Aaron, asked twice). It labelled a strip that says what
+            it is, and a label over a self-evident thing is narration. */}
         <Col>
           <h1 className="font-display text-[2.6rem] font-normal leading-[1.05] tracking-[-0.02em] text-ink sm:text-[3.4rem]">
             Hi <em>{lead.student}.</em>
           </h1>
-          <p className="eyebrow mt-8">What Ryan heard</p>
+          {lead.welcome && (
+            <p className="welcome mt-5">
+              {lead.welcome}
+              {lead.welcomeFrom && <span className="welcome-from">{lead.welcomeFrom}</span>}
+            </p>
+          )}
         </Col>
         {/* The strip takes the page's measure exception at the wide breakpoint,
             like the tier cards: it is a diagram, not prose, and three modules
             inside a prose column wrap every line three times. The eyebrow above
             it stays on the page's own left edge with everything else that is
             read as text. */}
-        <div className="mx-auto mt-5 w-full max-w-[38rem] px-6 sm:px-8 lg:max-w-[54rem]">
+        <Wide className="mt-5">
           <HeardStrip items={lead.heard} />
-        </div>
+        </Wide>
 
         {/* ── 3. The video slot ───────────────────────────────────────────────
             Rendered only when this lead has a film. An empty frame promising a
@@ -289,21 +324,14 @@ export default async function NextPage({ params }) {
           </Col>
         )}
 
-        {/* ── 4. The clock ────────────────────────────────────────────────────
-            The server renders the true, dateless fallback. The inline script
-            replaces it with the live one. Neither version can be stale, which
-            is the whole reason the sentence is not typed. */}
-        <Col className="mt-12">
-          <p className="text-[16px] leading-relaxed text-ink-soft">
-            <LiveClock
-              className="font-semibold text-ink"
-              fallback={lead.clockFallback}
-              familyZone={b.timezone || 'Asia/Singapore'}
-              familyCity={(b.zoneLabel || 'Singapore time').replace(/\s+time$/i, '')}
-            />{' '}
-            {lead.clockTail}
-          </p>
-        </Col>
+        {/* ── 4. The clock: DELETED 2026-09-04 (Aaron) ────────────────────────
+            A live two-city sentence used to sit here. It was the third time the
+            page said the same thing: every time chip carries both clocks and so
+            does the confirm line, so the sentence was telling the family to do
+            arithmetic the control below had already done for them. The row's
+            clockFallback and clockTail are left in the data, unread, so that a
+            lead who genuinely needs a framing line can have one without the
+            component coming back from git. */}
 
         {/* ── 5. The booking block ────────────────────────────────────────────
             The family books Ryan's real calendar here. No Calendly, no embed,
@@ -345,38 +373,60 @@ export default async function NextPage({ params }) {
                   morning in Singapore") is deliberately NOT rendered any more:
                   every chip and every day now carries both clocks, so the
                   sentence restated what the control shows. */}
-
-              <BookingBlock
-                slug={slug}
-                initial={{ month, booked: bookedState }}
-                copy={{
-                  booked: b.booked || { heading: 'Booked.', body: 'Nothing to prepare.' },
-                  confirmLabel: b.confirmLabel || 'Confirm this time',
-                  emptyLabel:
-                    b.emptyLabel ||
-                    "Ryan's calendar could not be loaded just now. Refresh the page, or email us and we will find a time.",
-                }}
-              />
             </div>
           </Col>
+
+          {/* The control takes the page's wide-figure exception at lg, the same
+              one the tier cards take, because from 1024px it is two columns and
+              a 38rem prose measure cannot hold a month grid beside a column of
+              chips. Everything above it that is READ stays on the prose column
+              with the rest of the page's text. */}
+          <Wide className="unbooked-only">
+            <BookingBlock
+              slug={slug}
+              initial={{ month, booked: bookedState }}
+              copy={{
+                booked: b.booked || { heading: 'Booked.', body: 'Nothing to prepare.' },
+                confirmLabel: b.confirmLabel || 'Confirm this time',
+                emptyLabel:
+                  b.emptyLabel ||
+                  "Ryan's calendar could not be loaded just now. Refresh the page, or email us and we will find a time.",
+              }}
+            />
+          </Wide>
         </section>
-        {/* ── 6. What happens in that conversation ────────────────────────── */}
+        {/* ── 6. What happens in that conversation ──────────────────────────
+            A running order, not prose: three stages of the meeting as a list,
+            then the one line that is not a stage. The list takes the page's
+            wide-figure measure so three stages can sit across at lg instead of
+            queueing down a 34-character-wide prose column that had no reason to
+            be narrow. The heading stays on the page's own left edge with
+            everything else that is read as a sentence. */}
         <Col className="mt-16">
           <H2>
             <Accent text={lead.next.heading} />
           </H2>
-          <div className="mt-5 space-y-4 text-[17px] leading-relaxed text-ink-soft">
-            {lead.next.lines.map((line) => (
-              <p key={line}>{line}</p>
-            ))}
-          </div>
         </Col>
+        <Wide className="mt-7">
+          <NextList lines={lead.next.lines} />
+        </Wide>
 
         {/* ── 7. Families outside the United States ───────────────────────────
             Every sentence is one the International Families pamphlet already
             prints. The pamphlet's own school-night clause is left out on
             purpose: it is true of a Saturday and false of a weekday. */}
         <Col className="mt-16">
+          {/* The one figure worth keeping off the deleted three-up row, placed
+              where the question it answers is actually being asked: a family in
+              Singapore wondering whether this firm has done this before. Above
+              the heading rather than below it, because it is the reason to read
+              the section, not a footnote to it. */}
+          {lead.international.stat && (
+            <p className="intl-stat">
+              <span className="intl-stat-figure">{lead.international.stat.figure}</span>
+              <span className="intl-stat-label">{lead.international.stat.label}</span>
+            </p>
+          )}
           <H2>
             <Accent text={lead.international.heading} />
           </H2>
@@ -441,18 +491,16 @@ export default async function NextPage({ params }) {
             </Col>
           </figure>
 
-          <Col className="mt-10">
-            <dl className="grid grid-cols-1 gap-6 sm:grid-cols-3">
-              {lead.proof.stats.map((s) => (
-                <div key={s.figure}>
-                  <dt className="font-display text-[2rem] font-normal leading-none text-ink">
-                    {s.figure}
-                  </dt>
-                  <dd className="mt-2 text-[14px] leading-snug text-ink-faint">{s.label}</dd>
-                </div>
-              ))}
-            </dl>
-          </Col>
+          {/* The three-figure row that sat here is GONE (2026-09-04, Aaron).
+              Three numerals in a row is the shape a landing page uses when it
+              has nothing specific to say, and two of these three were not worth
+              the space: the 95% referral figure is about how the firm gets its
+              clients, which is the firm's business and not this family's, and
+              the 22+ years is undecided. The one that was doing real work,
+              "12+ countries where our students have enrolled", moved to the
+              section where a family in Singapore is actually asking the
+              question it answers. The figures all remain in proof.stats, so
+              placing any of them again is a data edit, not a rebuild. */}
 
           {/* The fragment carries its own attribution as its heading, which is
               why this block has no invented section title over it. */}
@@ -499,7 +547,8 @@ export default async function NextPage({ params }) {
             </H2>
           </Col>
 
-          <div className="mx-auto mt-8 grid w-full max-w-[38rem] gap-5 px-6 sm:px-8 lg:max-w-[54rem] lg:grid-cols-3 lg:gap-4">
+        <Wide className="mt-8">
+          <div className="grid gap-5 lg:grid-cols-3 lg:gap-4">
             {lead.packages.tiers.map((tier) => (
               <div key={tier.name} className="neu-raised flex flex-col rounded-[1.75rem] p-6">
                 <p className="font-display text-[1.25rem] font-semibold leading-snug text-ink">
@@ -530,14 +579,15 @@ export default async function NextPage({ params }) {
               </div>
             ))}
           </div>
+        </Wide>
 
-          <Col className="mt-6">
-            <div className="space-y-1 text-[14px] leading-relaxed text-ink-faint">
-              {lead.packages.notes.map((n) => (
-                <p key={n}>{n}</p>
-              ))}
-            </div>
-          </Col>
+        <Col className="mt-6">
+          <div className="space-y-1 text-[14px] leading-relaxed text-ink-faint">
+            {lead.packages.notes.map((n) => (
+              <p key={n}>{n}</p>
+            ))}
+          </div>
+        </Col>
         </section>
 
         {/* ── 10. The footer ──────────────────────────────────────────────────
