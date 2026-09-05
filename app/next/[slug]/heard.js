@@ -6,7 +6,6 @@ import {
   Landmark,
   Route,
   Sparkles,
-  ArrowRight,
 } from 'lucide-react';
 
 /* "What Ryan heard": the three things about this student, as a strip of modules.
@@ -18,12 +17,20 @@ import {
    looks written for one family because the words are theirs; it is built from
    parts because the kinds are ours. A new lead is three lines of JSON.
 
-   The kinds are ordered, and the order is Ryan's own logic for a solo-project
-   student: an INTEREST is the starting point, the PROJECT is what gets built
-   from it, the DESTINATION is where the application goes. That is a sequence,
-   so the connectors are arrows (the pamphlet's relationship glyph for
-   "sequenced"; parallel peers would get none). A VISITS module is logistics
-   rather than a stage and belongs in the international section, not here.
+   The kinds are ordered, and that order was once Ryan's pipeline for a
+   solo-project student: an INTEREST is the starting point, the PROJECT is what
+   gets built from it, the DESTINATION is where the application goes. It was a
+   sequence, so the connectors were arrows.
+
+   THE ARROWHEADS ARE GONE, at both breakpoints (mobile 2026-09-04, desktop the
+   same evening: "the arrow is still awkward... kill the terminal point
+   entirely on desktop, just like you did on mobile"). The rule they were drawn
+   from is the rule that removed them — parallel peers get no arrow — because
+   the transcript rewrite replaced the pipeline with three facts about one
+   student, and three facts are peers. What is left is a plain rail: it says
+   these belong to one set, which is true, and says nothing about order, which
+   is no longer ours to claim. A VISITS module is logistics rather than a stage
+   and belongs in the international section, not here.
 
    Icons are Lucide, vendored from lucide-react on its 24px / 2px-stroke grid,
    chosen as ideographs rather than decorations: a train front for trains, a
@@ -79,17 +86,7 @@ export default function HeardStrip({ items }) {
           {/* The connector belongs to the boundary between two modules, so it
               is drawn as part of every module after the first. Decorative:
               the list order already says "then". */}
-          {i > 0 && (
-            <span className="heard-conn" aria-hidden="true">
-              {/* strokeWidth is in the glyph's own 24-unit space, so a stroke
-                  renders at strokeWidth x size / 24. At size 18 the usual 2
-                  lands on 1.5px, which is thinner than the 2px shaft it is
-                  drawn on the end of. 2.67 puts the head back on 2px so the
-                  arrow is one weight from tail to tip. Colour comes from
-                  .heard-conn for the same reason. */}
-              <ArrowRight size={18} strokeWidth={2.67} />
-            </span>
-          )}
+          {i > 0 && <span className="heard-conn" aria-hidden="true" />}
           {/* The tile sits inside a wrapper so that, in the row layout, the rail
               can run from the tile's edge to the next module without a second
               element per module. */}

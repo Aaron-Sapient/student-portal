@@ -4,6 +4,7 @@ import { DateTime } from 'luxon';
 import { getLead, maskEmail } from './leads';
 import BookingBlock from './BookingBlock';
 import HeardStrip from './heard';
+import Reveal from './Reveal';
 import NextList from './nextlist';
 import { BookedFlag } from './LiveBits';
 import { describeSlot } from '@/lib/nextBooking';
@@ -242,6 +243,20 @@ export default async function NextPage({ params }) {
       <BookedFlag />
 
       <main className="next-page relative z-10 pb-32 pt-16 sm:pb-24 sm:pt-24">
+        {/* Scroll reveal. Renders nothing; it observes the [data-reveal] blocks
+            below and lets each one arrive as the reader reaches it.
+
+            TWO BLOCKS DELIBERATELY CARRY NO data-reveal. The greeting, because
+            it is the first thing on screen and a page whose opening line fades
+            itself in reads as slow rather than considered — Reveal.js would
+            catch that anyway with its first-viewport rule, but the honest place
+            to say "this never animates" is here, on the element. And the
+            booking section, because it is the one part of this page that is a
+            TOOL rather than a narrative: the sticky bar jumps to it by anchor,
+            and a control that is still settling when the reader arrives by link
+            is a control that feels broken. Apple animates the story and leaves
+            the configurator alone; so does this. */}
+        <Reveal />
         {/* A rehearsal page books Ryan's REAL calendar and sends a REAL
             invitation, which is the point of it, so the one thing it must never
             do is pass for a family's page. The pill renders only on a row that
@@ -278,7 +293,7 @@ export default async function NextPage({ params }) {
             Hi <em>{lead.student}.</em>
           </h1>
           {lead.welcome && (
-            <p className="welcome mt-5">
+            <p className="welcome mt-3">
               {lead.welcome}
               {lead.welcomeFrom && <span className="welcome-from">{lead.welcomeFrom}</span>}
             </p>
@@ -289,7 +304,19 @@ export default async function NextPage({ params }) {
             inside a prose column wrap every line three times. The eyebrow above
             it stays on the page's own left edge with everything else that is
             read as text. */}
-        <Wide className="mt-5">
+        {/* mt-12, against the greeting line's mt-3 (2026-09-04, Aaron: the
+            spacing "looks wrong here for Hi Aaron / It was good to talk on
+            Wed... / Icons", and the greeting line "should be higher up, i.e.,
+            closer to the Hi Aaron hero").
+            Both gaps were mt-5, which spaced the three blocks EVENLY and so
+            grouped nothing: the sentence Ryan is saying to this family read as
+            equally far from his greeting as from a diagram it has no relation
+            to. The greeting and its line are one utterance and now sit as one;
+            the strip is the next thing and gets the real break. Proximity is
+            the grouping mechanism here, not a rule or a heading — there is no
+            eyebrow over the strip any more, so spacing is all that is left to
+            say where one thing ends. */}
+        <Wide className="mt-12" data-reveal>
           <HeardStrip items={lead.heard} />
         </Wide>
 
@@ -402,12 +429,12 @@ export default async function NextPage({ params }) {
             queueing down a 34-character-wide prose column that had no reason to
             be narrow. The heading stays on the page's own left edge with
             everything else that is read as a sentence. */}
-        <Col className="mt-16">
+        <Col className="mt-16" data-reveal>
           <H2>
             <Accent text={lead.next.heading} />
           </H2>
         </Col>
-        <Wide className="mt-7">
+        <Wide className="mt-7" data-reveal>
           <NextList lines={lead.next.lines} />
         </Wide>
 
@@ -415,7 +442,7 @@ export default async function NextPage({ params }) {
             Every sentence is one the International Families pamphlet already
             prints. The pamphlet's own school-night clause is left out on
             purpose: it is true of a Saturday and false of a weekday. */}
-        <Col className="mt-16">
+        <Col className="mt-16" data-reveal>
           {/* The one figure worth keeping off the deleted three-up row, placed
               where the question it answers is actually being asked: a family in
               Singapore wondering whether this firm has done this before. Above
@@ -475,7 +502,7 @@ export default async function NextPage({ params }) {
             The photograph is the only thing on the page that leaves the text
             column, and it earns that by being the only thing that is not
             words. */}
-        <section className="mt-20">
+        <section className="mt-20" data-reveal>
           <figure>
             <img
               className="band"
@@ -503,13 +530,37 @@ export default async function NextPage({ params }) {
               placing any of them again is a data edit, not a rebuild. */}
 
           {/* The fragment carries its own attribution as its heading, which is
-              why this block has no invented section title over it. */}
-          <Col className="mt-14">
+              why this block has no invented section title over it.
+
+              BOUND TO THE PHOTOGRAPH ABOVE, not floating under it (2026-09-04,
+              Aaron: the essay and the Paraguay image "feel orphaned, not
+              integrated"). Three things were keeping them apart, and none of
+              them was the gap between them:
+
+              The rule and its 1.25rem indent gave this block a left edge of its
+              own. Every heading, the calendar, the module strip and the
+              photograph's own caption sit on one x — that was the whole point of
+              the 09-04 layout pass — and the one block that opted out was this
+              one, so the eye read it as imported from somewhere else. It now
+              starts where everything else starts.
+
+              At 19px display italic against 15px body sans it was also the
+              loudest typography in the region, which inverted the section: a
+              former student's essay was shouting over the photograph of Ryan
+              actually doing the work. 17px keeps it clearly a different voice
+              without letting it lead.
+
+              And the two captions now match exactly — same size, same colour,
+              same left edge — so the photograph and the fragment read as two
+              exhibits under one labelling system rather than two unrelated
+              objects. That shared label is what does the integrating; the
+              tightened gap just stops them looking like separate sections. */}
+          <Col className="mt-10">
             <figure>
-              <blockquote className="border-l-2 border-terracotta/60 pl-5 font-display text-[19px] italic leading-relaxed text-ink">
+              <blockquote className="font-display text-[17px] italic leading-relaxed text-ink">
                 <p>{lead.proof.essay}</p>
               </blockquote>
-              <figcaption className="mt-4 pl-5 text-[14px] leading-relaxed text-ink-faint">
+              <figcaption className="mt-4 text-[14px] leading-relaxed text-ink-faint">
                 {lead.proof.essayLabel}
               </figcaption>
             </figure>
@@ -540,14 +591,14 @@ export default async function NextPage({ params }) {
 
             Heading and notes stay on the page's own left edge, so nothing that
             is read as text sits on a second edge. Only the cards move. */}
-        <section className="mt-20">
+        <section className="mt-20" data-reveal>
           <Col>
             <H2>
               <Accent text={lead.packages.heading} />
             </H2>
           </Col>
 
-        <Wide className="mt-8">
+        <Wide className="mt-8" data-reveal>
           <div className="grid gap-5 lg:grid-cols-3 lg:gap-4">
             {lead.packages.tiers.map((tier) => (
               <div key={tier.name} className="neu-raised flex flex-col rounded-[1.75rem] p-6">
@@ -581,7 +632,26 @@ export default async function NextPage({ params }) {
           </div>
         </Wide>
 
-        <Col className="mt-6">
+        {/* The pamphlet, under the ladder it describes (2026-09-04, Aaron:
+            "can the page host the full PDF of our 9-11 pamphlet, available for
+            download?").
+            HERE rather than in the footer, where the other PDF slot lives: a
+            family that wants this in writing wants it at the moment they are
+            reading prices, not after the phone number. It is a plain link with
+            the download attribute rather than a button — the page has one
+            action, and that action is booking a time; a second button beside
+            the ladder would compete with it for the same tap.
+            The label carries the file type because a link that silently starts
+            a download is a link that has surprised someone. */}
+        {lead.packagesPdf && (
+          <Col className="mt-7" data-reveal>
+            <a className="pdf-chip" href={lead.packagesPdfHref} download>
+              {lead.packagesPdfLabel}
+            </a>
+          </Col>
+        )}
+
+        <Col className="mt-6" data-reveal>
           <div className="space-y-1 text-[14px] leading-relaxed text-ink-faint">
             {lead.packages.notes.map((n) => (
               <p key={n}>{n}</p>
@@ -594,7 +664,7 @@ export default async function NextPage({ params }) {
             The firm's contact block in the form the pamphlets print it. The en
             dash in the suite range is theirs; the hyphens in the phone number
             are a compound, not a range. */}
-        <Col className="mt-20">
+        <Col className="mt-20" data-reveal>
           <div className="border-t border-ink-faint/25 pt-8 text-[14px] leading-relaxed text-ink-faint">
             <p className="font-display text-[1.05rem] font-semibold text-ink-soft">
               {lead.footer.name}

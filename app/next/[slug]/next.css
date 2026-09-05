@@ -141,6 +141,28 @@
 [data-booked='1'] .sticky-book.unbooked-only {
   display: none;
 }
+/* ...and the moment a time is chosen. The bar is an anchor to a block further
+   down the page; with a time picked it is standing on top of that block's
+   confirm button, covering "Confirm this time" with a button that says "Pick a
+   time". Set by the effect in BookingBlock.js.
+
+   NOT keyed to the calendar being on screen: measured 2026-09-04, the section
+   begins 699px into an 844px viewport, so it is visible on the first screen and
+   that rule hid the bar before anyone had scrolled.
+
+   Faded and slid rather than snapped: the bar is fixed under the reader's thumb
+   and a control that vanishes between one frame and the next reads as a
+   misfire. Movement is fine here, unlike the scroll reveal — this is one small
+   element responding to a tap, not a full-width block moving during a scroll. */
+[data-picking='1'] .sticky-book {
+  opacity: 0;
+  transform: translateY(120%);
+  pointer-events: none;
+}
+.next-page ~ .sticky-book,
+.sticky-book {
+  transition: opacity 200ms linear, transform 260ms linear;
+}
 
 /* ── The sticky bar ─────────────────────────────────────────────────────────
    A phone reads this page in a stack, and the booking block is the fifth thing
@@ -287,7 +309,27 @@
   top: -1.75rem;
   height: 1.75rem;
   width: 0;
-  display: flex;
+  /* NONE on a phone (2026-09-04, Aaron: "these arrows look bad on mobile").
+     Two faults, one cause. The arrow was derived for a strip that was a real
+     sequence — interest, then the project built from it, then the destination —
+     and heard.js still states the rule it was derived from: "that is a
+     sequence, so the connectors are arrows (parallel peers would get none)".
+     The 09-04 transcript rewrite replaced those modules with three facts about
+     one student (a phrase of his, where he is applying, what he wants from us).
+     Those are peers. The arrowheads went on asserting a sequence the content no
+     longer has, which is the first fault and the reason no amount of restyling
+     was going to fix them.
+     The second is that they never connected anything. Each was a 1.75rem stub
+     inset 0.15rem at the top and 0.9rem at the bottom, floating in the margin
+     between two modules and touching neither, while the real distance between
+     one tile and the next is that margin PLUS the height of the body text. So a
+     primitive whose whole job is to join two things was drawn as a detached
+     dash in open space.
+     The row layout at 640px is untouched and keeps its arrows: across a row the
+     modules genuinely do read left to right, the connector column is short, and
+     the rail there is already continuous tile-to-tile. The media query below
+     restores display: flex. */
+  display: none;
   align-items: flex-end;
   justify-content: center;
   color: var(--heard-line);
@@ -300,9 +342,25 @@
   width: var(--heard-rail);
   background: currentColor;
 }
-.next-page .heard-conn svg {
-  transform: rotate(90deg);
-  flex: none;
+/* The phone rail: ONE line per boundary, running the whole way from the bottom
+   of one tile to the top of the next, so the three tiles sit on a single
+   continuous stroke instead of beside three unrelated marks. Drawn on the item
+   rather than in the margin because only the item's own box spans the real
+   distance — the margin is the last 1.75rem of it, the body text is the rest.
+   `left` is 1.75rem, half of the 3.5rem glyph column, and the translate centres
+   the 2px stroke on that axis rather than starting it there. The 0.3rem
+   breathing gap at each end keeps the stroke off the tile's soft shadow, which
+   it would otherwise appear to grow out of. */
+.next-page .heard-item:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 1.75rem;
+  transform: translateX(-50%);
+  top: calc(3.5rem + 0.3rem);
+  bottom: -1.45rem;
+  width: var(--heard-rail);
+  border-radius: var(--heard-rail);
+  background: var(--heard-line);
 }
 
 @media (min-width: 640px) {
@@ -331,6 +389,13 @@
   }
   .next-page .heard-item {
     display: contents;
+  }
+  /* The phone rail is off here: the row draws its own continuous line through
+     the glyph wrappers and the connector columns. Explicit because a pseudo
+     element on a `display: contents` box still generates and would be placed
+     into the row grid as a stray cell. */
+  .next-page .heard-item:not(:last-child)::after {
+    content: none;
   }
   .next-page .heard-item + .heard-item {
     margin-top: 0;
@@ -382,6 +447,12 @@
   .next-page .heard-item:nth-child(3) > .heard-conn {
     grid-column: 4;
   }
+  /* The rail across the row. `justify-content` was flex-end so the shaft would
+     stop against the arrowhead; with the head gone (2026-09-04) the line simply
+     spans its whole column, tile edge to tile edge, which is what the mobile
+     rail does vertically. The -6px nudge that used to tuck the head over the
+     shaft went with it — that overlap is what drew the darker terracotta pip
+     Aaron pixel-peeped, two strokes of the same colour stacked. */
   .next-page .heard-conn {
     position: static;
     grid-row: 1;
@@ -389,7 +460,7 @@
     width: auto;
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: stretch;
     align-self: start;
   }
   .next-page .heard-conn::before {
@@ -399,10 +470,6 @@
     height: var(--heard-rail);
     width: auto;
     background: currentColor;
-  }
-  .next-page .heard-conn svg {
-    transform: none;
-    margin-left: -6px;
   }
 }
 
@@ -732,7 +799,31 @@
    The signature is set as a rule then a name, the same hairline the eyebrows
    use, so the top of the page and the section labels below share one device
    instead of introducing a second. */
+/* Italic (2026-09-04, Aaron). In the DISPLAY face rather than the body sans,
+   because the page already has exactly one italic voice — the student's name in
+   the h1 directly above this line, and the essay fragment further down — and a
+   second italic in a different family would be a third voice for no gain. It
+   also sits right, being a spoken aside: the one sentence on the page that is
+   Ryan talking rather than the page describing. Size holds at 17px; the display
+   face runs a touch larger on the eye, so it does not need help competing with
+   the greeting it sits under. */
 .next-page .welcome {
+  /* var(--font-fraunces), NOT var(--font-display). --font-display is declared
+     in globals.css inside `@theme inline`, and the `inline` modifier means
+     Tailwind folds the value into the utilities it generates and never emits
+     the custom property — so `class="font-display"` works and a hand-written
+     `font-family: var(--font-display)` is invalid at computed-value time and
+     silently inherits the body sans. Measured 2026-09-04 over CDP: at this
+     element --font-display resolves to the empty string while --font-fraunces
+     resolves to "Fraunces", "Fraunces Fallback". next/font sets the latter on a
+     wrapper class, which is why it exists at the element and not at :root.
+     FIVE OTHER RULES IN THIS FILE STILL USE THE BROKEN TOKEN and still render
+     in the body sans: .heard-lead, .cal-title, .nextlist-lead, .welcome-from,
+     .intl-stat-figure. They are left alone deliberately — correcting them
+     changes type Aaron has been reviewing, so it is his call, not a silent
+     side effect of this one line. */
+  font-family: var(--font-fraunces);
+  font-style: italic;
   font-size: 17px;
   line-height: 1.6;
   color: var(--color-ink-soft);
@@ -779,4 +870,113 @@
   font-size: 15px;
   line-height: 1.4;
   color: var(--color-ink-faint);
+}
+
+/* ── Scroll reveal ──────────────────────────────────────────────────────────
+   The motion half of app/next/[slug]/Reveal.js; read that file's header for
+   why blocks animate on arrival rather than on load.
+
+   EVERY rule here is scoped to html.reveal-armed, which only ever gets added by
+   the inline script in layout.js. That scoping is the safety property, not a
+   convenience: if the script does not run, or the reader has asked for reduced
+   motion, none of these selectors match and the page is a plain document with
+   nothing hidden. The hidden state must never be the default, because the
+   default is what a family sees when something goes wrong.
+
+   PURE FADE — opacity, and nothing else (2026-09-04, Aaron: "the scroll
+   animations feel choppy... just do pure fade instead of anything that connects
+   to velocity or deceleration").
+
+   The first version rose 1.25rem on a decelerating curve, and the rise was the
+   defect. A transform on a block this wide asks the compositor to move a
+   full-width layer on every frame WHILE the phone is already busy scrolling, so
+   the two compete and it stutters exactly when the reader is moving fastest —
+   the moment the effect was meant to feel best. Opacity moves nothing and lays
+   out nothing, so there is no second job to lose the race against.
+
+   Linear on purpose, not as a shortcut. An easing curve gives a fade an
+   acceleration character, and with no travel left there is nothing for that
+   character to describe: it only makes the middle of the fade change at a
+   different rate than the ends, which IS the velocity quality Aaron asked to
+   remove. A flat ramp tells no such story.
+
+   450ms rather than 680. With no movement, a longer duration buys only a wider
+   window in which a block is half-there, and a fast scroller passing a row of
+   half-faded blocks is the other thing that reads as choppy. */
+html.reveal-armed .next-page [data-reveal] {
+  opacity: 0;
+  transition: opacity 450ms linear;
+}
+html.reveal-armed .next-page [data-reveal].reveal-in {
+  opacity: 1;
+}
+/* Already on screen when the page opened. Same end state, no transition: the
+   reader did not arrive at this, they opened it. */
+html.reveal-armed .next-page [data-reveal].reveal-now {
+  opacity: 1;
+  transition: none;
+}
+
+/* Belt and braces. The arm already refuses to add the class under reduced
+   motion, so this should be unreachable — but a media query costs nothing and
+   the failure it guards against (a family who asked for less motion getting a
+   page that hides its own content) is not one to leave to a single mechanism.
+   The alternative is non-empty on purpose: the content is simply present, which
+   is the state the animation exists to arrive at. */
+@media (prefers-reduced-motion: reduce) {
+  html.reveal-armed .next-page [data-reveal] {
+    opacity: 1;
+    transition: none;
+  }
+}
+
+/* ── The pamphlet chip ──────────────────────────────────────────────────────
+   The md-editor's smart-chip format, borrowed wholesale (2026-09-04, Aaron:
+   "steal our markdown engine's chip format for the PDF link"). Geometry copied
+   from `.md-surface .chip` in VS Code/md-editor/md-editor.css: inline-flex, 5px
+   gap, .9em at weight 500, a tinted fill behind a hairline border, a 7px radius
+   rather than a full pill, and a leading glyph drawn by ::before through a
+   mask so it takes the text's own colour. The date chip there uses exactly this
+   mask trick at 12px, which is where the icon size comes from.
+
+   RECOLOURED, not imported. Over there a chip is green because the editor's
+   accent is green; the tokens (--mde-leaf, --mde-green-deep) do not exist on
+   this page and pulling them in would put a second palette on a surface that
+   has one. The FORMAT is the borrowed thing.
+
+   The two deliberate departures from that file, both because this chip is a
+   real link and md-editor's chips are inert text decorations: a pointer cursor
+   and no `user-select: none`, and no underline — a chip is a chip, and an
+   underline inside a bordered pill reads as two link affordances arguing. */
+.next-page .pdf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0.3rem 0.6rem;
+  border-radius: 7px;
+  font-size: 0.9em;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+  vertical-align: middle;
+  color: var(--color-terracotta-deep);
+  background: color-mix(in srgb, var(--color-terracotta) 10%, var(--color-cream));
+  border: 1px solid color-mix(in srgb, var(--color-terracotta) 28%, transparent);
+  transition: background 150ms linear, border-color 150ms linear;
+}
+.next-page .pdf-chip:hover {
+  background: color-mix(in srgb, var(--color-terracotta) 17%, var(--color-cream));
+  border-color: color-mix(in srgb, var(--color-terracotta) 45%, transparent);
+}
+.next-page .pdf-chip::before {
+  content: '';
+  flex: none;
+  width: 12px;
+  height: 12px;
+  background: currentColor;
+  /* Lucide "file-down", inlined so it takes currentColor like the date chip's
+     calendar glyph does. */
+  --pdf-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z'/%3E%3Cpath d='M14 2v4a2 2 0 0 0 2 2h4'/%3E%3Cpath d='M12 18v-6'/%3E%3Cpath d='m9 15 3 3 3-3'/%3E%3C/svg%3E");
+  mask: var(--pdf-icon) center / contain no-repeat;
+  -webkit-mask: var(--pdf-icon) center / contain no-repeat;
 }

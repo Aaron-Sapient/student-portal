@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { DateTime } from 'luxon';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
@@ -100,6 +100,31 @@ export default function BookingBlock({ slug, initial, copy }) {
   const [busy, setBusy] = useState(false);
   const [loadingMonth, setLoadingMonth] = useState(false);
   const [error, setError] = useState(null);
+
+  /* The sticky bar exists to get a phone to this block in one tap. Once a time
+     is CHOSEN it is not just redundant, it is destructive: it is fixed to the
+     bottom of the viewport and sat directly on top of "Confirm this time" — the
+     one control this whole page is for — so a family who had just tapped 7:00am
+     was looking at a button reading "Pick a time" covering the button that
+     would have booked it. (Aaron, 2026-09-04, with the screenshot.)
+
+     KEYED TO SELECTION, not to whether the calendar is on screen. Visibility
+     was the first attempt and it was wrong, which only measuring showed: the
+     booking section starts 699px down a 844px viewport, so it is already
+     intersecting on the FIRST SCREEN, and an observer hid the bar before a
+     reader had scrolled at all — deleting the bar's entire reason to exist in
+     the name of fixing it. The section being "the fifth thing down" stopped
+     being true when the 09-04 passes cut the clock line and tightened the
+     spacing above it; the bar's own comment still says so.
+
+     `data-picking` on <html>, the same mechanism BookedFlag uses, so CSS owns
+     the hiding and this owns only the fact. Cleared on unmount, or a bar hidden
+     at the moment of a client navigation would stay hidden. */
+  useEffect(() => {
+    const root = document.documentElement;
+    root.setAttribute('data-picking', selected ? '1' : '0');
+    return () => root.removeAttribute('data-picking');
+  }, [selected]);
 
   const month = monthKey ? months[monthKey] : null;
   const today = month?.today || initial?.month?.today || null;
