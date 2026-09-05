@@ -240,6 +240,11 @@ export default function BookingBlock({ slug, initial, copy }) {
       setBooked(null);
       setSelected(null);
       setConfirmCancel(false);
+      /* The H2 above this block is SERVER-rendered from the row, so clearing
+         local state alone left "You're all set." sitting over a calendar that
+         was offering times again. Re-running the server component is what puts
+         the heading, and the sticky bar, back. */
+      router.refresh();
       /* The month the page was showing was computed when this family still had
          no booking, so the slot they just released is missing from it. Re-ask
          rather than hand them a grid with a hole where their own time was. */
