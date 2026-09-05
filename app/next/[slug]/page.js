@@ -479,26 +479,6 @@ export default async function NextPage({ params }) {
             ))}
           </div>
 
-          {/* The International Families pamphlet, HERE and not in the footer
-              (2026-09-05). It used to render as a small underlined link beside
-              the phone number, which is where a document goes when nobody has
-              decided where it belongs: a family reading about how counselling
-              works across a time difference is exactly who wants the one-page
-              version, and they are in this section, not at the bottom of the
-              page hunting for contact details. Moving it also keeps the page's
-              own north star, which is that a thing appears once, in its right
-              place, rather than twice in two weights.
-              Its lede differs from the packages chip's on purpose: two chips on
-              one page both asking "Want to learn more?" reads as a template. */}
-          {lead.intl_pdf && (
-            <div className="mt-7">
-              <p className="pdf-lede">{lead.intlPdfLede || 'There is a one-page guide for families abroad.'}</p>
-              <a className="pdf-chip" href={lead.intlPdfHref} download>
-                {lead.intlPdfLabel}
-              </a>
-            </div>
-          )}
-
           {/* The one Claude-written block on the page, gated OFF until Ryan
               nods. Dateless by construction: the order of the stages and the
               fact that one sequence runs earlier, and not one month, deadline
@@ -679,21 +659,6 @@ export default async function NextPage({ params }) {
             the ladder would compete with it for the same tap.
             The label carries the file type because a link that silently starts
             a download is a link that has surprised someone. */}
-        {lead.packagesPdf && (
-          <Col className="mt-7" data-reveal>
-            {/* A one-line invitation over the chip (Aaron, 2026-09-05). A bare
-                chip under a price ladder reads as a footnote, and a family that
-                has just met three numbers is at exactly the moment they might
-                want the long version. The question is the invitation; the chip
-                is the answer, so the two are one object and the heading is
-                sized to introduce rather than to compete. */}
-            <p className="pdf-lede">{lead.packagesPdfLede || 'Want to learn more?'}</p>
-            <a className="pdf-chip" href={lead.packagesPdfHref} download>
-              {lead.packagesPdfLabel}
-            </a>
-          </Col>
-        )}
-
         <Col className="mt-6" data-reveal>
           <div className="space-y-1 text-[14px] leading-relaxed text-ink-faint">
             {lead.packages.notes.map((n) => (
@@ -702,6 +667,47 @@ export default async function NextPage({ params }) {
           </div>
         </Col>
         </section>
+
+        {/* ── 9b. Want to learn more? ─────────────────────────────────────────
+            The documents, together, under a heading of their own (Aaron,
+            2026-09-05). Both pamphlets used to sit as small ledes inside other
+            sections: one under the price ladder, one under the international
+            lines. That made each a footnote to whatever it happened to follow,
+            and it made the question "is there more to read?" something a family
+            could only answer by scrolling the whole page and noticing two
+            chips in two different places.
+
+            A first-class H2 answers it once. It also puts the two documents
+            beside each other, which is where they belong: they are the same
+            KIND of thing, and a family deciding whether to keep reading is
+            choosing between them rather than stumbling on them one at a time.
+
+            LAST BEFORE THE FOOTER on purpose. Everything above is what this
+            family needs to book a conversation; this is what they take away if
+            they want the longer version, so it sits at the end rather than
+            interrupting the argument. Renders nothing at all when a lead has
+            no documents switched on. */}
+        {(lead.packagesPdf || lead.intl_pdf) && (
+          <section className="mt-20" data-reveal>
+            <Col>
+              <H2>
+                <Accent text={lead.docsHeading || 'Want to learn more?'} />
+              </H2>
+              <div className="doc-chips">
+                {lead.packagesPdf && (
+                  <a className="pdf-chip" href={lead.packagesPdfHref} download>
+                    {lead.packagesPdfLabel}
+                  </a>
+                )}
+                {lead.intl_pdf && (
+                  <a className="pdf-chip" href={lead.intlPdfHref} download>
+                    {lead.intlPdfLabel}
+                  </a>
+                )}
+              </div>
+            </Col>
+          </section>
+        )}
 
         {/* ── 10. The footer ──────────────────────────────────────────────────
             The firm's contact block in the form the pamphlets print it. The en

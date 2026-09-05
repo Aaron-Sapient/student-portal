@@ -1085,11 +1085,13 @@ html.reveal-armed .next-page [data-reveal].reveal-now {
   color: var(--color-ink-soft);
 }
 
-/* The line over the pamphlet chip. Body size, not a heading: the page's H2s are
-   section boundaries and this is a sentence introducing the thing beneath it. */
-.next-page .pdf-lede {
-  margin-bottom: 0.6rem;
-  font-size: 16px;
-  line-height: 1.5;
-  color: var(--color-ink-soft);
+
+/* The two pamphlet chips, side by side under their own heading. They wrap to
+   one per line on a narrow phone rather than shrinking, because a chip whose
+   label breaks across two lines stops reading as a chip. */
+.next-page .doc-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  margin-top: 1.4rem;
 }
