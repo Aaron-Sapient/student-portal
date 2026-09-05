@@ -16,7 +16,35 @@
    chrome the token was drawn for. Re-derived from the same hue, same values the
    /demo board verified arithmetically: light #726858 = 5.19:1 on cream, dark
    #9a9998 = 6.17:1 on the dark ground. Scoped, so the product keeps its token. */
+/* ── The display font token, re-exposed ─────────────────────────────────────
+   `--font-display` DOES NOT EXIST AT RUNTIME. app/globals.css declares it
+   inside `@theme inline`, and Tailwind's `inline` modifier folds the value into
+   the utilities it generates rather than emitting the custom property — so
+   `class="font-display"` works, while a hand-written
+   `font-family: var(--font-display)` is invalid at computed-value time and
+   silently inherits the body sans. Every rule in this file that asked for the
+   display face had been rendering in Hanken Grotesk since it was written:
+   .heard-lead, .cal-title, .nextlist-lead, .welcome, .welcome-from,
+   .intl-stat-figure. Nothing errored and nothing logged; the page simply had
+   two typefaces where it thought it had one.
+
+   Measured over CDP 2026-09-04, at an element inside this page:
+     --font-display  -> "" (empty)
+     --font-fraunces -> "Fraunces", "Fraunces Fallback"
+   next/font sets the second on a wrapper class, which is why it resolves at the
+   element and not at :root.
+
+   Declared HERE, once, rather than by rewriting six rules to say
+   --font-fraunces: the rules are not wrong, the token was missing, and a fix
+   applied at each call site leaves the seventh use of `var(--font-display)`
+   waiting to break in exactly the same silent way. Scoped to .next-page so it
+   cannot change any other portal surface — and no other surface needs it, since
+   /next is the only file in the repo that uses these tokens by hand (swept
+   2026-09-04). */
 .next-page {
+  --font-display: var(--font-fraunces);
+  --font-body: var(--font-hanken);
+
   --color-ink-faint: #726858;
 }
 @media (prefers-color-scheme: dark) {
@@ -808,21 +836,7 @@
    face runs a touch larger on the eye, so it does not need help competing with
    the greeting it sits under. */
 .next-page .welcome {
-  /* var(--font-fraunces), NOT var(--font-display). --font-display is declared
-     in globals.css inside `@theme inline`, and the `inline` modifier means
-     Tailwind folds the value into the utilities it generates and never emits
-     the custom property — so `class="font-display"` works and a hand-written
-     `font-family: var(--font-display)` is invalid at computed-value time and
-     silently inherits the body sans. Measured 2026-09-04 over CDP: at this
-     element --font-display resolves to the empty string while --font-fraunces
-     resolves to "Fraunces", "Fraunces Fallback". next/font sets the latter on a
-     wrapper class, which is why it exists at the element and not at :root.
-     FIVE OTHER RULES IN THIS FILE STILL USE THE BROKEN TOKEN and still render
-     in the body sans: .heard-lead, .cal-title, .nextlist-lead, .welcome-from,
-     .intl-stat-figure. They are left alone deliberately — correcting them
-     changes type Aaron has been reviewing, so it is his call, not a silent
-     side effect of this one line. */
-  font-family: var(--font-fraunces);
+  font-family: var(--font-display);
   font-style: italic;
   font-size: 17px;
   line-height: 1.6;
