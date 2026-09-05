@@ -110,8 +110,8 @@ export async function POST(request) {
     });
     if (stillFree) return Response.json({ error: stillFree }, { status: 409 });
 
-    /* The calendar title uses the family's FILING handle ("Conor Min"), not the
-       page's greeting name. The title is internal: it is what Ryan reads in his
+    /* The calendar title uses the family's FILING handle (surname included, as
+       Ryan files them), not the page's greeting name. The title is internal: it is what Ryan reads in his
        own day and what lib/calendarTitles' matching rules and the omnibar key
        off. The page addresses the student as they asked to be addressed; the
        calendar names the household Ryan filed them under. */
