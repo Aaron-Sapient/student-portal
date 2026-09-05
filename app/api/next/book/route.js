@@ -126,10 +126,27 @@ export async function POST(request) {
       description: eventDescription,
       start: { dateTime: startTime.toISO(), timeZone: 'America/Los_Angeles' },
       end: { dateTime: endTime.toISO(), timeZone: 'America/Los_Angeles' },
-      /* The invitation is the deliverable. A family with no portal account gets
-         the meeting into their own calendar, with the Zoom link, the only way
-         they can: Google's own invite. */
-      ...(b.familyEmail ? { attendees: [{ email: b.familyEmail }] } : {}),
+      /* NO ATTENDEES, deliberately (2026-09-04). This asked Google to invite the
+         family directly, and Google refused every time:
+
+           Service accounts cannot invite attendees without Domain-Wide
+           Delegation of Authority.
+
+         DWD is Workspace-admin state on the tenant that owns ryanchoice.com,
+         and Aaron does not hold that console — so the fix is not a fix Aaron can
+         apply, and a $50,000 lead was about to wait a weekend on somebody else's
+         admin panel for what amounts to a nicety. The invitation was never the
+         deliverable; the MEETING is. The family gets the time, the date and the
+         Zoom link by email through lib/bookingEmail.js, which is exactly how
+         every student booking in this portal has worked for a year — bookMeeting
+         sends no attendees either, which is why it has never needed delegation.
+
+         What the family loses: a calendar entry that appears by itself, and an
+         RSVP. What they get instead: an email they have to add manually. That is
+         the whole gap, and it is worth reopening ONLY as an upgrade once someone
+         with admin on ryanchoice.com can authorize this service account's client
+         id for the calendar scope. Restore this line and the four sendUpdates
+         below together, or the invitation goes out silently to nobody. */
       extendedProperties: {
         private: {
           source: 'student-portal',
@@ -153,12 +170,12 @@ export async function POST(request) {
         dryRun: true,
         wouldInsert: {
           calendarId: instructor.calendarId,
-          sendUpdates: 'all',
+          sendUpdates: 'none',
           requestBody,
         },
         wouldCancelEventId: existing?.event_id || null,
         wouldEmail: lead.rehearsal
-          ? { to: [b.familyEmail], note: 'rehearsal: calendar invitation only, support@ NOT notified' }
+          ? { to: [b.familyEmail], note: 'rehearsal: family only, support@ NOT notified', via: 'lib/bookingEmail.sendBookingEmail' }
           : { to: [b.familyEmail, instructor.bookingEmail].filter(Boolean), via: 'lib/bookingEmail.sendBookingEmail' },
         wouldRecordOn: `lead_pages.${slug}`,
         booked: bookedPayload(
@@ -168,11 +185,12 @@ export async function POST(request) {
       });
     }
 
-    // 2. Insert. sendUpdates 'all' is what makes Google actually deliver the
-    //    invitation rather than silently adding a guest who is never told.
+    // 2. Insert. sendUpdates is 'none' because there are no attendees left to
+    //    notify — see the requestBody comment above. The family is told by
+    //    email in step 5, not by Google.
     const eventRes = await calendar.events.insert({
       calendarId: instructor.calendarId,
-      sendUpdates: 'all',
+      sendUpdates: 'none',
       requestBody,
     });
 
@@ -192,7 +210,7 @@ export async function POST(request) {
         await calendar.events.delete({
           calendarId: instructor.calendarId,
           eventId: eventRes.data.id,
-          sendUpdates: 'all',
+          sendUpdates: 'none',
         });
       } catch (delErr) {
         console.error('Failed to roll back orphaned event:', delErr);
@@ -207,7 +225,7 @@ export async function POST(request) {
         await calendar.events.delete({
           calendarId: instructor.calendarId,
           eventId: existing.event_id,
-          sendUpdates: 'all',
+          sendUpdates: 'none',
         });
       } catch (cancelErr) {
         // The family's booking is correct and recorded; what is left is one
@@ -222,11 +240,19 @@ export async function POST(request) {
     //    UNLESS this is a rehearsal: the invitation still goes to the attendee
     //    (receiving it is the exercise), but nobody on the team should be told a
     //    family booked when no family did.
-    if (lead.rehearsal) {
-      console.log(`[rehearsal] ${slug}: booking notification skipped by design`);
-    } else try {
+    /* A rehearsal now SENDS, where it used to stay silent. That silence was
+       correct only while Google delivered the invitation: receiving it was the
+       whole exercise, so the mail would have been a second copy and support@
+       would have been told a family booked when none had. With the invitation
+       gone the mail is the ONLY signal there is, and a rehearsal that notifies
+       nobody proves nothing.
+       support@ still stays out of it, by handing sendBookingEmail an instructor
+       with no booking address rather than by branching around the call — the
+       helper already drops empty recipients, and it is shared with the portal's
+       own booking route, so it is not the place to teach about rehearsals. */
+    try {
       await sendBookingEmail(
-        instructor,
+        lead.rehearsal ? { ...instructor, bookingEmail: null, cancelEmail: null } : instructor,
         b.calendarName || lead.student,
         b.familyEmail,
         durationLabel,

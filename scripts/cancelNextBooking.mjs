@@ -107,7 +107,7 @@ const calendar = google.calendar({ version: 'v3', auth });
 
 try {
   await calendar.events.delete({ calendarId, eventId: booking.event_id, sendUpdates: 'all' });
-  console.log('deleted the calendar event (attendees notified)');
+  console.log('deleted the calendar event (no attendees to notify; see app/api/next/book/route.js)');
 } catch (err) {
   /* 410 means Google already considers it gone. That is the desired end state,
      so the row still gets cleared rather than left pointing at nothing. */
