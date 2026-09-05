@@ -4,6 +4,7 @@ import { getInstructor, validateInstructorHours } from '@/lib/instructors';
 import { verifySlotStillFree } from '@/lib/bookingSlots';
 import { buildEventTitle } from '@/lib/calendarTitles';
 import { sendBookingEmail } from '@/lib/bookingEmail';
+import { renderConfirmation, sendConfirmation } from '@/lib/nextLeadEmail';
 import { describeSlot, inFamilyMorning, NEXT_DURATION_MINUTES } from '@/lib/nextBooking';
 import { getLead, maskEmail, recordLeadBooking } from '@/app/next/[slug]/leads';
 
@@ -53,6 +54,11 @@ export async function POST(request) {
   }
 
   const { slug, start, dryRun = false } = body || {};
+  /* The family reaches this page at book.ryanchoice.com/<slug>, not under
+     /next/ — that host serves lead pages from its root (proxy.js). The
+     confirmation links there rather than at the portal domain so the address in
+     their inbox matches the one in the email that brought them. */
+  const familyBase = process.env.NEXT_LEAD_BASE_URL || 'https://book.ryanchoice.com';
   if (!slug || !start) return Response.json({ error: 'Missing slug or start' }, { status: 400 });
 
   const lead = await getLead(slug);
@@ -174,9 +180,28 @@ export async function POST(request) {
           requestBody,
         },
         wouldCancelEventId: existing?.event_id || null,
-        wouldEmail: lead.rehearsal
-          ? { to: [b.familyEmail], note: 'rehearsal: family only, support@ NOT notified', via: 'lib/bookingEmail.sendBookingEmail' }
-          : { to: [b.familyEmail, instructor.bookingEmail].filter(Boolean), via: 'lib/bookingEmail.sendBookingEmail' },
+        /* The family's mail RENDERED, not described. `dryRun: true` is how a
+           new lead's confirmation gets proofread before any family receives
+           one: the copy resolves against that row's own overrides and its own
+           booking, so what is printed here is exactly what would be sent. */
+        wouldEmail: {
+          family: renderConfirmation({
+            lead, instructor,
+            slot: describeSlot(
+              { start: startTime.toISO(), end: endTime.toISO() },
+              timezone, zoneLabel
+            ),
+            durationLabel,
+            pageUrl: `${familyBase}/${slug}`,
+            isReschedule: Boolean(existing?.event_id),
+          }),
+          ops: lead.rehearsal
+            ? null
+            : { to: instructor.bookingEmail, via: 'lib/bookingEmail.sendBookingEmail (unchanged ops shape)' },
+          note: lead.rehearsal
+            ? 'rehearsal: family only, support@ NOT notified'
+            : 'two mails, one per audience',
+        },
         wouldRecordOn: `lead_pages.${slug}`,
         booked: bookedPayload(
           { start: startTime.toISO(), event_id: '(dry run: no event created)', booked_at: DateTime.now().toISO() },
@@ -240,30 +265,53 @@ export async function POST(request) {
     //    UNLESS this is a rehearsal: the invitation still goes to the attendee
     //    (receiving it is the exercise), but nobody on the team should be told a
     //    family booked when no family did.
-    /* A rehearsal now SENDS, where it used to stay silent. That silence was
-       correct only while Google delivered the invitation: receiving it was the
-       whole exercise, so the mail would have been a second copy and support@
-       would have been told a family booked when none had. With the invitation
-       gone the mail is the ONLY signal there is, and a rehearsal that notifies
-       nobody proves nothing.
-       support@ still stays out of it, by handing sendBookingEmail an instructor
-       with no booking address rather than by branching around the call — the
-       helper already drops empty recipients, and it is shared with the portal's
-       own booking route, so it is not the place to teach about rehearsals. */
+    /* 5. TWO AUDIENCES, TWO MAILS.
+
+       The family gets lib/nextLeadEmail.js: their own clock first, Ryan's
+       beside it, the Zoom link, a way back to their page, signed by a person.
+       It is the only thing they receive now that Google no longer sends an
+       invitation, so it is written for them rather than inherited from an
+       operations inbox.
+
+       support@ keeps the shape it already reads, through the untouched
+       sendBookingEmail, with the family address passed as null so that helper
+       resolves to the instructor's inbox alone. Before this, one mail went to
+       both and the family read a line about themselves in the third person.
+
+       A rehearsal sends the family half only. Nobody on the team should be told
+       a family booked when none did, and the mail is marked REHEARSAL in its
+       subject so it cannot be mistaken for a real one in Aaron's inbox.
+
+       Neither failure can fail the booking: the meeting is on the calendar and
+       recorded before either send is attempted, and a confirmed booking that
+       reports an error because a mail server hiccuped would send the family
+       back to book a second one. */
     try {
-      await sendBookingEmail(
-        lead.rehearsal ? { ...instructor, bookingEmail: null, cancelEmail: null } : instructor,
-        b.calendarName || lead.student,
-        b.familyEmail,
+      await sendConfirmation({
+        lead, instructor,
+        slot: describeSlot({ start: startTime.toISO(), end: endTime.toISO() }, timezone, zoneLabel),
         durationLabel,
-        startTime.toISO(),
-        b.agenda || 'Second conversation',
-        Boolean(existing?.event_id)
-      );
+        pageUrl: `${familyBase}/${slug}`,
+        isReschedule: Boolean(existing?.event_id),
+      });
     } catch (mailErr) {
-      // A failed notification must never fail a confirmed booking. The meeting
-      // is on the calendar and the family has their invitation.
-      console.error(`Booking notification failed for ${slug}:`, mailErr);
+      console.error(`Family confirmation failed for ${slug}:`, mailErr);
+    }
+
+    if (!lead.rehearsal) {
+      try {
+        await sendBookingEmail(
+          instructor,
+          b.calendarName || lead.student,
+          null,
+          durationLabel,
+          startTime.toISO(),
+          b.agenda || 'Second conversation',
+          Boolean(existing?.event_id)
+        );
+      } catch (mailErr) {
+        console.error(`support@ notification failed for ${slug}:`, mailErr);
+      }
     }
 
     return Response.json({
