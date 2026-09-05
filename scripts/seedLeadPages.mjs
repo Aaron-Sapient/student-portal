@@ -8,7 +8,8 @@
  *   node scripts/seedLeadPages.mjs --list          # what is in the table now
  *
  * Dry run by default, on purpose: these rows are what a family sees, and the
- * upsert REPLACES `data` wholesale.
+ * upsert REPLACES `data` wholesale, EXCEPT `data.booked`, which is state
+ * rather than copy and is carried across from the row's own columns.
  *
  * Why this script exists at all. app/next/leads/*.json is gitignored, because a
  * lead file carries a minor's first name, a parent's email address and phone
@@ -119,9 +120,41 @@ for (const f of files) {
     continue;
   }
 
+  /* A BOOKING SURVIVES A RE-SEED (2026-09-05, after this bit me).
+     This upsert replaces `data` wholesale, and `data.booked` lives inside it,
+     so re-seeding a row to fix one line of copy silently erased a confirmed
+     booking: the columns and the Google event both survived, the page went back
+     to offering times, and nothing errored. The old defence was a sentence in a
+     handoff telling a human to remember, which is the kind of defence that
+     works right up until someone is three edits deep at midnight.
+
+     `data` is copy and is meant to be replaced. `data.booked` is STATE and is
+     carried across from whatever is already in the row. The columns are the
+     authority (recordLeadBooking writes both), so they are what gets rebuilt
+     from, not the jsonb that is about to be overwritten. */
+  const { data: existing } = await sb
+    .from(TABLE)
+    .select('booked_event_id, booked_start, booked_at')
+    .eq('slug', slug)
+    .maybeSingle();
+
+  const preserved = existing?.booked_event_id
+    ? {
+        ...data,
+        booked: {
+          event_id: existing.booked_event_id,
+          start: existing.booked_start,
+          booked_at: existing.booked_at,
+        },
+      }
+    : data;
+  if (existing?.booked_event_id) {
+    console.log(`  (${slug} holds a booking; carrying it across the re-seed)`);
+  }
+
   const { error } = await sb
     .from(TABLE)
-    .upsert({ slug, data, updated_at: new Date().toISOString() }, { onConflict: 'slug' });
+    .upsert({ slug, data: preserved, updated_at: new Date().toISOString() }, { onConflict: 'slug' });
   if (error) {
     console.error(`  FAIL ${slug}: ${error.message}`);
     failed++;

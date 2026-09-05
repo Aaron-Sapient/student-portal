@@ -386,8 +386,15 @@ export default async function NextPage({ params }) {
             JavaScript adds is the ability to tap one. */}
         <section id="pick-a-time" className="mt-16 scroll-mt-8">
           <Col>
+            {/* "Pick a time." stops being true the moment they have one
+                (Aaron, 2026-09-05). Rendered from the SERVER's copy of the
+                booking rather than swapped by CSS, so a family returning to
+                their page never sees the wrong heading flash before hydration.
+                BookingBlock calls router.refresh() after a booking or a
+                cancel, which re-runs this and keeps it honest without a
+                reload. */}
             <H2>
-              <Accent text={b.heading} />
+              <Accent text={bookedState ? b.booked?.heading || "You're all set." : b.heading} />
             </H2>
 
             {/* The static booked panel that lived here is GONE (2026-09-05).

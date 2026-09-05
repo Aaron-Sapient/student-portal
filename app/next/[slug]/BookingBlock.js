@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { DateTime } from 'luxon';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
@@ -101,6 +102,7 @@ export default function BookingBlock({ slug, initial, copy }) {
   const [loadingMonth, setLoadingMonth] = useState(false);
   const [error, setError] = useState(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const router = useRouter();
 
   /* Keep <html data-booked> in step with what this component is showing, so the
      CSS that swaps booked/unbooked content stays right through a booking, a
@@ -206,6 +208,10 @@ export default function BookingBlock({ slug, initial, copy }) {
         return;
       }
       setBooked(json.booked);
+      /* Re-run the server component so the H2 and the sticky bar agree with
+         the panel. Cheaper and less jarring than a reload, and it keeps client
+         state. */
+      router.refresh();
     } catch {
       setError('Something went wrong. Please try again.');
     } finally {
@@ -273,15 +279,24 @@ export default function BookingBlock({ slug, initial, copy }) {
 
     return (
       <div className="neu-raised mt-6 rounded-[1.75rem] p-7">
-        <p className="font-display text-[1.5rem] font-semibold leading-tight text-ink">
-          {copy.booked.heading}
-        </p>
-        <p className="mt-3 font-display text-[1.15rem] font-semibold leading-snug text-ink">
+        {/* No heading of its own any more: the H2 above this block now says
+            "You're all set.", and a panel repeating it underneath was the same
+            sentence twice in two type sizes. The time is the panel's lead,
+            which is what a family actually came back to check. */}
+        <p className="font-display text-[1.35rem] font-semibold leading-snug text-ink">
           {booked.slot.family.day} {booked.slot.family.time} {booked.slot.family.zone}
         </p>
-        <p className="mt-0.5 text-[14px] leading-snug text-ink-soft">
-          {booked.slot.pacific.day} {booked.slot.pacific.time} in Irvine
-        </p>
+        {/* Ryan's clock is GONE from here (Aaron, 2026-09-05). A second time
+            zone earns its place while a family is CHOOSING, because picking
+            across a twelve-hour gap is a decision nobody can make without
+            seeing both ends of it. Once the choice is made there is nothing
+            left to translate, and telling a parent in Singapore what time it is
+            in Irvine is just handing them our coordinates to carry.
+
+            A family who IS on Pacific time loses nothing: the line above prints
+            their own zoneLabel, so "Tuesday 4:30 pm Pacific time" is already
+            what they see. The indicator survives for the people it means
+            something to, which is the whole rule. */}
         {/* "An invitation is on its way" was true while Google sent one and is
             not any more. Promising a family an invitation that will never
             arrive is worse than the missing invitation itself, because they
