@@ -479,6 +479,26 @@ export default async function NextPage({ params }) {
             ))}
           </div>
 
+          {/* The International Families pamphlet, HERE and not in the footer
+              (2026-09-05). It used to render as a small underlined link beside
+              the phone number, which is where a document goes when nobody has
+              decided where it belongs: a family reading about how counselling
+              works across a time difference is exactly who wants the one-page
+              version, and they are in this section, not at the bottom of the
+              page hunting for contact details. Moving it also keeps the page's
+              own north star, which is that a thing appears once, in its right
+              place, rather than twice in two weights.
+              Its lede differs from the packages chip's on purpose: two chips on
+              one page both asking "Want to learn more?" reads as a template. */}
+          {lead.intl_pdf && (
+            <div className="mt-7">
+              <p className="pdf-lede">{lead.intlPdfLede || 'There is a one-page guide for families abroad.'}</p>
+              <a className="pdf-chip" href={lead.intlPdfHref} download>
+                {lead.intlPdfLabel}
+              </a>
+            </div>
+          )}
+
           {/* The one Claude-written block on the page, gated OFF until Ryan
               nods. Dateless by construction: the order of the stages and the
               fact that one sequence runs earlier, and not one month, deadline
@@ -704,16 +724,11 @@ export default async function NextPage({ params }) {
                 {lead.footer.email}
               </a>
             </p>
-            {lead.intl_pdf && (
-              <p className="mt-4">
-                <a
-                  className="text-terracotta-deep underline underline-offset-2"
-                  href={lead.intlPdfHref}
-                >
-                  {lead.intlPdfLabel}
-                </a>
-              </p>
-            )}
+            {/* The International Families PDF link that lived here has MOVED
+                into the international section itself, as a chip. A document
+                filed next to a phone number is a document nobody decided a home
+                for, and leaving a copy here as well would put the same link on
+                the page twice in two different weights. */}
           </div>
         </Col>
       </main>
