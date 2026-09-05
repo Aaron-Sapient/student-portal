@@ -8,6 +8,7 @@ import Reveal from './Reveal';
 import NextList from './nextlist';
 import { BookedFlag } from './LiveBits';
 import { describeSlot } from '@/lib/nextBooking';
+import { getInstructor } from '@/lib/instructors';
 
 /* /next/<slug> — the page a family lands on from the first post-consult email.
    ─────────────────────────────────────────────────────────────────────────
@@ -150,6 +151,10 @@ export default async function NextPage({ params }) {
   if (!lead) notFound();
 
   const b = lead.booking || {};
+  /* Server-side only, which is why it can come from lib/instructors rather than
+     the client-safe half: this component never ships to the browser, and the
+     one field the client needs (zoomLink) is handed over explicitly below. */
+  const instructor = getInstructor(b.instructor);
 
   /* A closed page. The family followed a link somebody gave them, so this is a
      200 and a quiet sentence, never a 404: a 404 tells a person they typed
@@ -385,22 +390,19 @@ export default async function NextPage({ params }) {
               <Accent text={b.heading} />
             </H2>
 
-            <div className="booked-only mt-6">
-              <div className="neu-raised rounded-[1.75rem] p-7">
-                <p className="font-display text-[1.5rem] font-semibold leading-tight text-ink">
-                  {b.booked?.heading}
-                </p>
-                <p className="mt-2 text-[16px] leading-relaxed text-ink-soft">{b.booked?.body}</p>
-              </div>
-            </div>
+            {/* The static booked panel that lived here is GONE (2026-09-05).
+                It said the same two lines BookingBlock's own booked panel says,
+                minus the calendar buttons, the reschedule and the cancel, and
+                the CSS path that swapped them in would have hidden the richer
+                one to show the poorer one. BookingBlock owns the booked state
+                outright now: it renders either the picker or the panel, and
+                this file stops trying to render a third thing.
 
-            <div className="unbooked-only">
+                The row's zoneNote is still deliberately unrendered: every chip
+                and every day carries both clocks, so it restated the control. */}
+            {!bookedState && (
               <p className="mt-4 text-[16px] leading-relaxed text-ink-soft">{b.sub}</p>
-              {/* The row's zoneNote ("Friday evening in California is Saturday
-                  morning in Singapore") is deliberately NOT rendered any more:
-                  every chip and every day now carries both clocks, so the
-                  sentence restated what the control shows. */}
-            </div>
+            )}
           </Col>
 
           {/* The control takes the page's wide-figure exception at lg, the same
@@ -408,12 +410,19 @@ export default async function NextPage({ params }) {
               a 38rem prose measure cannot hold a month grid beside a column of
               chips. Everything above it that is READ stays on the prose column
               with the rest of the page's text. */}
-          <Wide className="unbooked-only">
+          <Wide>
             <BookingBlock
               slug={slug}
               initial={{ month, booked: bookedState }}
               copy={{
                 booked: b.booked || { heading: 'Booked.', body: 'Nothing to prepare.' },
+                /* For the add-to-calendar actions on the booked panel. The link
+                   is already client-safe (lib/instructorPublic.js says so in its
+                   first line) and is on this page anyway; passing it explicitly
+                   keeps the client component from importing instructor config
+                   just to build a URL. */
+                zoomLink: instructor.zoomLink,
+                calendarTitle: b.calendarTitle || `Conversation with ${instructor.fullName || instructor.displayName}`,
                 confirmLabel: b.confirmLabel || 'Confirm this time',
                 emptyLabel:
                   b.emptyLabel ||
@@ -645,6 +654,13 @@ export default async function NextPage({ params }) {
             a download is a link that has surprised someone. */}
         {lead.packagesPdf && (
           <Col className="mt-7" data-reveal>
+            {/* A one-line invitation over the chip (Aaron, 2026-09-05). A bare
+                chip under a price ladder reads as a footnote, and a family that
+                has just met three numbers is at exactly the moment they might
+                want the long version. The question is the invitation; the chip
+                is the answer, so the two are one object and the heading is
+                sized to introduce rather than to compete. */}
+            <p className="pdf-lede">{lead.packagesPdfLede || 'Want to learn more?'}</p>
             <a className="pdf-chip" href={lead.packagesPdfHref} download>
               {lead.packagesPdfLabel}
             </a>
@@ -701,11 +717,20 @@ export default async function NextPage({ params }) {
           door: it moves the page, it does not open anything. Hidden once the
           family has booked, and hidden on desktop, where the whole page is a
           short scroll and a fixed bar over the content buys nothing. */}
+      {/* Not rendered at all once the row holds a booking. `unbooked-only`
+          alone was not enough: that class is driven by a data-booked attribute
+          which, until 2026-09-05, was set ONLY by the ?booked=1 client flag, so
+          a family returning to their own page was server-rendered as booked and
+          still got a "Pick a time" bar pinned over their confirmation. Nothing
+          had ever stayed booked before tonight, so nothing had ever shown it.
+          The class stays for the client-side transitions BookingBlock drives. */}
+      {!bookedState && (
       <div className="sticky-book unbooked-only lg:hidden">
         <a href="#pick-a-time" className="sticky-book-btn">
           {b.stickyLabel}
         </a>
       </div>
+      )}
     </>
   );
 }

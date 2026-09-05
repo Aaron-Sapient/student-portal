@@ -994,3 +994,102 @@ html.reveal-armed .next-page [data-reveal].reveal-now {
   mask: var(--pdf-icon) center / contain no-repeat;
   -webkit-mask: var(--pdf-icon) center / contain no-repeat;
 }
+
+/* ── The booked panel's actions ─────────────────────────────────────────────
+   Two weights, because the four actions are not four peers. Adding the meeting
+   to a calendar is what almost everyone does next and gets real buttons;
+   changing or dropping it is rare and gets quiet text. Making all four look
+   alike would put "Cancel" at the same volume as "Add to Google Calendar" on a
+   panel a family lands on the moment they have committed.
+
+   The buttons are OUTLINED rather than filled. A filled terracotta button is
+   this page's one loud object and it belongs to "Confirm this time"; once that
+   tap has happened, nothing on the page should shout with the same voice. */
+.next-page .cal-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1.5rem;
+}
+.next-page .cal-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 44px floor: these are the panel's primary targets on a phone. */
+  min-height: 44px;
+  padding: 0.6rem 1.1rem;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  color: var(--color-terracotta-deep);
+  background: color-mix(in srgb, var(--color-terracotta) 10%, var(--color-cream));
+  border: 1px solid color-mix(in srgb, var(--color-terracotta) 32%, transparent);
+  transition: background 150ms linear, border-color 150ms linear;
+}
+.next-page .cal-add-btn:hover {
+  background: color-mix(in srgb, var(--color-terracotta) 18%, var(--color-cream));
+  border-color: color-mix(in srgb, var(--color-terracotta) 50%, transparent);
+}
+/* Each takes a whole row below 380px rather than breaking its label across two
+   lines, which is where "Add to Google Calendar" lands on a small phone. */
+@media (max-width: 379px) {
+  .next-page .cal-add-btn {
+    width: 100%;
+  }
+}
+
+.next-page .booked-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 1.25rem;
+  margin-top: 1.25rem;
+}
+.next-page .booked-link {
+  min-height: 44px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--color-ink-faint);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.next-page .booked-link:hover {
+  color: var(--color-ink);
+}
+.next-page .booked-link:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+/* The destructive one. Colour is the ONLY thing separating it, and colour alone
+   is never the signal here: it sits behind a two-tap confirmation whose own
+   words say what it does, so the hue is reinforcement rather than the message. */
+.next-page .booked-link-warn {
+  color: var(--color-terracotta-deep);
+  font-weight: 600;
+}
+.next-page .booked-link-warn:hover {
+  color: var(--color-terracotta-deep);
+}
+.next-page .booked-confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.9rem;
+  font-size: 14px;
+  color: var(--color-ink-soft);
+}
+
+/* The line over the pamphlet chip. Body size, not a heading: the page's H2s are
+   section boundaries and this is a sentence introducing the thing beneath it. */
+.next-page .pdf-lede {
+  margin-bottom: 0.6rem;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--color-ink-soft);
+}

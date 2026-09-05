@@ -100,6 +100,18 @@ export default function BookingBlock({ slug, initial, copy }) {
   const [busy, setBusy] = useState(false);
   const [loadingMonth, setLoadingMonth] = useState(false);
   const [error, setError] = useState(null);
+  const [confirmCancel, setConfirmCancel] = useState(false);
+
+  /* Keep <html data-booked> in step with what this component is showing, so the
+     CSS that swaps booked/unbooked content stays right through a booking, a
+     cancel and a reschedule without a reload. The server gates the sticky bar
+     on its own copy of the same fact (page.js), which is what stops it flashing
+     before hydration; this covers every transition after that. */
+  useEffect(() => {
+    const root = document.documentElement;
+    if (booked) root.setAttribute('data-booked', '1');
+    else root.removeAttribute('data-booked');
+  }, [booked]);
 
   /* The sticky bar exists to get a phone to this block in one tap. Once a time
      is CHOSEN it is not just redundant, it is destructive: it is fixed to the
@@ -201,7 +213,64 @@ export default function BookingBlock({ slug, initial, copy }) {
     }
   }
 
+  /* Cancelling from the booked panel. The row and the calendar are both the
+     server's problem (/api/next/cancel); this only has to put the page back to
+     offering times and say so if it could not. */
+  async function cancelBooking() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/next/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json?.error || 'That could not be cancelled. Please try again.');
+        return;
+      }
+      setBooked(null);
+      setSelected(null);
+      setConfirmCancel(false);
+      /* The month the page was showing was computed when this family still had
+         no booking, so the slot they just released is missing from it. Re-ask
+         rather than hand them a grid with a hole where their own time was. */
+      if (monthKey) await loadMonth(monthKey, { force: true });
+    } catch {
+      setError('Something went wrong. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (booked) {
+    /* THE BOOKED PANEL IS THE FAMILY'S LITTLE PORTAL (Aaron, 2026-09-05).
+       Confirming does not navigate anywhere, which read as odd until Aaron
+       named why it is right: the address is the family's own name, so the page
+       they were sent stays the page they come back to. That makes this panel
+       the thing they return to rather than a receipt they read once, and a
+       thing you return to owes you something to DO.
+
+       Four actions, in two weights. Adding the meeting to a calendar is the
+       common one and gets real buttons; changing or dropping it is rarer and
+       gets quiet text. Add-to-calendar exists at all because the Google
+       invitation does not any more (no domain-wide delegation, see
+       /api/next/book): the family used to get the meeting in their calendar for
+       free, and this is the nearest one-tap replacement. */
+    const zoomLink = copy.zoomLink || '';
+    const startUtc = DateTime.fromISO(booked.slot.start).toUTC();
+    const endUtc = DateTime.fromISO(booked.slot.end).toUTC();
+    const stamp = (d) => d.toFormat("yyyyLLdd'T'HHmmss'Z'");
+    /* Google wants a URL, not a file; everything else reads the .ics. */
+    const googleUrl =
+      'https://calendar.google.com/calendar/render?action=TEMPLATE' +
+      `&text=${encodeURIComponent(copy.booked.calendarTitle || 'Conversation with Ryan Choi')}` +
+      `&dates=${stamp(startUtc)}/${stamp(endUtc)}` +
+      `&details=${encodeURIComponent(`Zoom: ${zoomLink}`)}` +
+      `&location=${encodeURIComponent(zoomLink)}`;
+
     return (
       <div className="neu-raised mt-6 rounded-[1.75rem] p-7">
         <p className="font-display text-[1.5rem] font-semibold leading-tight text-ink">
@@ -213,11 +282,53 @@ export default function BookingBlock({ slug, initial, copy }) {
         <p className="mt-0.5 text-[14px] leading-snug text-ink-soft">
           {booked.slot.pacific.day} {booked.slot.pacific.time} in Irvine
         </p>
+        {/* "An invitation is on its way" was true while Google sent one and is
+            not any more. Promising a family an invitation that will never
+            arrive is worse than the missing invitation itself, because they
+            wait for it instead of adding the meeting themselves. */}
         <p className="mt-4 text-[16px] leading-relaxed text-ink-soft">
           {booked.email
-            ? `An invitation is on its way to ${booked.email} with the Zoom link. ${copy.booked.body}`
-            : `An invitation is on its way with the Zoom link. ${copy.booked.body}`}
+            ? `A confirmation is on its way to ${booked.email} with the Zoom link. ${copy.booked.body}`
+            : `A confirmation is on its way with the Zoom link. ${copy.booked.body}`}
         </p>
+
+        <div className="cal-add">
+          <a className="cal-add-btn" href={googleUrl} target="_blank" rel="noopener noreferrer">
+            Add to Google Calendar
+          </a>
+          {/* Apple, Outlook, Fantastical and iOS all open this. */}
+          <a className="cal-add-btn" href={`/api/next/ics?slug=${encodeURIComponent(slug)}`}>
+            Add to Apple Calendar
+          </a>
+        </div>
+
+        <div className="booked-actions">
+          {/* Reschedule just reopens the picker. Confirming a second time
+              replaces the event server-side, so there is nothing to cancel
+              first and no window where the family holds no booking at all. */}
+          <button type="button" className="booked-link" onClick={() => { setBooked(null); setSelected(null); }}>
+            Reschedule
+          </button>
+          {confirmCancel ? (
+            <span className="booked-confirm">
+              <span>Cancel this conversation?</span>
+              <button type="button" className="booked-link booked-link-warn" onClick={cancelBooking} disabled={busy}>
+                {busy ? 'Cancelling' : 'Yes, cancel'}
+              </button>
+              <button type="button" className="booked-link" onClick={() => setConfirmCancel(false)} disabled={busy}>
+                Keep it
+              </button>
+            </span>
+          ) : (
+            /* Two taps, inline. Never window.confirm: it is unstyled, it reads
+               as a browser warning rather than as part of the page, and on iOS
+               it can arrive detached from the tap that caused it. */
+            <button type="button" className="booked-link" onClick={() => setConfirmCancel(true)}>
+              Cancel
+            </button>
+          )}
+        </div>
+        {error && <p className="mt-3 text-[14px] text-terracotta-deep">{error}</p>}
       </div>
     );
   }

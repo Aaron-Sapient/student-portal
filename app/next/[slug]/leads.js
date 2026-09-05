@@ -147,3 +147,37 @@ export async function recordLeadBooking(slug, booking) {
   if (error) throw new Error(`lead_pages booking write failed for "${slug}": ${error.message}`);
   return booking;
 }
+
+/* The inverse of recordLeadBooking: put the row back to offering times.
+
+   `data.booked` is DELETED rather than set to null, because the page tests for
+   its presence to choose between the picker and the booked panel, and a null
+   that is still a key is a booked state with no booking in it.
+
+   Written here beside its opposite, and shared with scripts/cancelNextBooking
+   and /api/next/cancel, so the two ways a booking can be undone cannot drift
+   into clearing different subsets of the row. */
+export async function clearLeadBooking(slug) {
+  const client = getSupabaseClient();
+  const { data: row, error: readErr } = await client
+    .from(LEAD_PAGES)
+    .select('data')
+    .eq('slug', slug)
+    .maybeSingle();
+  if (readErr) throw new Error(`lead_pages read failed for "${slug}": ${readErr.message}`);
+  if (!row) throw new Error(`lead_pages has no row for "${slug}"`);
+
+  const next = { ...row.data };
+  delete next.booked;
+  const { error } = await client
+    .from(LEAD_PAGES)
+    .update({
+      data: next,
+      booked_event_id: null,
+      booked_start: null,
+      booked_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('slug', slug);
+  if (error) throw new Error(`lead_pages clear failed for "${slug}": ${error.message}`);
+}
