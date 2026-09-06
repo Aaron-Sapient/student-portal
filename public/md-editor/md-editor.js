@@ -29,8 +29,8 @@
      sync.sh, so a consumer's own copy always answers for itself. Workflow: bump BOTH of these
      AND add a dated entry to CHANGELOG.md as a normal part of shipping any user-visible change —
      see CHANGELOG.md's header. Do not let this drift; a stale stamp defeats the whole feature. */
-  const MDE_VERSION = "1.7.0";
-  const MDE_LAST_CHANGE = "Export to portable markdown: two new Export entries in the ⌥/ palette (Copy portable markdown · Export portable markdown (.md)) turn the document into plain CommonMark + GFM tables with every engine-only construct removed — styles, side comments, indents and table layout lines gone, lists renumbered and nested the CommonMark way.";
+  const MDE_VERSION = "1.7.1";
+  const MDE_LAST_CHANGE = "Stacked formatting fixed: strikethrough, bold, italic, code, colour/font/underline spans and side comments can now be layered on the same text in any order and partially overlapped without raw @{…} / ~~ syntax leaking into the page — formatting ops rebuild the line from a flat per-character model instead of wrapping text in place; the first edit of a line also cleans up markers the old bug left behind.";
 
   /* ============================================================================
      Side comments + emoji reactions — the in-document data model (MODULE scope, so
@@ -1366,6 +1366,205 @@
       }
       return [a, b];
     }
+    /* ===== Bugs #18 — inline formatting goes through a flat model, never by wrapping ranges ====
+       Two engines used to wrap text in place — emphasis (`**` `*` `~~` `` ` ``) and style spans
+       (`@{s:…}…@{/s}`) — each knowing only its own pairs, so a range that partially overlapped the
+       other kind's run wrote interleaved pairs (`~~some @{s:…}~~target@{/s}`) and unwrapping part
+       of a stacked run left marker-only husks (`~~@{s:…}@{c:id}~~`). A tree parser cannot render
+       either, so raw syntax leaked (Aaron, 2026-09-06). This removes the class of bug, not its
+       instances: a line's content is parsed into a flat list of items — one per visible character
+       (or atom: chip, image, link) carrying the SET of formats in force there, plus zero-width atoms
+       (comment anchors, hidden %%…%% / <!--…--> comments) that ride along — the operation flips
+       formats on the items inside the range, and the line is re-serialized with a fixed nesting
+       order (~~, **, * outside; then the @{s:…} span; ` innermost). Nesting is correct by construction,
+       husks cannot occur, code content stays literal (code is innermost), and orphan @{s:…} / @{/s}
+       markers left behind by the old bug are dropped on the first edit of that line. Deliberate
+       side effect: the touched line's markup is normalised (`__x__` → `**x**`, nested spans
+       flattened to their merged spec) — render-identical, tidier source. ===== */
+    const EMPH_ORDER = ["del", "b", "em", "code"];            // nesting order, outermost → innermost
+    const ORPHAN_STYLE_RE = /^(?:@\{s:[^}]*\}|@\{\/s\})/;     // an unpaired style marker in TEXT = legacy corruption
+    // items: { ch:true,   text, s, fm:{del,b,em,code}, st:{prop:val} }  one visible character
+    //        { atom:true, text, s, fm, st }                             chip / image / link — visible, formattable
+    //        { zero:true, text, s }                                     anchor / hidden comment — invisible, inherits
+    function lineModel(content, base) {
+      const items = [];
+      const push = (text, s, fm, st) => items.push({ ch: true, text, s, fm: Object.assign({}, fm), st: Object.assign({}, st) });
+      const walk = (str, off, fm, st) => {
+        for (const t of parseInline(str, off)) {
+          if (t.kind === "text") {
+            for (let i = 0; i < t.text.length; ) {
+              const m = ORPHAN_STYLE_RE.exec(t.text.slice(i));
+              if (m) { i += m[0].length; continue; }              // drop the orphan, keep everything else
+              push(t.text[i], t.s + i, fm, st); i++;
+            }
+          }
+          else if (t.kind === "strong") walk(t.inner, t.s + 2, Object.assign({}, fm, { b: true }), st);
+          else if (t.kind === "em")     walk(t.inner, t.s + 1, Object.assign({}, fm, { em: true }), st);
+          else if (t.kind === "del")    walk(t.inner, t.s + 2, Object.assign({}, fm, { del: true }), st);
+          else if (t.kind === "code")   { for (let i = 0; i < t.inner.length; i++) push(t.inner[i], t.s + 1 + i, Object.assign({}, fm, { code: true }), st); }   // literal content
+          else if (t.kind === "style") {
+            // an EMPTY span (Cmd-U armed at a caret) has no characters to carry its spec: keep it
+            // verbatim as a zero-width atom so a later op on the line doesn't silently drop the arm
+            if (t.inner === "") items.push({ zero: true, text: str.slice(t.s - off, t.e - off), s: t.s });
+            else walk(t.inner, t.openEnd, fm, Object.assign({}, st, parseStyleSpec(t.spec)));   // inner span overrides outer
+          }
+          else if (t.kind === "cmark" || t.kind === "comment") items.push({ zero: true, close: t.kind === "cmark" && !!t.close, text: str.slice(t.s - off, t.e - off), s: t.s });
+          else items.push({ atom: true, text: str.slice(t.s - off, t.e - off), s: t.s, fm: Object.assign({}, fm), st: Object.assign({}, st) });
+        }
+      };
+      walk(content, base, {}, {});
+      return items;
+    }
+    function canonSpec(st) { const o = {}; Object.keys(st || {}).filter(k => st[k] != null && st[k] !== "").sort().forEach(k => { o[k] = st[k]; }); return styleSpecToStr(o); }
+    // Re-emit a line from its items. Returns { text, pos } — pos[i] is item i's offset in text.
+    function serializeModel(items) {
+      const n = items.length;
+      // zero-width atoms (anchors, hidden comments, an empty armed span) carry no formats of their
+      // own: they take the formats of the run they sit in — an opening anchor / comment the NEXT
+      // visible item's, a closing anchor the PREVIOUS item's (the other side at a line edge) —
+      // MINUS code, so they sit just outside the backticks (code content is literal) but inside
+      // every other layer. Read through eff() at serialize time, so the whitespace trim below and
+      // the layer stacks stay consistent for them.
+      const prev = new Array(n), next = new Array(n);
+      for (let i = 0, p = null; i < n; i++) { prev[i] = p; if (!items[i].zero) p = items[i]; }
+      for (let i = n - 1, q = null; i >= 0; i--) { next[i] = q; if (!items[i].zero) q = items[i]; }
+      const eff = i => {
+        const it = items[i]; if (!it.zero) return it;
+        const src = it.close ? (prev[i] || next[i]) : (next[i] || prev[i]);
+        if (!src) return { fm: {}, st: {} };
+        const fm = Object.assign({}, src.fm); delete fm.code; return { fm, st: src.st };
+      };
+      // layers, outermost → innermost: ~~ ** * (EMPH_ORDER minus code) · @{s:…} · `  — emphasis
+      // outside the style span keeps a struck/bold phrase ONE run across a coloured word (and keeps
+      // its marks valid markdown for the export); code innermost keeps its content literal
+      const layersOf = i => {
+        const e = eff(i), L = [];
+        for (const k of ["del", "b", "em"]) if (e.fm && e.fm[k]) L.push({ kind: k });
+        const sp = canonSpec(e.st); if (sp) L.push({ kind: "style", spec: sp });
+        if (e.fm && e.fm.code) L.push({ kind: "code" });
+        return L;
+      };
+      const key = (L, depth) => L.slice(0, depth + 1).map(x => x.kind + (x.spec || "")).join("|");
+      const same = (a, b) => a.kind === b.kind && (a.kind !== "style" || a.spec === b.spec);
+      // an emphasis run never starts or ends on whitespace (CommonMark/GFM refuse `~~ here~~`, and
+      // the portable export carries these marks as written). A run's edges are wherever the emitted
+      // layer stack changes at or above that layer — a layer also restarts when an OUTER layer
+      // changes under it — so the test runs on the layer lists and repeats to a fixed point.
+      for (let changed = true, guard = 0; changed && guard < 8; guard++) {
+        changed = false;
+        for (const k of ["del", "b", "em"]) {
+          for (let i = 0; i < n; i++) {
+            const it = items[i]; if (!it.ch || !it.fm[k] || !/\s/.test(it.text)) continue;
+            const Li = layersOf(i), d = Li.findIndex(x => x.kind === k), me = key(Li, d);
+            const edgeL = i === 0 || key(layersOf(i - 1), d) !== me, edgeR = i === n - 1 || key(layersOf(i + 1), d) !== me;
+            if (edgeL || edgeR) { delete it.fm[k]; changed = true; }
+          }
+        }
+      }
+      let out = "", open = [];   // open layers: [{ kind, spec?, close }]
+      const pos = new Array(n);
+      const lit = { "*": false, "_": false };   // a literal * or _ already emitted on this line (text, not marks)
+      const closeTo = depth => { while (open.length > depth) out += open.pop().close; };
+      // marker variant for b / em — `*` unless a `*` would touch another `*` or the parser could not
+      // find the close: the char just emitted (outer opens included), the run's first and last
+      // chars, the run's own text (em: any `*` — findSingle takes the first single one; b: a `**`),
+      // and what follows the run's close — the closes of outer layers ending there, else the next
+      // item's first char. Inner layers adapt to us (they pick later and see our marks), so they
+      // need no check here. Both variants are tested; `*` wins when both are fine.
+      const pick = (kind, depth, i) => {
+        const v = EMPH_MARKS[kind]; if (v[1] === v[0]) return { mk: v[0], j: i };   // ~~ has no variant (nor does `)
+        const Li = layersOf(i), mine = key(Li, depth);
+        let j = i, run = ""; while (j < n && key(layersOf(j), depth) === mine) { run += items[j].text; j++; }
+        let after = "";
+        if (j < n) {
+          const Lj = layersOf(j); let c = 0; while (c < Li.length && c < Lj.length && same(Li[c], Lj[c])) c++;
+          if (depth - 1 >= c) after = open[depth - 1].close[0];                    // an outer layer closes right after us
+          else if (Lj.length === c) after = items[j].text[0] || "";               // else the next visible char (new opens adapt to us)
+        }
+        // …and a literal * / _ emitted EARLIER on the line poisons that char outright: the parser is
+        // greedy left-to-right, so an unpaired literal would pair with our opening mark instead
+        const bad = mk => { const ch = mk[0]; return lit[ch] || out.slice(-1) === ch || run[0] === ch || run.slice(-1) === ch || after === ch || (kind === "em" ? run.indexOf(ch) >= 0 : run.indexOf(mk) >= 0); };
+        // neither variant readable (a literal * before the run AND a _ inside it, or the run IS a
+        // lone *): report the run's end so the caller drops the layer for it — plain text beats
+        // marks the parser would mis-pair into changed words
+        return { mk: !bad(v[0]) ? v[0] : !bad(v[1]) ? v[1] : null, j };
+      };
+      for (let i = 0; i < n; i++) {
+        const it = items[i], want = layersOf(i);
+        let common = 0; while (common < open.length && common < want.length && same(open[common], want[common])) common++;
+        closeTo(common);
+        for (let k = common; k < want.length; k++) {
+          const w = want[k];
+          if (w.kind === "style") { out += "@{s:" + w.spec + "}"; open.push({ kind: "style", spec: w.spec, close: "@{/s}" }); }
+          else if (w.kind === "code") { out += "`"; open.push({ kind: "code", close: "`" }); }
+          else {
+            const p = pick(w.kind, open.length, i);   // outer marks are already written, so the picker sees the real neighbours
+            if (p.mk === null) { for (let x = i; x < p.j; x++) if (items[x].fm) delete items[x].fm[w.kind]; continue; }   // drop the layer for this run
+            out += p.mk; open.push({ kind: w.kind, close: p.mk });
+          }
+        }
+        pos[i] = out.length; out += it.text;
+        if (it.text.indexOf("*") >= 0) lit["*"] = true;
+        if (it.text.indexOf("_") >= 0) lit["_"] = true;
+      }
+      closeTo(0);
+      return { text: out, pos };
+    }
+    // Apply `mutate(item, pre)` to every visible item inside the segments (one per line, as
+    // lineSegments returns them), re-serialize each touched line, splice it back. `preTest(items)`,
+    // if given, is evaluated on ALL affected items first and handed to mutate (toggle semantics:
+    // fully formatted → remove, else add). Lines are rewritten bottom-up so earlier offsets hold.
+    // Returns the new selection { lo, hi } covering the affected items, or null if nothing visible.
+    // The lines a set of segments touches, each with its model and the visible items the segments
+    // cover. Shared by reformat (the edit) and affectedItems (the toolbar's prediction of it).
+    function collectLines(segs, lines) {
+      const perLine = [];
+      for (const [sa, sb] of segs) {
+        const ls = lineStart(sa);
+        let L = perLine.find(x => x.ls === ls);
+        if (!L) {
+          let k = 0, o = 0; while (o < ls) { o += lines[k].length + 1; k++; }
+          const bl = classify(lines[k], ls, ls + lines[k].length), mlen = bl.mlen || 0;
+          L = { k, ls, mlen, le: ls + lines[k].length, items: lineModel(lines[k].slice(mlen), ls + mlen), affected: [] };
+          perLine.push(L);
+        }
+        for (const it of L.items) if (!it.zero && it.s < sb && it.s + it.text.length > sa && L.affected.indexOf(it) < 0) L.affected.push(it);
+      }
+      return perLine;
+    }
+    // The visible items a selection would act on — exactly the set toggleInline / applyStyle mutate.
+    // caretFormats and toggleUnderline read their state from this, so the toolbar always predicts
+    // what the click does (a marker-only gap between two bold words no longer reads as "not bold").
+    function affectedItems(a, b) {
+      const segs = lineSegments(a, b); if (!segs.length) return [];
+      return collectLines(segs, text.split("\n")).flatMap(L => L.affected);
+    }
+    // plan, then commit: the undo snapshot (label) is taken only when the serialized lines actually
+    // differ from what is there — a no-op (only markers in range, or a mutate the trim undoes) must
+    // not push an undo entry or wipe the redo stack. clearFormatting passes no label (it snapshots
+    // itself, for its heading step). Lines are rewritten bottom-up so earlier offsets hold.
+    function reformat(segs, mutate, preTest, label) {
+      const lines = text.split("\n"), perLine = collectLines(segs, lines);
+      const all = perLine.flatMap(L => L.affected);
+      if (!all.length) return null;
+      const pre = preTest ? preTest(all) : undefined;
+      for (const it of all) mutate(it, pre);
+      for (const L of perLine) L.ser = serializeModel(L.items);
+      if (perLine.every(L => L.ser.text === lines[L.k].slice(L.mlen))) return null;
+      if (label) snapshot(label);
+      perLine.sort((x, y) => y.ls - x.ls);
+      let lo = null, hi = null;
+      for (const L of perLine) {
+        const ser = L.ser, before = text.length;
+        text = text.slice(0, L.ls + L.mlen) + ser.text + text.slice(L.le);
+        const delta = text.length - before;
+        const idxs = L.affected.map(it => L.items.indexOf(it)), first = Math.min(...idxs), last = Math.max(...idxs);
+        const lo_ = L.ls + L.mlen + ser.pos[first], hi_ = L.ls + L.mlen + ser.pos[last] + L.items[last].text.length;
+        hi = hi === null ? hi_ : hi + delta;   // the bottom line's end shifts as the lines above it change length
+        lo = lo_;                              // the last line processed is the topmost
+      }
+      return { lo, hi };
+    }
     // Ranged deletes treat marker pairs as units: snap half-cut markers whole, and when a
     // delete removes exactly ONE marker of a pair, delete the surviving partner too — so the
     // source can never hold an orphan mark that would suddenly render as raw syntax.
@@ -1487,16 +1686,8 @@
       }
       return segs;
     }
-    // is [a,b) fully covered by tokens of `kind`? (markers count as covered — they're invisible)
-    function segCovered(info, a, b) {
-      let pos = a;
-      const cover = info.filter(t => t.e > a && t.s < b).sort((x, y) => x.s - y.s);
-      for (const t of cover) {
-        if (t.s > pos) return false;
-        if (t.e > pos) pos = t.e;
-      }
-      return pos >= b;
-    }
+    // (segCovered — token-coverage test for the toolbar — retired by Bugs #18: caretFormats now
+    // reads affectedItems(), the same set the click acts on.)
     function shiftPoint(pos, at, delta, insAt) {
       // rebase a caret point across one splice; insAt: an insert AT pos lands before it
       if (pos > at || (pos === at && insAt)) return pos + delta;
@@ -1564,16 +1755,13 @@
       }
       const segs = lineSegments(a, b);
       if (!segs.length) return;
-      const allOn = segs.every(sg => segCovered(mine(), sg[0], sg[1]));
-      snapshot("wrap");
-      // work bottom-up so earlier segment offsets stay valid
-      let selLo = null, selHi = null;
-      for (let i = segs.length - 1; i >= 0; i--) {
-        const r = allOn ? removeInlineSeg(kind, segs[i][0], segs[i][1]) : addInlineSeg(kind, segs[i][0], segs[i][1]);
-        if (i === segs.length - 1) selHi = r[1];
-        selLo = r[0];
-      }
-      render(); setCaret(selLo, selHi); onInput();
+      // Bugs #18: through the flat model — fully formatted → remove, else add — never a wrap in place.
+      // Code content is literal, so a chip / image / link can't be made code (it would show raw).
+      const acts = it => !(kind === "code" && it.atom);
+      const r = reformat(segs, (it, allOn) => { if (!acts(it)) return; if (allOn) delete it.fm[kind]; else it.fm[kind] = true; },
+                         items => items.filter(acts).every(it => it.fm[kind]), "wrap");
+      if (!r) return;
+      render(); setCaret(r.lo, r.hi); onInput();
     }
     function unwrapEmph(t, at) {
       snapshot("wrap");
@@ -1588,63 +1776,26 @@
       while (wb < text.length && !/\s/.test(text[wb])) wb++;
       return [wa, wb];
     }
-    // remove `kind` from [a,b) — splitting straddling runs; returns the new [a,b)
-    function removeInlineSeg(kind, a, b) {
-      const cover = emphTokens().filter(t => t.kind === kind && t.e > a && t.s < b).sort((x, y) => y.s - x.s);
-      for (const t of cover) {
-        const mk = text.slice(t.s, t.is);
-        const preLen = Math.max(0, Math.min(a, t.ie) - t.is);    // formatted run left of the selection
-        const postLen = Math.max(0, t.ie - Math.max(b, t.is));   // formatted run right of it
-        // rebuild the token: [mk pre mk] gap [mk post mk] — degenerate parts drop out
-        const inner = text.slice(t.is, t.ie);
-        const cutA = Math.max(t.is, Math.min(a, t.ie)) - t.is, cutB = Math.max(t.is, Math.min(b, t.ie)) - t.is;
-        const pre = inner.slice(0, cutA), mid = inner.slice(cutA, cutB), post = inner.slice(cutB);
-        const repl = (preLen ? mk + pre + mk : pre) + mid + (postLen ? mk + post + mk : post);
-        text = text.slice(0, t.s) + repl + text.slice(t.e);
-        const delta = repl.length - (t.e - t.s);
-        // rebase segment bounds across this token's rewrite
-        const aIn = a > t.s ? a + (preLen ? mk.length : -mk.length) : a;
-        const bIn = b < t.e ? b + (preLen ? mk.length : -mk.length) : b + delta;
-        a = Math.max(0, aIn); b = Math.max(a, bIn);
-      }
-      return [a, b];
-    }
-    // add `kind` over [a,b) — swallowing/merging any same-kind runs it touches; returns new [a,b)
-    function addInlineSeg(kind, a, b) {
-      const touching = emphTokens().filter(t => t.kind === kind && t.e >= a && t.s <= b).sort((x, y) => y.s - x.s);
-      let na = a, nb = b;
-      for (const t of touching) { na = Math.min(na, t.s); nb = Math.max(nb, t.e); }
-      for (const t of touching) {   // strip their markers (descending order)
-        text = text.slice(0, t.ie) + text.slice(t.e);
-        text = text.slice(0, t.s) + text.slice(t.is);
-        nb -= 2 * t.mlen;
-      }
-      // pick the marker variant that can't collide with a neighbouring same-char mark
-      let mk = EMPH_MARKS[kind][0];
-      const ch = mk[0];
-      if (EMPH_MARKS[kind][1] !== mk &&
-          (text[na - 1] === ch || text[nb] === ch || text[na] === ch || text[nb - 1] === ch)) mk = EMPH_MARKS[kind][1];
-      text = text.slice(0, nb) + mk + text.slice(nb);
-      text = text.slice(0, na) + mk + text.slice(na);
-      return [na + mk.length, nb + mk.length];
-    }
+    // (removeInlineSeg / addInlineSeg — the wrap-in-place helpers — were retired by Bugs #18; every
+    // add/remove now goes through reformat() above.)
     // formats active at the current selection (drives toolbar button states)
     function caretFormats() {
       let a = selA, b = selB;
       const out = { b: false, em: false, del: false, code: false, u: false, h: 0, li: false, ol: false, bq: false };
       const info = emphTokens();
-      const segs = a === b ? null : lineSegments(a, b);   // kind-independent — compute once
+      // a SELECTION reads its state from the same flat model the click acts on (affectedItems), so
+      // the button always predicts the action: lit ⇔ every visible character in range has the format
+      const all = a === b ? null : affectedItems(a, b);
       for (const kind of ["b", "em", "del", "code"]) {
-        const mine = info.filter(t => t.kind === kind);
-        if (a === b) out[kind] = !!mine.find(t => t.s < a && a < t.e);
-        else out[kind] = segs.length > 0 && segs.every(sg => segCovered(mine, sg[0], sg[1]));
+        if (a === b) out[kind] = !!info.find(t => t.kind === kind && t.s < a && a < t.e);
+        else out[kind] = all.length > 0 && all.every(it => it.fm[kind]);
       }
       // a format armed but not yet consumed at this exact caret reads as ON, so the toolbar
       // button lights up the moment you hit Cmd+B on a blank line
       if (a === b && pendInline && pendInline.at === a)
         for (const kind of pendInline.kinds) out[kind] = true;
-      const sp = enclosingStyleSpan(a, b);
-      if (sp && parseStyleSpec(text.slice(sp.s + 4, sp.openEnd - 1)).u === "1") out.u = true;
+      if (a === b) { const sp = enclosingStyleSpan(a, b); if (sp && parseStyleSpec(text.slice(sp.s + 4, sp.openEnd - 1)).u === "1") out.u = true; }
+      else out.u = all.length > 0 && all.every(it => it.st.u === "1");
       const lr = curLineRange(a), bl = classify(text.slice(lr[0], lr[1]), lr[0], lr[1]);
       if (bl.type === "h") out.h = bl.lvl;
       out.li = bl.type === "li" || bl.type === "task"; out.ol = bl.type === "ol"; out.bq = bl.type === "bq";
@@ -2630,7 +2781,9 @@
     function isPortableDirective(ln) {
       return DOC_LINE_RE.test(ln) || IND_LINE_RE.test(ln) || MDC_LINE_RE.test(ln) || MDR_LINE_RE.test(ln) || isColsLine(ln);
     }
-    const FENCE_OPEN_RE = /^ {0,3}(`{3,}|~{3,})/;
+    // a fence opener — but NOT a struck line that merely starts with a literal ~ (`~~~5 min~~`), which
+    // this engine renders as strikethrough: the rest of a fence line may carry no further ` or ~
+    const FENCE_OPEN_RE = /^ {0,3}(`{3,}|~{3,})[^`~]*$/;
     const HR_LIKE_RE = /^([-*_])( *\1){2,}\s*$/;
     // absStart: when the caller knows where the slice sits in the document, list numbers come from
     // the WHOLE document (same rule as rangeToPlain), so copying items 3–4 exports "3. 4." — what
@@ -2721,7 +2874,9 @@
         if (/^[=-]+\s*$/.test(raw)) gap();                                                              // never a setext underline for the line above
         // literal text here, a block there: escape the character that would start it (`<tag>` lines
         // are covered by portableText, which escapes inline HTML anywhere in paragraph text)
-        if (/^#{1,6}\s/.test(raw) || HR_LIKE_RE.test(raw)) raw = "\\" + raw;
+        // (`~~~…` too: a struck line that begins with a literal ~ opens a tilde FENCE in CommonMark
+        // and swallows the rest of the export as code)
+        if (/^#{1,6}\s/.test(raw) || HR_LIKE_RE.test(raw) || /^~{3,}/.test(raw)) raw = "\\" + raw;
         else if (/^\d+\)\s/.test(raw)) raw = raw.replace(/^(\d+)\)/, "$1\\)");
         out.push(portableInline(raw) + (nb && nb.type === "p" ? "  " : ""));                          // one source line = one rendered line
         i++;
@@ -2960,43 +3115,10 @@
         if (sp.openEnd <= a && sp.closeStart >= b && (!target || (sp.e - sp.s) < (target.e - target.s))) target = sp;
       return target;
     }
-    function styleWrapStr(spec, inner) { return spec ? "@{s:" + spec + "}" + inner + "@{/s}" : inner; }
-    // Apply props to ONE per-line range [a,b). Returns {a, b} of the styled inner afterwards.
-    // exact span → merge specs; strictly-inside a span → SPLIT it (pre/mid/post); else wrap.
-    function applyStyleSeg(a, b, props) {
-      const exact = scanStyleSpans(text).find(sp => sp.openEnd === a && sp.closeStart === b);
-      if (exact) {                                          // already wrapped → merge specs
-        const cur = parseStyleSpec(specOf(exact));
-        for (const k in props) { if (props[k] === null) delete cur[k]; else cur[k] = props[k]; }
-        const spec = styleSpecToStr(cur);
-        const repl = styleWrapStr(spec, text.slice(a, b));
-        text = text.slice(0, exact.s) + repl + text.slice(exact.e);
-        const openLen = spec ? spec.length + 5 : 0;
-        return { a: exact.s + openLen, b: exact.s + openLen + (b - a) };
-      }
-      const host = enclosingStyleSpan(a, b);
-      if (host) {                                           // inside a bigger span → split it
-        const cur = parseStyleSpec(specOf(host));
-        const mid = {}; for (const k in cur) mid[k] = cur[k];
-        for (const k in props) { if (props[k] === null) delete mid[k]; else mid[k] = props[k]; }
-        const curSpec = styleSpecToStr(cur), midSpec = styleSpecToStr(mid);
-        const pre = text.slice(host.openEnd, a), sel = text.slice(a, b), post = text.slice(b, host.closeStart);
-        const parts = [];
-        if (pre) parts.push(styleWrapStr(curSpec, pre));
-        const midAt = parts.join("").length;
-        parts.push(styleWrapStr(midSpec, sel));
-        if (post) parts.push(styleWrapStr(curSpec, post));
-        text = text.slice(0, host.s) + parts.join("") + text.slice(host.e);
-        const selAt = host.s + midAt + (midSpec ? midSpec.length + 5 : 0);
-        return { a: selAt, b: selAt + sel.length };
-      }
-      const clean = {}; for (const k in props) if (props[k] != null && props[k] !== "") clean[k] = props[k];
-      const spec = styleSpecToStr(clean); if (!spec) return { a, b };
-      const open = "@{s:" + spec + "}", inner = text.slice(a, b);
-      text = text.slice(0, a) + open + inner + "@{/s}" + text.slice(b);
-      return { a: a + open.length, b: a + open.length + inner.length };
-    }
-    // wrap the current selection (or the word/styled run at the caret) in invisible styling;
+    // (applyStyleSeg / styleWrapStr — the split-and-wrap-in-place helpers — were retired by Bugs #18;
+    // styling now goes through reformat(): each affected character's spec is merged and the line is
+    // re-serialized, so a span can never straddle an emphasis run or leave an empty husk.)
+    // style the current selection (or the word/styled run at the caret) with invisible styling;
     // multi-line selections style each line's content separately (spans are per-line).
     function applyStyle(props) {
       const c = readSel() || [selA, selB]; let a = c[0], b = c[1];
@@ -3009,14 +3131,9 @@
       const s2 = snapMarks(a, b); a = s2[0]; b = s2[1];
       const segs = lineSegments(a, b);
       if (!segs.length) return;
-      snapshot("style");
-      let lo = null, hi = null;
-      for (let i = segs.length - 1; i >= 0; i--) {
-        const r = applyStyleSeg(segs[i][0], segs[i][1], props);
-        if (i === segs.length - 1) hi = r.b;
-        lo = r.a;
-      }
-      render(); setCaret(lo, hi); onInput();  // keep inner selected so styles stack
+      const r = reformat(segs, it => { for (const k in props) { if (props[k] === null || props[k] === "") delete it.st[k]; else it.st[k] = props[k]; } }, null, "style");
+      if (!r) return;
+      render(); setCaret(r.lo, r.hi); onInput();  // keep inner selected so styles stack
     }
     // Cmd/Ctrl-U — underline on/off over the selection, the styled run, or the caret word
     function toggleUnderline() {
@@ -3039,8 +3156,11 @@
         }
         setCaret(a, b);
       }
-      const host = enclosingStyleSpan(a, b);
-      const on = !!(host && parseStyleSpec(specOf(host)).u === "1");
+      // ON ⇔ every visible character in range is underlined — the same read caretFormats gives the
+      // toolbar, so the button and the click agree (a range spanning two underlined spans and the
+      // plain space between them reads OFF and turns the whole thing on, never half of it)
+      const items = affectedItems(a, b), host = enclosingStyleSpan(a, b);
+      const on = items.length ? items.every(it => it.st.u === "1") : !!(host && parseStyleSpec(specOf(host)).u === "1");
       applyStyle({ u: on ? null : "1" });
     }
     function clearRange(sp) {   // remove both markers of one span, keep inner
@@ -3071,34 +3191,13 @@
       const headAt = p => /^#{1,6}[ \t]+/.test(text.slice(lineStart(p), lineStart(p) + 10));
       if (a === b && !headAt(a)) return;
       snapshot("style");
-      // 1) emphasis marks — straddling runs split so only this stretch clears
-      for (const kind of ["b", "em", "del", "code"]) {
-        const s2 = snapMarks(a, b); a = s2[0]; b = s2[1];
-        if (!emphTokens().some(t => t.kind === kind && t.e > a && t.s < b)) continue;
-        const r = removeInlineSeg(kind, a, b); a = r[0]; b = r[1];
-        render();   // refresh tokens so the next kind sees current offsets
-      }
-      // 2) style spans the range touches → strip both markers
-      let guard = 0;
-      while (guard++ < 300) {
-        const spans = scanStyleSpans(text);
-        const target = spans.find(sp => sp.s >= a && sp.e <= b) ||
-          spans.find(sp => sp.e > a && sp.s < b && !(sp.openEnd <= a && sp.closeStart >= b));
-        if (!target) break;
-        const openLen = target.openEnd - target.s, closeLen = target.e - target.closeStart;
-        text = text.slice(0, target.closeStart) + text.slice(target.e);
-        text = text.slice(0, target.s) + text.slice(target.openEnd);
-        const shift = p => p <= target.s ? p
-          : p <= target.openEnd ? target.s
-          : p <= target.closeStart ? p - openLen
-          : p <= target.e ? target.closeStart - openLen
-          : p - openLen - closeLen;
-        a = shift(a); b = shift(b);
-      }
-      // …and a span the range sits strictly INSIDE gets split (pre/post keep the look)
-      if (enclosingStyleSpan(a, b)) {
-        const r = applyStyleSeg(a, b, { c: null, bg: null, f: null, sz: null, u: null });
-        a = r.a; b = r.b;
+      // 1+2) emphasis + style spans — Bugs #18: through the flat model, every affected character
+      // simply loses all of its formats; the line re-serializes clean (comment anchors stay).
+      { const s2 = snapMarks(a, b); a = s2[0]; b = s2[1]; }
+      const segs = lineSegments(a, b);
+      if (segs.length) {
+        const r = reformat(segs, it => { it.fm = {}; it.st = {}; });
+        if (r) { a = r.lo; b = r.hi; }
       }
       // 3) heading lines in the range → normal text
       const starts = [];
