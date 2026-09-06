@@ -21,7 +21,9 @@ import { SupabaseYjsProvider } from '@/lib/collab/supabaseYjsProvider';
 /* Full-screen, Google-Docs-style word processor for ONE document. The doc id is
    the URL path (/write/<docId>); the active tab is a ?tab=<tabId> slug. Mounts
    the vendored MarkdownTabs widget (public/md-editor) and wires it to
-   /api/writing/{doc,save,tab,history}. Read-only when the viewer is a parent. */
+   /api/writing/{doc,save,tab,history}. Read-only when the viewer is a parent.
+   Tab emoji + drag-to-reorder persist through /api/writing/tab (emoji, reorder);
+   the fold of the active tab's headings is the engine's own per-browser preference. */
 
 let mdePromise = null;
 function loadScript(src, attr) {
@@ -308,6 +310,22 @@ export default function WriteApp() {
             method: 'POST',
             headers: JSON_HEADERS,
             body: JSON.stringify({ action: 'rename', tab_id: id, title }),
+          });
+        // Tab emoji ("Choose emoji" in the ⋮ menu) and drag-to-reorder: engine features that
+        // only appear once the host supplies the hook, so read-only viewers never see them.
+        // The server honours the dragged order (sort_key is user-owned — lib/writingDocs.js), with
+        // one invariant kept on read: orphaned (dimmed) tabs always sort last.
+        opts.onSetEmoji = (id, emoji) =>
+          fetch('/api/writing/tab', {
+            method: 'POST',
+            headers: JSON_HEADERS,
+            body: JSON.stringify({ action: 'emoji', tab_id: id, emoji }),
+          });
+        opts.onReorder = (orderedIds) =>
+          fetch('/api/writing/tab', {
+            method: 'POST',
+            headers: JSON_HEADERS,
+            body: JSON.stringify({ action: 'reorder', document_id: docId, orderedIds }),
           });
         opts.onAddTab = async () => {
           const r = await fetch('/api/writing/tab', {

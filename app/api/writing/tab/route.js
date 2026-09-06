@@ -5,6 +5,7 @@ import {
   tabContext,
   createManualTab,
   renameTab,
+  setTabEmoji,
   reorderTabs,
   deleteTab,
   tabIsDeletable,
@@ -13,6 +14,7 @@ import {
 // POST /api/writing/tab — manual tab management.
 //   { action:'create',  document_id, title }
 //   { action:'rename',  tab_id, title }
+//   { action:'emoji',   tab_id, emoji }          ('' clears)
 //   { action:'reorder', document_id, orderedIds:[...] }
 //   { action:'delete',  tab_id }
 export async function POST(request) {
@@ -52,6 +54,15 @@ export async function POST(request) {
     if (!ctx) return notFound
     if (!canEditStudent(actor, ctx.studentSheetId)) return forbidden
     await renameTab(supabase, body.tab_id, title)
+    return Response.json({ ok: true })
+  }
+
+  if (action === 'emoji') {
+    const ctx = await tabContext(supabase, body?.tab_id)
+    if (!ctx) return notFound
+    if (!canEditStudent(actor, ctx.studentSheetId)) return forbidden
+    const res = await setTabEmoji(supabase, body.tab_id, body?.emoji)
+    if (res?.error) return Response.json({ error: res.error }, { status: 500 })
     return Response.json({ ok: true })
   }
 

@@ -72,6 +72,7 @@ export async function GET(request) {
     tabs: tabs.map((t) => ({
       id: t.id,
       title: t.title,
+      emoji: t.emoji || undefined,
       dim: t.sync_state === 'orphaned',
       origin: t.origin,
       // editors may delete manual + orphaned tabs; active synced tabs are gated

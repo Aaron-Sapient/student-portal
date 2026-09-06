@@ -44,10 +44,41 @@ create table if not exists md_tabs (
   sync_key      text,
   sync_state    text        not null default 'manual_active'
                   check (sync_state in ('active','orphaned','manual_active')),
+  -- USER-OWNED order since 2026-09-05: drag-reorder in the editor writes it and the
+  -- college-list sync no longer re-imposes list order (new synced tabs append).
   sort_key      double precision not null default 0,
+  -- optional tab icon, chosen in the editor's per-tab menu. NULL = none.
+  emoji         text,
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now()
 );
+-- 2026-09-05: per-tab emoji, and tab order handed to the user (drag-reorder in the
+-- editor). The emoji column post-dates the table, so it is added here for existing
+-- databases — and that SAME one-shot moment (the column does not exist yet) is used to
+-- freeze each document's tab order exactly as it was RENDERED under the old rules
+-- (active synced → manual → orphaned, then sort_key, then age) into sort_key itself, so
+-- the first load under the new code shows the order the student saw last (old rows tie
+-- on sort_key: the seeded "UC PIQs" tab and "PIQ 1" are both 0). Guarded on the column's
+-- absence, so re-running this file never touches sort_key again once users own it. The
+-- updated_at trigger is held off for the backfill so "last edited" stays truthful.
+-- The app's /api/writing/doc SELECTs emoji: apply this BEFORE that code deploys.
+do $$ begin
+  if not exists (select 1 from information_schema.columns
+                 where table_schema = 'public' and table_name = 'md_tabs' and column_name = 'emoji') then
+    alter table md_tabs disable trigger md_tabs_set_updated;
+    with ranked as (
+      select id, row_number() over (
+        partition by document_id
+        order by case sync_state when 'active' then 0 when 'manual_active' then 1 else 2 end,
+                 sort_key, created_at
+      ) - 1 as rn
+      from md_tabs
+    )
+    update md_tabs t set sort_key = r.rn from ranked r where r.id = t.id and t.sort_key <> r.rn;
+    alter table md_tabs enable trigger md_tabs_set_updated;
+    alter table md_tabs add column emoji text;
+  end if;
+end $$;
 -- one synced tab per (doc, key); partial so manual NULL-key rows never collide.
 create unique index if not exists md_tabs_one_per_key
   on md_tabs(document_id, sync_key) where sync_key is not null;
