@@ -29,8 +29,8 @@
      sync.sh, so a consumer's own copy always answers for itself. Workflow: bump BOTH of these
      AND add a dated entry to CHANGELOG.md as a normal part of shipping any user-visible change —
      see CHANGELOG.md's header. Do not let this drift; a stale stamp defeats the whole feature. */
-  const MDE_VERSION = "1.5.2";
-  const MDE_LAST_CHANGE = "Peer cursors and selection highlights (collab) now scroll with the text instead of staying pinned on screen: the remote-caret overlay is positioned against the surface's own parent, so it rides inside the scroll container rather than a positioned ancestor outside it.";
+  const MDE_VERSION = "1.6.0";
+  const MDE_LAST_CHANGE = "Side comments now travel with copy/paste inside the editor (across tabs too); numbered lists count by position, so a mix of numbers and a/b/c sub-items no longer skips numbers after an indent or a mid-list edit; and the active tab's headings fold behind a twisty in the tab rail.";
 
   /* ============================================================================
      Side comments + emoji reactions — the in-document data model (MODULE scope, so
@@ -76,9 +76,11 @@
     }
     out.push(cur); return out;
   }
-  // Comments/reactions NEVER travel on copy/paste (Docs behavior) — and stripping on the way in
-  // guarantees the one-ID-per-doc invariant (no duplicated anchor IDs re-entering from another
-  // tab/doc). Removes inline anchor markers + whole %%mdc/%%mdr metadata lines.
+  // Removes ALL comment/reaction syntax: inline anchor markers + whole %%mdc/%%mdr metadata lines.
+  // Used for text arriving from OUTSIDE the editor (a text/plain paste can't carry a valid
+  // anchor + metadata pair anyway) and by the static MarkdownEditor.stripComments. Copy/paste
+  // INSIDE the editor has carried comments since 2026-09-05 — the one-ID-per-doc invariant is
+  // kept by re-minting colliding ids on arrival instead (cmtClipboardPayload / importCmtPayload).
   function stripCmtSyntax(md) {
     return String(md == null ? "" : md)
       .replace(/@\{\/?c:[a-z0-9]{4,}\}/g, "")
@@ -655,13 +657,17 @@
     //   • FIRST item at a freshly-(re)entered depth → always starts at 1/a/i, ignoring the
     //     source digit. This is what makes a sublist under item "5." render "a" (not "f") even
     //     though its source reads "6." — the "f-instead-of-a" fix (2026-07-17).
-    //   • source digit == previous-source + 1 → a consecutive run: keep counting by position
-    //     (so a hand-numbered 6,7,8,9 sublist renders a,b,c,d).
-    //   • otherwise (broken run, e.g. a "1." typed after a higher number) → honor the typed
-    //     digit as an explicit restart. This is the prior "restart numbering" feature, now
-    //     scoped so it can't fire on the first item of a sublist (which was the bug).
-    // srcSeen[depth] holds the previous SOURCE digit at each depth (to tell a consecutive run
-    // from a deliberate restart); it resets in lockstep with counts.
+    //   • a bare "1." after a run that has already moved past 1 → an explicit RESTART (the
+    //     "Restart numbering" command writes exactly this). It is the ONLY digit that restarts.
+    //   • every other digit → keep counting by position, whatever the digit says. Source digits
+    //     go stale on every structural edit that doesn't rewrite them — Enter mid-list, deleting
+    //     an item, Tab-indenting "2." into a sublist so the "3." below now follows "1." — and the
+    //     pre-2026-09-05 rule ("any non-consecutive digit is a restart to that digit") read every
+    //     one of those as a deliberate restart: 1, a, 3, 4 instead of 1, a, 2, 3. That was Aaron's
+    //     "mixture of numbers and sub-numbers (the a/b/c)" bug. A run authored as 1., 1., 1.
+    //     (common in pasted markdown; CommonMark counts it 1, 2, 3) now counts by position too.
+    // srcSeen[depth] holds the previous SOURCE digit at each depth (to tell a bare "1." that
+    // restarts from one that merely repeats); it resets in lockstep with counts.
     function computeListMarkers(lines, hidden) {
       const out = new Array(lines.length).fill(null), counts = [], srcSeen = [];
       for (let k = 0; k < lines.length; k++) {
@@ -673,9 +679,9 @@
         counts.length = depth + 1; srcSeen.length = depth + 1;   // drop deeper counters (restart on re-descent)
         if (type === "ol") {
           const srcNum = parseInt(mm[2], 10), prevCount = counts[depth], prevSrc = srcSeen[depth];
-          const val = prevCount === undefined ? 1              // fresh depth → start the sequence at 1/a/i
-                    : srcNum === prevSrc + 1   ? prevCount + 1  // consecutive source digits → continue by position
-                    : srcNum;                                   // broken run → explicit restart to the typed digit
+          const val = prevCount === undefined ? 1                                     // fresh depth → start the sequence at 1/a/i
+                    : (srcNum === 1 && prevSrc !== 1 && srcNum !== prevSrc + 1) ? 1   // bare "1." after a run past 1 → explicit restart ("0." then "1." is a plain continuation)
+                    : prevCount + 1;                                                   // otherwise count by position (the digit may be stale)
           counts[depth] = val; srcSeen[depth] = srcNum;
           out[k] = { depth, marker: listMarker("ol", val, depth) };
         }
@@ -2081,6 +2087,7 @@
       if (spec.empty) return emptyListItem(ls, le, spec.lead, spec.type);
       const ins = "\n" + spec.prefix;
       edit(pos, pos, ins, pos + ins.length, "nl");
+      if (spec.type !== "ul" && /^ *\d+\./.test(spec.prefix)) fixOlFollowers(pos + 1);   // the new item's line starts after the "\n"
       return true;
     }
     // Task 2 support — what digit should a NEW/converted ordered-list line at `depth`,
@@ -2090,27 +2097,77 @@
     // continues its numbering by default — instead of writing a hardcoded "1." that would
     // spuriously read as an explicit restart (Task 2's mismatch rule) once it lands after
     // a higher-numbered run at that depth.
-    function nextOlDigit(ls, depth) {
+    // A line that neither continues nor breaks an ordered run: blank, or one of the whole-line
+    // `%%…%%` directives / `<!-- … -->` comments that render() never paints (a side comment's
+    // metadata lands right after the line it annotates — see metaInsertSplice — so a list with
+    // a comment on it has these INSIDE the run). computeListMarkers skips them via hiddenSourceLines;
+    // every source-digit walker below must skip them the same way, or "plain non-list line → 1"
+    // writes a bare "1." that the renderer reads as a restart (adversarial review, 2026-09-05).
+    function isListNeutralLine(ln) { return ln.trim() === "" || /^\s*%%[^%]*%%\s*$/.test(ln) || /^\s*<!--.*-->\s*$/.test(ln); }
+    // Nearest same-depth ordered item ABOVE `ls` within the same run (the run computeListMarkers
+    // recognizes: neutral lines and deeper items don't break it; a same-or-shallower line does).
+    // Returns its line start, or -1 when the run doesn't reach back to one.
+    function prevOlLineStart(ls, depth) {
       let p = ls;
       while (p > 0) {
         const ps = lineStart(p - 1);
         const ln = text.slice(ps, p - 1);
-        if (ln.trim() === "") { p = ps; continue; }              // blank — keep looking back
+        if (isListNeutralLine(ln)) { p = ps; continue; }          // blank / hidden directive — keep looking back
         let mm;
         if ((mm = ln.match(/^( *)(\d+)\.\s+/))) {
           const d = Math.floor(mm[1].length / LIST_INDENT);
-          if (d === depth) return parseInt(mm[2], 10) + 1;
-          if (d < depth) return 1;                                // shallower ol — run doesn't reach back
+          if (d === depth) return ps;
+          if (d < depth) return -1;                               // shallower ol — run doesn't reach back
           p = ps; continue;                                       // deeper ol — doesn't affect this depth
         }
         if ((mm = ln.match(/^( *)([-*+])\s+/))) {
-          const d = Math.floor(mm[1].length / LIST_INDENT);
-          if (d <= depth) return 1;                                // same/shallower bullet — run broken
-          p = ps; continue;                                        // deeper bullet — doesn't affect this depth
+          if (Math.floor(mm[1].length / LIST_INDENT) <= depth) return -1;   // same/shallower bullet — run broken
+          p = ps; continue;                                                 // deeper bullet — doesn't affect this depth
         }
-        return 1;                                                   // plain non-list line — run doesn't reach back
+        return -1;                                                  // plain non-list line — run doesn't reach back
       }
-      return 1;
+      return -1;
+    }
+    function nextOlDigit(ls, depth) {
+      const p = prevOlLineStart(ls, depth);
+      return p < 0 ? 1 : parseInt(text.slice(p).match(/^ *(\d+)\./)[1], 10) + 1;
+    }
+    // After a structural edit wrote a digit on the ordered item at line `ls` (Enter / Tab /
+    // outdent / toggle), renumber the FOLLOWING same-depth items so the run's source digits stay
+    // consecutive from it. Run boundaries as in computeListMarkers (neutral lines and deeper items
+    // don't break the run; a same-or-shallower line does). Mutates `text` only; returns true when
+    // anything changed. Why: the renderer's one restart signal is a bare "1." following a non-1, so
+    // an all-ones list ("1. 1. 1.", as pasted markdown often is) would otherwise render 1, 2, 3, 1
+    // the moment Enter writes a "2." above one of its items (adversarial review, 2026-09-05).
+    function renumberOlFollowers(ls) {
+      let le = text.indexOf("\n", ls); if (le < 0) le = text.length;
+      const m = text.slice(ls, le).match(/^( *)(\d+)\.\s+/); if (!m) return false;
+      const depth = Math.floor(m[1].length / LIST_INDENT);
+      let count = parseInt(m[2], 10), changed = false, end = le;
+      while (end < text.length) {
+        const ns = end + 1; let ne = text.indexOf("\n", ns); if (ne < 0) ne = text.length;
+        const ln = text.slice(ns, ne);
+        if (isListNeutralLine(ln)) { end = ne; continue; }
+        const mb = ln.match(/^( *)([-*+])\s+/), mo = ln.match(/^( *)(\d+)(\.\s+)(.*)$/);
+        if (mb) { if (Math.floor(mb[1].length / LIST_INDENT) <= depth) break; end = ne; continue; }
+        if (!mo) break;
+        const d = Math.floor(mo[1].length / LIST_INDENT);
+        if (d < depth) break;
+        if (d > depth) { end = ne; continue; }
+        count++;
+        if (parseInt(mo[2], 10) !== count) { const repl = mo[1] + count + mo[3] + mo[4]; text = text.slice(0, ns) + repl + text.slice(ne); ne = ns + repl.length; changed = true; }
+        end = ne;
+      }
+      return changed;
+    }
+    // Post-step for the structural list edits above: fix the followers of the run at `ls` (and of
+    // the run an item just LEFT — `prevLs`, the previous same-depth item — when given), then
+    // re-render inside the SAME undo step (no new snapshot) with the caret where edit() left it.
+    // Every renumbered line sits AFTER the caret's line, so selA/selB need no adjustment.
+    function fixOlFollowers(ls, prevLs) {
+      let changed = renumberOlFollowers(ls);
+      if (prevLs != null && prevLs >= 0) changed = renumberOlFollowers(prevLs) || changed;
+      if (changed) { render(); setCaret(selA, selB); onInput(); }
     }
     // Word-style per-paragraph first-line indent: Tab/Shift+Tab at the very start of a plain
     // paragraph steps its hidden %%ind:N%% line (see IND_LINE_RE above) instead of the
@@ -2144,6 +2201,7 @@
         const marker = type === "ol" ? (nextOlDigit(ls, depth) + ". ") : "- ";
         const repl = lead.slice(LIST_INDENT) + marker;
         edit(ls, le, repl, ls + repl.length, "nl");
+        if (type === "ol") fixOlFollowers(ls);   // it joined the shallower run — keep that run's digits consecutive
       } else {
         edit(ls, le, "", ls, "nl");
       }
@@ -2246,6 +2304,8 @@
       }
       const repl = close + text.slice(q, p) + "\n" + tailMark + text.slice(p, r) + open;
       edit(q, r, repl, q + repl.length, "nl");
+      // an ordered item split this way continues its run exactly like smartListEnter does
+      if (spec && spec.type !== "ul" && /^ *\d+\./.test(spec.prefix)) fixOlFollowers(q + close.length + (p - q) + 1);
     }
 
     /* ----- delete hardening around hidden lines + invisible comment anchors -----
@@ -2401,11 +2461,26 @@
       let j = hdr + 2; while (j < lines.length && isRow(lines[j])) j++;
       return [hdr, j];
     }
-    function rangeToPlain(md) {
+    function rangeToPlain(md, absStart) {
       const lines = md.split("\n"), out = []; let i = 0;
-      const hidden = commentLines(lines);
+      // hiddenSourceLines (not just commentLines) so the %%…%% directive lines — dropped below as
+      // `meta` anyway — don't reset the list counters the way a plain paragraph would.
+      const hidden = hiddenSourceLines(lines);
+      // List markers come from the SAME position-based numbering the surface paints (1,2,3 /
+      // a,b,c / i,ii,iii and • ◦ ▪ by depth), never the raw source digit — which may be stale
+      // (see computeListMarkers). Nested items keep their indent so a pasted sublist still reads as
+      // one. When the caller knows where the slice sits in the document (absStart), markers are
+      // computed over the WHOLE document and read at the slice's absolute lines, so copying items
+      // 3–4 of a list exports "3. 4." — what the surface shows — not a fresh "1. 2." (adversarial
+      // review, 2026-09-05). A bare string (no absStart) is numbered on its own.
+      let listInfo;
+      if (absStart != null) {
+        const all = text.split("\n"), allInfo = computeListMarkers(all, hiddenSourceLines(all));
+        let first = 0; for (let k = 0; k < absStart && k < text.length; k++) if (text.charCodeAt(k) === 10) first++;
+        listInfo = lines.map((_, k) => allInfo[first + k] || null);
+      } else listInfo = computeListMarkers(lines, hidden);
       while (i < lines.length) {
-        if (hidden[i]) { i++; continue; }   // <!--…--> comment block: never exported
+        if (hidden[i]) { i++; continue; }   // <!--…--> comment block / %%…%% directive: never exported
         const tr = tableRunEnd(lines, i);
         if (tr) {
           const [hdr, j] = tr;
@@ -2416,10 +2491,11 @@
         const ln = lines[i], b = classify(ln, 0, ln.length);
         if (b.type === "meta") { i++; continue; }                 // drop %%…%% line
         if (b.type === "hr") { out.push(""); i++; continue; }
+        const li = listInfo[i], ind = li ? " ".repeat(li.depth * LIST_INDENT) : "";
         if (b.type === "h" || b.type === "bq") out.push(inlineToPlain(ln.slice(b.mlen)));
-        else if (b.type === "task") out.push((b.checked ? "☑ " : "☐ ") + inlineToPlain(ln.slice(b.mlen)));
-        else if (b.type === "li") out.push("• " + inlineToPlain(ln.slice(b.mlen)));
-        else if (b.type === "ol") { const m = ln.match(/^\s*(\d+)\./); out.push((m ? m[1] : "1") + ". " + inlineToPlain(ln.slice(b.mlen))); }
+        else if (b.type === "task") out.push(ind + (b.checked ? "☑ " : "☐ ") + inlineToPlain(ln.slice(b.mlen)));
+        else if (b.type === "li") out.push(ind + (li ? li.marker : "•") + " " + inlineToPlain(ln.slice(b.mlen)));
+        else if (b.type === "ol") out.push(ind + (li ? li.marker : "1.") + " " + inlineToPlain(ln.slice(b.mlen)));
         else if (b.type === "blank") out.push("");
         else out.push(inlineToPlain(ln));
         i++;
@@ -2427,15 +2503,19 @@
       return out.join("\n");
     }
     function rangeToHtml(md) {
-      const lines = md.split("\n"); let html = "", i = 0, listType = null, buf = [], olCount = 0;
-      const hidden = commentLines(lines);
+      const lines = md.split("\n"); let html = "", i = 0, listType = null, buf = [], olCount = 0, olPrevSrc = null;
+      // hiddenSourceLines, like rangeToPlain: a side comment's %%mdc line sits INSIDE a commented
+      // list's run, and as a `meta` block it used to flush() the <ol> — "1, 1" in Docs where the
+      // plain flavor said "1, 2" (adversarial review, 2026-09-05). Skipped lines never flush.
+      const hidden = hiddenSourceLines(lines);
       // Task 2 — olCount tracks the running number of the CURRENT flat <ol> block (this
-      // export already flattens nesting, so restart-tracking is scoped the same way): a
-      // source digit that doesn't match the expected next value gets an explicit
-      // value="N" on that <li> — valid HTML5 that native rendering honors, then resumes
-      // auto-numbering from N for the following unlabeled <li>s. Keeps getClean({html:true})
-      // consistent with the editor's own rendering (computeListMarkers) for restarts.
-      const flush = () => { if (listType) { html += "<" + listType + ">" + buf.join("") + "</" + listType + ">"; listType = null; buf = []; } olCount = 0; };
+      // export already flattens nesting, so restart-tracking is scoped the same way): a bare
+      // source "1." after a run that has moved past 1 — the editor's one restart signal, see
+      // computeListMarkers — gets an explicit value="1" on that <li> (valid HTML5 that native
+      // rendering honors), then auto-numbering resumes from there. Any other digit is ignored
+      // (it may be stale), exactly as the surface ignores it. Keeps getClean({html:true})
+      // consistent with the editor's own rendering for restarts.
+      const flush = () => { if (listType) { html += "<" + listType + ">" + buf.join("") + "</" + listType + ">"; listType = null; buf = []; } olCount = 0; olPrevSrc = null; };
       while (i < lines.length) {
         if (hidden[i]) { i++; continue; }   // <!--…--> comment block: never exported
         const tr = tableRunEnd(lines, i);
@@ -2458,8 +2538,12 @@
           // left alone (no value=) — reproduces the pre-Task-2 flat sequential count.
           const dm = ln.match(/^( *)(\d+)\./), indented = !!(dm && dm[1].length > 0);
           let restart = false, val = olCount + 1;
-          if (!indented) { const srcNum = dm ? parseInt(dm[2], 10) : val; restart = srcNum !== val; val = srcNum; }
-          if (!indented) olCount = val;
+          if (!indented) {
+            const srcNum = dm ? parseInt(dm[2], 10) : val;
+            restart = olCount >= 1 && srcNum === 1 && olPrevSrc !== 1;
+            if (restart) val = 1;
+            olCount = val; olPrevSrc = srcNum;
+          }
           buf.push("<li" + (restart ? ' value="' + val + '"' : "") + ">" + inlineToHtml(ln.slice(b.mlen)) + "</li>");
           i++; continue;
         }
@@ -2475,24 +2559,81 @@
       flush();
       return html;
     }
+    /* ----- Side comments travel INSIDE the editor (Aaron, 2026-09-05: "if I copy-paste text that
+       has a side comment from one tab to another, I want the side comment to carry over").
+       The private MIME carries the anchors of every comment/reaction whose pair is COMPLETE inside
+       the selection, plus their %%mdc/%%mdr metadata lines pulled from the whole document. A marker
+       whose partner falls outside the selection is dropped (a half-anchor would be garbage on
+       arrival). text/plain + text/html stay comment-free: nothing leaks into Docs/Word. ----- */
+    function cmtClipboardPayload(md) {
+      const m = scanCmtModel(md);                 // only pairs that open AND close inside the slice
+      const keep = new Set();                     // marker offsets (in md) to preserve
+      for (const [id, pairs] of m.anchors) for (const p of pairs) { keep.add(p.a - (id.length + 5)); keep.add(p.b); }
+      let body = md.replace(CMARK_G_RE, (s, _cl, _id, off) => keep.has(off) ? s : "");
+      body = body.split("\n").filter(ln => !MDC_LINE_RE.test(ln) && !MDR_LINE_RE.test(ln)).join("\n");
+      if (!m.anchors.size) return body;
+      const metas = [];
+      for (const ln of text.split("\n")) {
+        const mm = MDC_LINE_RE.exec(ln) || MDR_LINE_RE.exec(ln);
+        if (mm && m.anchors.has(unescMeta(splitMeta(mm[1], "|")[0] || ""))) metas.push(ln);
+      }
+      return metas.length ? body + "\n" + metas.join("\n") : body;
+    }
+    // Paste side: keep only ids that arrive COMPLETE (≥1 anchor pair AND a metadata line); re-mint
+    // any id the destination already uses (pasting a commented passage next to its original), and
+    // rewrite markers + metadata together — so the one-ID-per-doc invariant holds WITHOUT stripping.
+    // Returns { body, metas }: the metadata lines are inserted separately, on their own line after
+    // the pasted text, because a %%…%% directive only parses as a WHOLE line (a mid-paragraph paste
+    // would otherwise glue the rest of the caret's line onto it and leak raw syntax).
+    function importCmtPayload(d) {
+      if (!commentsEnabled) return { body: stripCmtSyntax(d), metas: [] };
+      const metaLines = [], bodyLines = [];
+      for (const ln of d.split("\n")) { if (MDC_LINE_RE.test(ln) || MDR_LINE_RE.test(ln)) metaLines.push(ln); else bodyLines.push(ln); }
+      const idOf = ln => { const mm = MDC_LINE_RE.exec(ln) || MDR_LINE_RE.exec(ln); return mm ? unescMeta(splitMeta(mm[1], "|")[0] || "") : ""; };
+      let body = bodyLines.join("\n");
+      const m = scanCmtModel(body), metaIds = new Set(metaLines.map(idOf));
+      const live = new Set(); for (const id of m.anchors.keys()) if (metaIds.has(id)) live.add(id);
+      const keep = new Set();
+      for (const id of live) for (const p of m.anchors.get(id)) { keep.add(p.a - (id.length + 5)); keep.add(p.b); }
+      body = body.replace(CMARK_G_RE, (s, _cl, _id, off) => keep.has(off) ? s : "");
+      if (!live.size) return { body, metas: [] };
+      const cur = getCmtModel(), ren = new Map(), minted = new Set();
+      const taken = x => cur.anchors.has(x) || cur.comments.some(c => c.id === x) || cur.reactions.some(r => r.id === x);
+      for (const id of live) if (taken(id)) { let nid = mintId(); while (minted.has(nid) || live.has(nid)) nid = mintId(); minted.add(nid); ren.set(id, nid); }
+      if (ren.size) body = body.replace(CMARK_G_RE, (s, cl, id) => ren.has(id) ? "@{" + cl + "c:" + ren.get(id) + "}" : s);
+      const metas = metaLines.filter(ln => live.has(idOf(ln)))
+        .map(ln => ln.replace(/^(\s*%%md[cr]:)([a-z0-9]+)\|/, (s, pre, id) => ren.has(id) ? pre + ren.get(id) + "|" : s));
+      return { body, metas };
+    }
     function writeClipboard(e, a, b) {
       const md = text.slice(a, b);
-      e.clipboardData.setData("text/plain", rangeToPlain(md));
+      e.clipboardData.setData("text/plain", rangeToPlain(md, a));
       try { e.clipboardData.setData("text/html", rangeToHtml(md)); } catch (_) {}
-      try { e.clipboardData.setData(MD_MIME, stripCmtSyntax(md)); } catch (_) {}   // internal round-trip (comments don't travel)
+      try { e.clipboardData.setData(MD_MIME, cmtClipboardPayload(md)); } catch (_) {}   // internal round-trip (comments ride along)
     }
 
     surface.addEventListener("paste", e => {
       if (cellOf(e.target)) return;
       e.preventDefault();
       const cd = e.clipboardData || window.clipboardData;
-      let d = (cd.getData(MD_MIME) || "");           // paste WITHIN the editor → raw markdown
+      const internal = (cd.getData(MD_MIME) || "");   // paste WITHIN the editor → raw markdown (+ its comments)
+      let d = internal;
       if (!d) d = (cd.getData("text/plain") || "");  // from elsewhere → as typed
       if (!d && cd.files && cd.files.length && /^image\//.test(cd.files[0].type || "")) { insertImageFile(cd.files[0]); return; }   // pasted image (screenshot etc.)
       d = d.replace(/\r\n?/g, "\n");
-      d = stripCmtSyntax(d);   // comments never paste in (no duplicate IDs, no stray metadata lines)
       const cur = readSel() || [selA, selB];
-      edit(cur[0], cur[1], d, null, "paste");
+      if (!internal) { edit(cur[0], cur[1], stripCmtSyntax(d), null, "paste"); return; }   // outside text never injects comment syntax
+      const { body, metas } = importCmtPayload(d);
+      edit(cur[0], cur[1], body, null, "paste");
+      // Both follow-ups share the paste's undo step (no second snapshot).
+      const t0 = text; let car = selA;
+      // The metadata lands right after the line the paste ended on — adjacency keeps a collab
+      // binding's diff local (metaInsertSplice).
+      if (metas.length) { const sp = metaInsertSplice(car, metas.join("\n")); text = text.slice(0, sp.at) + sp.ins + text.slice(sp.at); }
+      // Pasting OVER text that held the only anchors of some id leaves its metadata anchorless;
+      // edit() sweeps only for del/cut, so sweep here (adversarial review, 2026-09-05).
+      if (cur[0] !== cur[1] && commentsEnabled) car = sweepOrphanCmt(car);
+      if (text !== t0) { render(); setCaret(car, car); onInput(); }
     });
     surface.addEventListener("copy", e => {
       if (cellOf(e.target)) return;
@@ -2569,8 +2710,26 @@
         const c = readSel() || [selA, selB], lr = curLineRange(c[0]), ln = text.slice(lr[0], lr[1]);
         if (/^ *([-*+]\s+|\d+\.\s+)/.test(ln)) {                      // in a list item → indent / outdent the line
           const lead = (ln.match(/^ */) || [""])[0].length;
-          if (e.shiftKey) { const strip = Math.min(LIST_INDENT, lead); if (strip) edit(lr[0], lr[0] + strip, "", Math.max(lr[0], c[0] - strip), "block"); }
-          else if (lead < LIST_INDENT * 6) edit(lr[0], lr[0], " ".repeat(LIST_INDENT), c[0] + LIST_INDENT, "block");
+          // An ORDERED item's source digit is rewritten to continue the run at its NEW depth
+          // (nextOlDigit), so the source stays consecutive and a stale digit can never read as a
+          // restart — the shape of the 2026-09-05 numbering bug (see computeListMarkers). Bullets
+          // have no digit; their line just gains/loses LIST_INDENT spaces as before.
+          const om = ln.match(/^( *)(\d+)(\.\s+)/);
+          const reprefix = newLead => {
+            const repl = " ".repeat(newLead) + nextOlDigit(lr[0], Math.floor(newLead / LIST_INDENT)) + om[3];
+            const oldLen = om[0].length;
+            const car = c[0] < lr[0] + oldLen ? lr[0] + repl.length : c[0] + (repl.length - oldLen);
+            edit(lr[0], lr[0] + oldLen, repl, car, "block");
+            // keep BOTH runs consecutive: the one the item joined (at lr[0]) and the one it left
+            // (its previous same-depth sibling, whose followers now skip over this deeper/shallower line)
+            fixOlFollowers(lr[0], prevOlLineStart(lr[0], Math.floor(lead / LIST_INDENT)));
+          };
+          if (e.shiftKey) {
+            const strip = Math.min(LIST_INDENT, lead);
+            if (strip) { if (om) reprefix(lead - strip); else edit(lr[0], lr[0] + strip, "", Math.max(lr[0], c[0] - strip), "block"); }
+          } else if (lead < LIST_INDENT * 6) {
+            if (om) reprefix(lead + LIST_INDENT); else edit(lr[0], lr[0], " ".repeat(LIST_INDENT), c[0] + LIST_INDENT, "block");
+          }
         } else if (c[0] === c[1] && c[0] === lr[0]) {
           // Word-style: Tab/Shift+Tab with a collapsed caret at the very START of a plain
           // paragraph sets/steps that paragraph's first-line indent (0.5in/3em per step),
@@ -2782,6 +2941,7 @@
       if (om) { const lead = (ln.match(/^ */) || [""])[0]; pfx = nextOlDigit(lr[0], Math.floor(lead.length / LIST_INDENT)) + om[2]; }
       const nl = re.test(ln) ? ln.replace(re, "") : (pfx + ln.replace(BLOCK_RE, ""));
       edit(lr[0], lr[1], nl, lr[0] + nl.length, "block");
+      if (om) fixOlFollowers(lr[0]);   // converted INTO a numbered item mid-run: the items below continue from it
     }
     function insertLink() {
       const c = readSel() || [selA, selB], a = c[0], b = c[1], sel = text.slice(a, b) || "text";
@@ -2813,7 +2973,7 @@
       while (end < text.length) {
         const ns = end + 1; let ne = text.indexOf("\n", ns); if (ne < 0) ne = text.length;
         const ln = text.slice(ns, ne), mm2 = ln.match(/^( *)([-*+])\s+/), mm3 = ln.match(/^( *)(\d+)(\.\s+)(.*)$/);
-        if (ln.trim() === "") { out += "\n" + ln; end = ne; continue; }               // blank — run stays alive
+        if (isListNeutralLine(ln)) { out += "\n" + ln; end = ne; continue; }          // blank / hidden directive — run stays alive
         if (mm2) {
           const d = Math.floor(mm2[1].length / LIST_INDENT);
           if (d <= depth) break;                                                      // same/shallower bullet — run ends
@@ -3169,7 +3329,7 @@
     }
     function copyCleanAll() {
       const md = (selA !== selB) ? text.slice(selA, selB) : text;
-      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(rangeToPlain(md)).catch(() => {});
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(rangeToPlain(md, (selA !== selB) ? selA : 0)).catch(() => {});
     }
     function fuzzy(q, s) {
       q = q.toLowerCase(); s = (s || "").toLowerCase(); if (!q) return 0;
@@ -5190,7 +5350,7 @@
       // DOCS-9 clean export — serialize the current selection (or the whole doc) to
       // human-clean output, no markdown / chip / style syntax. Useful for a "copy clean"
       // host button or an export pipeline.
-      getClean(opts) { const o = opts || {}; const a = (o.selection && selA !== selB) ? selA : 0, b = (o.selection && selA !== selB) ? selB : text.length; const md = text.slice(a, b); return o.html ? rangeToHtml(md) : rangeToPlain(md); },
+      getClean(opts) { const o = opts || {}; const a = (o.selection && selA !== selB) ? selA : 0, b = (o.selection && selA !== selB) ? selB : text.length; const md = text.slice(a, b); return o.html ? rangeToHtml(md) : rangeToPlain(md, a); },
       // DOCS-4 / DOCS-8 — open the command palette, or apply/clear invisible styling
       // programmatically (e.g. from a host toolbar button).
       openPalette, applyStyle, clearStyle, clearFormatting, toggleUnderline,
@@ -5292,6 +5452,10 @@
 
      LAYOUT: tabs are a COLLAPSIBLE LEFT RAIL (panel icon toggles it; state persists
      in localStorage `mde-tabs-collapsed`), separated from the editor by a hairline.
+     The ACTIVE tab's headings (its outline) nest under its row; a twisty on that row
+     folds them away (one preference for the rail, localStorage `mde-tab-outline-collapsed`;
+     ← / → on a focused active row do the same). Opt out of the merged outline entirely
+     with outline:false.
 
        makeTabs(container, {
          tabs:[{id,title,emoji?,dim?,deletable?}], activeId?, people?, emptyLabel?,
@@ -5318,7 +5482,7 @@
      only the actions whose hooks are supplied (Copy link is always available).
      Instance: setTabs(list,selectId?) · addTab(t,select?) · renameTab(id,title) ·
        setEmoji(id,emoji) · getTabs() · selectTab(id) · getActiveId() · getText() ·
-       setText(v) · getEditor() · focus()
+       setText(v) · getEditor() · focus() · setOutlineCollapsed(v) · getOutlineCollapsed()
      ====================================================================== */
   function makeTabs(container, opts) {
     opts = opts || {};
@@ -5331,6 +5495,21 @@
     // with outline:false to keep the legacy floating TOC panel (bare-editor hosts are unaffected).
     const outlineEnabled = opts.outline !== false;
     const OUTLINE_TWIST = '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
+    // The active tab's outline can be folded away (Aaron, 2026-09-05: "collapse the headings for
+    // an active tab"): a twisty on the active row toggles it. ONE preference for the rail (not
+    // per tab id — ids are the host's opaque slugs and would pile up in localStorage), persisted
+    // like the rail's own collapse. Inert when the merged outline is off.
+    function loadOutlineCollapsed() { try { return localStorage.getItem("mde-tab-outline-collapsed") === "1"; } catch (_) { return false; } }
+    let outlineCollapsed = outlineEnabled && loadOutlineCollapsed();
+    function setOutlineCollapsed(v) {
+      if (!outlineEnabled) return;
+      // renderRail() rebuilds every row; a rename in progress would lose its label (and its blur
+      // commit) mid-edit and leave `renaming` stuck — so the fold simply waits until the rename ends
+      if (renaming) return;
+      outlineCollapsed = !!v;
+      try { localStorage.setItem("mde-tab-outline-collapsed", outlineCollapsed ? "1" : "0"); } catch (_) {}
+      renderRail();
+    }
 
     const TABS_PANEL_ICON = '<svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/></svg>';
     const TABS_PLUS_ICON  = '<svg viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"/></svg>';
@@ -5470,6 +5649,21 @@
         el.setAttribute("role", "button"); el.tabIndex = 0;
         if (opts.onReorder) el.draggable = true;
 
+        if (outlineEnabled) {
+          // twisty slot on EVERY row (keeps labels aligned); a live button only on the active row,
+          // and visible (.on) only once that tab has ≥1 heading — renderOutline flips the class.
+          const isActive = t.id === activeId;
+          const tw = document.createElement(isActive ? "button" : "span");
+          tw.className = "mde-tab-twist" + (isActive && !outlineCollapsed ? " open" : "");
+          if (isActive) {
+            tw.type = "button"; tw.tabIndex = -1; tw.innerHTML = OUTLINE_TWIST;
+            tw.title = outlineCollapsed ? "Show headings" : "Hide headings"; tw.setAttribute("aria-label", tw.title);
+            tw.addEventListener("mousedown", e => e.stopPropagation());
+            tw.addEventListener("click", e => { e.stopPropagation(); setOutlineCollapsed(!outlineCollapsed); });
+          }
+          el.appendChild(tw);
+        }
+
         const emo = document.createElement("span");
         emo.className = "mde-tab-emoji";
         if (t.emoji) emo.textContent = t.emoji; else emo.style.display = "none";
@@ -5501,6 +5695,11 @@
         el.addEventListener("click", function () { if (!renaming) selectTab(t.id); });
         el.addEventListener("keydown", function (e) {
           if ((e.key === "Enter" || e.key === " ") && !renaming) { e.preventDefault(); selectTab(t.id); }
+          // tree-view convention: ← folds / → unfolds the active tab's headings
+          else if (outlineEnabled && t.id === activeId && !renaming && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+            const fold = e.key === "ArrowLeft";
+            if (fold !== outlineCollapsed) { e.preventDefault(); setOutlineCollapsed(fold); const row = rowFor(t.id); if (row) row.focus(); }
+          }
         });
         if (opts.onRename)
           el.addEventListener("dblclick", function (e) { e.preventDefault(); beginRename(t, label); });
@@ -5508,10 +5707,10 @@
         railList.appendChild(el);
 
         // the active tab's outline nests directly beneath its row (separately-owned sub-DOM,
-        // so heading/scroll updates never trigger a full renderRail — which would close menus)
+        // so heading/scroll updates never trigger a full renderRail — which would close menus).
+        // Folded ⇒ no box at all; renderOutline still runs to flip the twisty's .on state.
         if (outlineEnabled && t.id === activeId) {
-          const outline = document.createElement("div"); outline.className = "mde-tab-outline";
-          railList.appendChild(outline);
+          if (!outlineCollapsed) { const outline = document.createElement("div"); outline.className = "mde-tab-outline"; railList.appendChild(outline); }
           renderOutline();
         }
       }
@@ -5526,9 +5725,11 @@
     // fill the active tab's .mde-tab-outline from the editor's live outline (H2 nested under H1)
     function renderOutline() {
       if (!outlineEnabled) return;
+      const hs = ed.getOutline();
+      // the active row's twisty is only offered when there is something to fold
+      const tw = railList.querySelector(".mde-tab.active .mde-tab-twist"); if (tw) tw.classList.toggle("on", hs.length > 0);
       const box = railList.querySelector(".mde-tab-outline"); if (!box) return;
       box.innerHTML = "";
-      const hs = ed.getOutline();
       let curKids = null;
       hs.forEach((h, i) => {
         const link = document.createElement("button");
@@ -5788,6 +5989,9 @@
       renameTab(id, title) { const t = tabsState.find(x => x.id === id); if (t) { t.title = title; renderRail(); } },
       setEmoji(id, emoji) { const t = tabsState.find(x => x.id === id); if (t) { t.emoji = emoji || ""; renderRail(); } },
       getTabs() { return tabsState.map(t => ({ id: t.id, title: t.title, emoji: t.emoji, dim: t.dim, deletable: t.deletable })); },
+      // fold / unfold the active tab's headings in the rail (same preference the twisty toggles)
+      setOutlineCollapsed(v) { setOutlineCollapsed(!!v); },
+      getOutlineCollapsed() { return outlineCollapsed; },
       selectTab,
       getActiveId() { return activeId; },
       getText() { return ed.getText(); },

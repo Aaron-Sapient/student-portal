@@ -395,6 +395,14 @@
   /* no left ridge — a clean Google-Docs-style pill (just the soft fill) */
   .mde-tab.active { color: var(--mde-tab-active-fg); background: var(--mde-tab-active-bg); }
   .mde-tab.dim { opacity: .5; }
+  /* fold twisty for the active tab's outline. Every row reserves the slot (labels stay aligned);
+     it is a live chevron only on the active row once that tab has a heading (.on), and it points
+     down (rotated) while the outline is open. Eats 5px of the row's left padding. */
+  .mde-tab-twist { flex: none; width: 16px; height: 16px; margin-left: -5px; padding: 0; display: grid; place-items: center; appearance: none; border: 0; background: transparent; border-radius: 5px; color: inherit; opacity: 0; pointer-events: none; transition: opacity .12s, background .12s; }
+  .mde-tab-twist svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; transition: transform .15s; }
+  .mde-tab-twist.on { opacity: .72; pointer-events: auto; cursor: pointer; }
+  .mde-tab-twist.on:hover { opacity: 1; background: rgba(255, 255, 255, .2); }
+  .mde-tab-twist.open svg { transform: rotate(90deg); }
   .mde-tab-emoji { flex: none; font-size: 15px; line-height: 1; width: 1.3em; text-align: center; }
   .mde-tab-label { flex: 1 1 auto; min-width: 0; display: block; outline: none; overflow: hidden; text-overflow: ellipsis; }
   .mde-tab-label[contenteditable="true"] { cursor: text; min-width: 2ch; text-overflow: clip; }
@@ -403,7 +411,7 @@
   .mde-tab-badge { flex: none; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--mde-leaf); color: var(--mde-ink-soft); font-family: var(--mde-sans); font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
   .mde-tab.active .mde-tab-badge { background: var(--mde-card); }
   /* the active tab's outline (H1/H2), nested beneath its row — a light tree line + an active bar */
-  .mde-tab-outline { display: flex; flex-direction: column; gap: 1px; margin: 1px 0 5px 22px; padding-left: 9px; border-left: 1px solid var(--mde-hairline); }
+  .mde-tab-outline { display: flex; flex-direction: column; gap: 1px; margin: 1px 0 5px 30px; padding-left: 9px; border-left: 1px solid var(--mde-hairline); }   /* tree line under the label start (row padding 12 − twist margin 5 + twist 16 + gap 7) */
   .mde-tab-hlink {
     position: relative; text-align: left; border: 0; background: transparent; cursor: pointer;
     font-family: var(--mde-sans); color: var(--mde-ink-soft); border-radius: 7px;
