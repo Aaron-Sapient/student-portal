@@ -29,8 +29,8 @@
      sync.sh, so a consumer's own copy always answers for itself. Workflow: bump BOTH of these
      AND add a dated entry to CHANGELOG.md as a normal part of shipping any user-visible change —
      see CHANGELOG.md's header. Do not let this drift; a stale stamp defeats the whole feature. */
-  const MDE_VERSION = "1.6.0";
-  const MDE_LAST_CHANGE = "Side comments now travel with copy/paste inside the editor (across tabs too); numbered lists count by position, so a mix of numbers and a/b/c sub-items no longer skips numbers after an indent or a mid-list edit; and the active tab's headings fold behind a twisty in the tab rail.";
+  const MDE_VERSION = "1.7.0";
+  const MDE_LAST_CHANGE = "Export to portable markdown: two new Export entries in the ⌥/ palette (Copy portable markdown · Export portable markdown (.md)) turn the document into plain CommonMark + GFM tables with every engine-only construct removed — styles, side comments, indents and table layout lines gone, lists renumbered and nested the CommonMark way.";
 
   /* ============================================================================
      Side comments + emoji reactions — the in-document data model (MODULE scope, so
@@ -683,9 +683,11 @@
                     : (srcNum === 1 && prevSrc !== 1 && srcNum !== prevSrc + 1) ? 1   // bare "1." after a run past 1 → explicit restart ("0." then "1." is a plain continuation)
                     : prevCount + 1;                                                   // otherwise count by position (the digit may be stale)
           counts[depth] = val; srcSeen[depth] = srcNum;
-          out[k] = { depth, marker: listMarker("ol", val, depth) };
+          // `count` is the raw ordinal behind the painted marker (1 for "a." / "i." too) — the
+          // portable-markdown export re-emits digits at every depth from it (Features #2).
+          out[k] = { depth, count: val, marker: listMarker("ol", val, depth) };
         }
-        else { counts[depth] = 0; srcSeen[depth] = undefined; out[k] = { depth, marker: listMarker("ul", 0, depth) }; }   // a bullet breaks the ordered run at its depth
+        else { counts[depth] = 0; srcSeen[depth] = undefined; out[k] = { depth, count: 0, marker: listMarker("ul", 0, depth) }; }   // a bullet breaks the ordered run at its depth
       }
       return out;
     }
@@ -2559,6 +2561,204 @@
       flush();
       return html;
     }
+    /* ----- Features #2 — portable markdown export -------------------------------------------
+       Source → plain CommonMark + GFM tables with every construct THIS engine invented removed or
+       translated, so the file opens sanely in any markdown app (Aaron, 2026-07-26: "actual sane
+       markdown with none of our custom 'unrendered' text"). Portability is the target, not one
+       app: no Obsidian dialect, no wikilinks, no frontmatter. Adversarially reviewed against a
+       real CommonMark parser (marked, GFM) before it was written, 2026-09-05. What changes:
+         • machine directive lines are DROPPED — %%doc:…%% (document styles / page box), %%ind:N%%
+           (paragraph indent), %%cols…%% (table layout), %%mdc / %%mdr (side comments + reactions).
+           They are render instructions with no markdown equivalent, not content.
+         • the %%img:…%% suffix glued to an image is dropped; the standard ![alt](src) stays.
+         • @{c:ID} anchors go (their metadata lines above are gone too); @{s:…}…@{/s} style spans
+           unwrap to their text — colour / font / size / underline have no CommonMark form, so an
+           underlined phrase comes out plain; person/date chips become their visible labels.
+         • a USER-written %%aside%% (inline or whole line) is content, not machinery: it becomes an
+           HTML comment <!-- aside --> so it stays hidden everywhere instead of rendering as literal
+           percent signs. Real <!--…--> comments pass through verbatim — already standard.
+         • lists are re-emitted from the SAME position-based numbering the surface paints
+           (computeListMarkers): digits at every depth (CommonMark has no a./i. sub-list markers),
+           "-" bullets, and CommonMark-correct nesting — a child sits at its parent's content column
+           (3 under "1. ", 2 under "- "), because this engine's flat 2-space indent under a numbered
+           item does not nest in CommonMark. A depth jump nests one level (all CommonMark can say).
+           "Restart numbering" (a bare 1. mid-run) is kept by splitting the runs with an invisible
+           <!-- --> block — CommonMark otherwise reads every start number but the first as 2, 3, 4.
+         • this engine renders one source line as one visible line; CommonMark joins consecutive
+           lines into a paragraph. Consecutive paragraph (and quote) lines get a two-space hard
+           break so the exported doc keeps its line structure. A paragraph straight after a list
+           item or a quote line gets a blank line first — CommonMark would otherwise absorb it into
+           the item / quote as a lazy continuation, which is the single most common shape in real
+           docs here (a blank line costs a visible gap in this engine, so people skip it).
+         • block boundaries CommonMark would misread are repaired: "---" straight after text (a
+           setext heading there) and a bare =/- line get a blank line before them; a table gets a
+           blank line on both sides (GFM absorbs the next text line as a row); a delimiter row whose
+           cell count disagrees with the header is regenerated (GFM demotes the table otherwise);
+           paragraph lines lose their leading whitespace (4+ spaces is a code block there) and get a
+           backslash when their first characters would start a block CommonMark has and this engine
+           does not (`# x` indented, `1) x`, `- - -`, `<div>`).
+         • a ``` / ~~~ fenced block is not something this engine renders (its lines are plain
+           paragraphs here) but it IS markdown: copied verbatim to its closing fence, untouched.
+       Emphasis, links, headings, quotes, checklists and table rows pass through as written — they
+       ARE markdown. Known limits, stated in the CHANGELOG: ***x*** is bold(*x)+* here and
+       bold+italic in CommonMark; several blank lines collapse to one gap; a hidden comment line
+       between two paragraph lines separates them into two paragraphs; the backslash escapes show
+       literally if the export is re-imported here (this engine has no escape processing). ----- */
+    function portableFixComment(s) { return String(s).trim().replace(/--/g, "- -"); }
+    // This engine paints `<tag>` and `&entity;` as literal text; CommonMark reads them as raw HTML
+    // (a `<placeholder>` would vanish for the reader) and as entities. Escape them in text — except
+    // inside table rows (rawHtml), where cells use `<br>` for line breaks by this engine's own rule.
+    function portableText(s, rawHtml) {
+      return rawHtml ? s : s.replace(/<(?=[a-zA-Z\/!?])/g, "\\<").replace(/&(?=(?:[a-zA-Z][a-zA-Z0-9]{1,31}|#\d{1,7}|#[xX][0-9a-fA-F]{1,6});)/g, "\\&");
+    }
+    function portableInline(content, rawHtml) {
+      let out = "";
+      for (const t of parseInline(content, 0)) {
+        if (t.kind === "text") out += portableText(t.text, rawHtml);
+        else if (t.kind === "chip") out += (t.ctype === "date" ? fmtDateLabel(t.cval) : t.cval);
+        else if (t.kind === "comment") out += (t.open === "%%" ? "<!-- " + portableFixComment(t.inner) + " -->" : t.open + t.inner + t.close);
+        else if (t.kind === "cmark") { /* anchor marker — its metadata line is dropped too */ }
+        else if (t.kind === "img") out += "![" + t.alt + "](" + t.url + ")";          // %%img:…%% spec dropped
+        else if (t.kind === "code") out += "`" + t.inner + "`";
+        else if (t.kind === "link") out += "[" + t.ltext + "](" + t.url + ")";        // ltext is painted raw by the surface too
+        else if (t.kind === "style") out += portableInline(t.inner, rawHtml);      // colour/font/size/underline: no markdown form
+        else out += t.mark + portableInline(t.inner, rawHtml) + t.mark;               // strong / em / del, as written
+      }
+      // sweep: an unpaired @{s:…} / @{/s} / anchor that fell through as text must not leak
+      return out.replace(/@\{s:[^}]*\}|@\{\/s\}|@\{\/?c:[a-z0-9]{4,}\}/g, "");
+    }
+    function isPortableDirective(ln) {
+      return DOC_LINE_RE.test(ln) || IND_LINE_RE.test(ln) || MDC_LINE_RE.test(ln) || MDR_LINE_RE.test(ln) || isColsLine(ln);
+    }
+    const FENCE_OPEN_RE = /^ {0,3}(`{3,}|~{3,})/;
+    const HR_LIKE_RE = /^([-*_])( *\1){2,}\s*$/;
+    // absStart: when the caller knows where the slice sits in the document, list numbers come from
+    // the WHOLE document (same rule as rangeToPlain), so copying items 3–4 exports "3. 4." — what
+    // the surface shows — and CommonMark honours that start number.
+    function toPortableMarkdown(md, absStart) {
+      const lines = String(md == null ? "" : md).replace(/\r\n?/g, "\n").split("\n");
+      const hidden = hiddenSourceLines(lines);
+      let listInfo;
+      if (absStart != null) {
+        const all = text.split("\n"), allInfo = computeListMarkers(all, hiddenSourceLines(all));
+        let first = 0; for (let k = 0; k < absStart && k < text.length; k++) if (text.charCodeAt(k) === 10) first++;
+        listInfo = lines.map((_, k) => allInfo[first + k] || null);
+      } else listInfo = computeListMarkers(lines, hidden);
+      const out = [];
+      // a blank line after a paragraph line: the hard-break spaces that line may carry are moot
+      // before a paragraph break (CommonMark ignores a trailing hard break), so drop them
+      const gap = () => { if (out.length && out[out.length - 1] !== "") { out[out.length - 1] = out[out.length - 1].replace(/  $/, ""); out.push(""); } };
+      const nextVisible = k => { for (let n = k + 1; n < lines.length; n++) if (!isPortableDirective(lines[n]) && !hidden[n]) return n; return -1; };
+      // list context — alive across blank lines exactly like computeListMarkers: `chain` is the
+      // open items (depth → content column), `lastType[d]` the kind of the last item at depth d,
+      // `ctx` what the previous block was ("list" | "bq" | null) for the lazy-continuation guard.
+      let chain = [], lastType = [], ctx = null;
+      const endList = () => { chain = []; lastType = []; };
+      let i = 0;
+      while (i < lines.length) {
+        const ln = lines[i];
+        if (isPortableDirective(ln)) { i++; continue; }
+        if (hidden[i]) {   // <!--…--> line / clean block: verbatim — unless the "line" is two comments with
+                           // visible text between them, which this engine hides and CommonMark shows
+          const closes = ln.match(/-->/g);
+          out.push(closes && closes.length > 1 ? "<!-- " + portableFixComment(ln) + " -->" : ln);
+          i++; continue;
+        }
+        const fence = FENCE_OPEN_RE.exec(ln);
+        if (fence) {
+          endList(); ctx = null; gap();
+          const ch = fence[1][0], len = fence[1].length;
+          const closeRe = new RegExp("^ {0,3}" + (ch === "`" ? "`" : "~") + "{" + len + ",}\\s*$");
+          out.push(ln.trim()); i++;
+          while (i < lines.length) { const l = lines[i]; out.push(l); i++; if (closeRe.test(l)) break; }
+          continue;
+        }
+        const tr = tableRunEnd(lines, i);
+        if (tr) {
+          const [hdr, j] = tr;
+          endList(); ctx = null; gap();
+          const hdrCells = splitCells(lines[hdr]).length;
+          for (let k = hdr; k < j; k++) {
+            if (k === hdr + 1) { const d = lines[k].trim(); out.push(splitCells(d).length === hdrCells ? d : "|" + " --- |".repeat(hdrCells)); }
+            else out.push(portableInline(lines[k].trim(), true));   // rows keep raw HTML: cells break lines with <br> here
+          }
+          i = j;
+          const nv = nextVisible(i - 1);
+          if (nv >= 0 && lines[nv].trim() !== "") out.push("");
+          continue;
+        }
+        if (ln.trim() === "") { out.push(""); i++; continue; }   // blank (whitespace-only too) — keeps a list alive, as here
+        const b = classify(ln, 0, ln.length);
+        if (b.type === "meta") {                                   // a whole-line user %%aside%% (directives are gone by now)
+          const m = /^\s*%%(.*)%%\s*$/.exec(ln);
+          out.push(m ? "<!-- " + portableFixComment(m[1]) + " -->" : ln.trim());
+          i++; continue;
+        }
+        if (b.type === "hr") { endList(); ctx = null; gap(); out.push("---"); i++; continue; }
+        if (b.type === "li" || b.type === "ol" || b.type === "task") {
+          const li = listInfo[i], depth = li ? li.depth : 0;
+          while (chain.length && chain[chain.length - 1].depth >= depth) chain.pop();   // nearest OPEN shallower item is the parent
+          lastType.length = depth + 1;                                                    // deeper runs end here (their counters do too)
+          const indent = chain.length ? chain[chain.length - 1].col : 0;
+          const isOl = b.type === "ol", count = isOl ? (li && li.count ? li.count : 1) : 0;
+          if (isOl && count === 1 && lastType[depth] === "ol") { out.push(""); out.push(" ".repeat(indent) + "<!-- -->"); out.push(""); }   // "Restart numbering"
+          const marker = isOl ? count + "." : "-";
+          let body = portableInline(ln.slice(b.mlen));
+          if (HR_LIKE_RE.test(marker + " " + body)) body = "\\" + body;                 // "- - -" is a rule in CommonMark, a bullet here
+          out.push(" ".repeat(indent) + marker + " " + (b.type === "task" ? (b.checked ? "[x] " : "[ ] ") : "") + body);
+          chain.push({ depth, col: indent + marker.length + 1 });
+          lastType[depth] = isOl ? "ol" : "ul";
+          ctx = "list"; i++; continue;
+        }
+        endList();                                                 // any other block ends the list context
+        if (b.type === "h") { out.push("#".repeat(b.lvl) + " " + portableInline(ln.slice(b.mlen))); ctx = null; i++; continue; }
+        const nv = nextVisible(i), nb = (nv >= 0 && lines[nv].trim() !== "") ? classify(lines[nv], 0, lines[nv].length) : null;
+        if (b.type === "bq") { out.push("> " + portableInline(ln.slice(b.mlen)) + (nb && nb.type === "bq" ? "  " : "")); ctx = "bq"; i++; continue; }
+        // paragraph
+        if (ctx) gap();                                            // never a lazy continuation of the item / quote above
+        ctx = null;
+        let raw = ln.replace(/^\s+/, "");
+        if (/^[=-]+\s*$/.test(raw)) gap();                                                              // never a setext underline for the line above
+        // literal text here, a block there: escape the character that would start it (`<tag>` lines
+        // are covered by portableText, which escapes inline HTML anywhere in paragraph text)
+        if (/^#{1,6}\s/.test(raw) || HR_LIKE_RE.test(raw)) raw = "\\" + raw;
+        else if (/^\d+\)\s/.test(raw)) raw = raw.replace(/^(\d+)\)/, "$1\\)");
+        out.push(portableInline(raw) + (nb && nb.type === "p" ? "  " : ""));                          // one source line = one rendered line
+        i++;
+      }
+      while (out.length && out[out.length - 1] === "") out.pop();
+      return out.join("\n") + (out.length ? "\n" : "");
+    }
+    // Download name: the host's opts.exportName (string | fn) → else the first visible heading, read
+    // the way the surface paints it → else the page title → else "document". Filesystem-hostile
+    // characters become " - "; ".md" is appended unless the name already ends in .md/.markdown.
+    function portableFileName() {
+      let name = "";
+      try { name = typeof opts.exportName === "function" ? opts.exportName() : opts.exportName; } catch (_) {}
+      if (!name) {
+        const ls = text.split("\n"), hid = hiddenSourceLines(ls);
+        for (let k = 0; k < ls.length && !name; k++) {
+          if (hid[k]) continue;
+          const b = classify(ls[k], 0, ls[k].length);
+          if (b.type === "h") name = inlineToPlain(ls[k].slice(b.mlen));
+        }
+      }
+      if (!name) name = (typeof document !== "undefined" && document.title) || "";
+      name = String(name || "").replace(/\s*[\/\\:*?"<>|\r\n]+\s*/g, " - ").replace(/\s+/g, " ").trim().slice(0, 80).trim() || "document";
+      return /\.(md|markdown)$/i.test(name) ? name : name + ".md";
+    }
+    function downloadText(name, body, mime) {
+      const blob = new Blob([body], { type: mime || "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = name; a.style.display = "none";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+    function copyPortableAll() {   // selection when there is one, else the whole doc — same rule as copyCleanAll
+      const sel = selA !== selB, md = sel ? text.slice(selA, selB) : text;
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(toPortableMarkdown(md, sel ? selA : 0)).catch(() => {});
+    }
+    function exportPortableAll() { downloadText(portableFileName(), toPortableMarkdown(text, 0)); }
     /* ----- Side comments travel INSIDE the editor (Aaron, 2026-09-05: "if I copy-paste text that
        has a side comment from one tab to another, I want the side comment to carry over").
        The private MIME carries the anchors of every comment/reaction whose pair is COMPLETE inside
@@ -3275,6 +3475,10 @@
       add("dark", "Toggle dark mode", "View", () => toggleTheme(), "theme night light");
       add("acceptmd", (acceptMd ? "Show raw markdown marks" : "Hide markdown marks (easter egg)"), "View", () => setAcceptMarkdown(!acceptMd), "markdown asterisk raw syntax accept reveal");
       add("copyplain", "Copy clean text", "Export", () => copyCleanAll(), "plain export paste docs");
+      // Features #2 — portable markdown (plain CommonMark + GFM, every engine-only construct removed).
+      // Pure client-side, so unlike PDF it needs no host and is offered in every build, viewers too.
+      add("copymd", "Copy portable markdown", "Export", () => copyPortableAll(), "markdown commonmark plain portable clipboard obsidian export md");
+      add("exportmd", "Export portable markdown (.md)", "Export", () => exportPortableAll(), "markdown commonmark file download save portable obsidian export md");
       // host-gated, same shape as onHistory: rendering a real-fidelity PDF needs a server that can
       // drive a headless browser, which only the desktop app has. Absent entirely otherwise, so
       // the inline web builds don't offer an action that would just fail.
@@ -5351,6 +5555,9 @@
       // human-clean output, no markdown / chip / style syntax. Useful for a "copy clean"
       // host button or an export pipeline.
       getClean(opts) { const o = opts || {}; const a = (o.selection && selA !== selB) ? selA : 0, b = (o.selection && selA !== selB) ? selB : text.length; const md = text.slice(a, b); return o.html ? rangeToHtml(md) : rangeToPlain(md, a); },
+      // Features #2 — portable markdown: the doc (or just the selection) as plain CommonMark + GFM
+      // with every engine-only construct removed or translated. See toPortableMarkdown.
+      getPortable(opts) { const o = opts || {}, sel = !!(o.selection && selA !== selB); return toPortableMarkdown(sel ? text.slice(selA, selB) : text, sel ? selA : 0); },
       // DOCS-4 / DOCS-8 — open the command palette, or apply/clear invisible styling
       // programmatically (e.g. from a host toolbar button).
       openPalette, applyStyle, clearStyle, clearFormatting, toggleUnderline,
@@ -5460,6 +5667,7 @@
        makeTabs(container, {
          tabs:[{id,title,emoji?,dim?,deletable?}], activeId?, people?, emptyLabel?,
          railTitle?,       // sidebar header label (default "Tabs")
+         exportName?,      // string | () => string — download name for "Export portable markdown" (default: the active tab's title)
          atCommands?,      // forwarded to makeEditor (host @ commands, e.g. @buddy)
          toc?, tocButton?, // forwarded to makeEditor (TOC panel + floating button)
          tabMenu?,         // set false to hide the per-tab ⋮ options menu
@@ -5592,6 +5800,8 @@
       onHistory: opts.onHistory,             // forward the host's version-history trigger
       fontList: opts.fontList,               // forward the host's installed-font enumerator (desktop app only)
       onExportPdf: opts.onExportPdf,         // forward the host's PDF-export trigger (desktop app only)
+      // portable-markdown download name: the host's, else the ACTIVE tab's title (read lazily, at click time)
+      exportName: opts.exportName || (() => { const t = tabsState.find(x => x.id === activeId); return t ? t.title : ""; }),
       imageUpload: opts.imageUpload,         // forward the image hooks
       resolveImageSrc: opts.resolveImageSrc,
       acceptMarkdown: opts.acceptMarkdown,   // forward the markdown-demotion toggle (else the editor reads its persisted per-user pref)
@@ -5996,6 +6206,7 @@
       getActiveId() { return activeId; },
       getText() { return ed.getText(); },
       setText(v) { loading = true; ed.setText(v); loading = false; },
+      getPortable(o) { return ed.getPortable(o); },   // Features #2 — portable markdown of the active tab
       getEditor() { return ed; },
       focus() { ed.focus(); },
       // markdown-demotion toggle — delegated to the inner editor so a host settings UI can drive it
