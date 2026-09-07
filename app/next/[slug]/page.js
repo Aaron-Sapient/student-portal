@@ -434,6 +434,23 @@ export default async function NextPage({ params }) {
                 emptyLabel:
                   b.emptyLabel ||
                   "Ryan's calendar could not be loaded just now. Refresh the page, or email us and we will find a time.",
+                /* What the family's own window is CALLED, for the one sentence
+                   that has to name it ("No evenings are open in October").
+                   Hard-coded as "mornings" until 2026-09-07, which was true
+                   while every lead was fifteen hours ahead and Ryan's Pacific
+                   afternoon landed in their morning. An Eastern-time family
+                   books the same hours as their EVENING, and telling them no
+                   mornings are open is a sentence about a window they were
+                   never offered.
+
+                   THE DEFAULT IS "times", NOT A GUESS AT THE WINDOW. A row that
+                   says nothing gets the noun that is true on every clock, so
+                   the sentence can never be false for a row nobody remembered
+                   to annotate; a row that names its own window gets its own
+                   word. Derived from the row rather than from the zone, because
+                   the window is a choice about the family, not a fact about the
+                   clock. */
+                windowNoun: b.windowNoun || 'times',
               }}
             />
           </Wide>
@@ -457,7 +474,20 @@ export default async function NextPage({ params }) {
         {/* ── 7. Families outside the United States ───────────────────────────
             Every sentence is one the International Families pamphlet already
             prints. The pamphlet's own school-night clause is left out on
-            purpose: it is true of a Saturday and false of a weekday. */}
+            purpose: it is true of a Saturday and false of a weekday.
+
+            RENDERED ONLY FOR A FAMILY IT IS ABOUT (2026-09-07, the first
+            domestic lead pages). Until now every row carried this block because
+            the first lead was in Singapore, and the section read every field
+            unguarded — `lead.international.stat` with no guard — so a row
+            without the key crashed the route rather than dropping a section
+            that does not apply. A family in Westchester does not need to be
+            told that distance changes the calendar, and being told it is the
+            page announcing that it was written for somebody else. Omit
+            `international` (or set it null) and the whole section, the UK/US
+            block included, is simply not there. Rows that carry it, Conor's
+            included, are untouched and still render. */}
+        {lead.international && (
         <Col className="mt-16" data-reveal>
           {/* The one figure worth keeping off the deleted three-up row, placed
               where the question it answers is actually being asked: a family in
@@ -508,6 +538,7 @@ export default async function NextPage({ params }) {
             </div>
           )}
         </Col>
+        )}
 
         {/* ── 8. The register ─────────────────────────────────────────────────
             Real material only: a photograph Ryan took, three figures the firm
@@ -615,7 +646,25 @@ export default async function NextPage({ params }) {
           </Col>
 
         <Wide className="mt-8" data-reveal>
-          <div className="grid gap-5 lg:grid-cols-3 lg:gap-4">
+          {/* THE GRID IS SIZED BY WHAT IS IN IT (2026-09-07, the senior shape).
+              Three peer columns is the LADDER, which is what grades 9 to 11 get.
+              A senior gets ONE number, custom-scoped (Claude_Lead Pages.md 2.4),
+              and one card left in a three-column grid reads as two tiers that
+              failed to load. One tier is a single card held to a card's width so
+              it sits under the heading like a statement; two is two columns.
+              A data change, not a page change: the three-tier case emits the
+              exact class string it emitted before, so no live row moves.
+              Full class names, never interpolated fragments: Tailwind reads this
+              file as text and never sees a name it has to compute. */}
+          <div
+            className={
+              lead.packages.tiers.length === 1
+                ? 'grid gap-5 lg:max-w-[24rem] lg:gap-4'
+                : lead.packages.tiers.length === 2
+                  ? 'grid gap-5 lg:grid-cols-2 lg:gap-4'
+                  : 'grid gap-5 lg:grid-cols-3 lg:gap-4'
+            }
+          >
             {lead.packages.tiers.map((tier) => (
               <div key={tier.name} className="neu-raised flex flex-col rounded-[1.75rem] p-6">
                 <p className="font-display text-[1.25rem] font-semibold leading-snug text-ink">

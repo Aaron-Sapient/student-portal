@@ -60,6 +60,20 @@ function firstOpenDay(month) {
   return inMonth?.date || null;
 }
 
+/* Does Ryan's clock still say anything this family does not already know?
+   ─────────────────────────────────────────────────────────────────────────
+   A second time zone earns its place while a family is CHOOSING across a
+   twelve-hour gap. It earns nothing for a family on Pacific time, where the
+   confirm sentence read "Tuesday 4:30 pm Pacific time, which is Tuesday
+   4:30 pm in Irvine" — the page asking a parent to convert a number into
+   itself. Derived from the DESCRIBED slot rather than from a zone name, so
+   this can never disagree with the two times actually on screen; any zone
+   offset at all, including a half-hour one, differs in the time or the day.
+   (2026-09-07, the first domestic lead page.) */
+function showsPacific(slot) {
+  return slot.pacific.time !== slot.family.time || slot.pacific.day !== slot.family.day;
+}
+
 /* One time, as a chip. The day belongs to the heading above the list, so the
    chip carries only what distinguishes it from its neighbours: one line, the
    family's own time and its zone code, "7:00 am SGT".
@@ -76,7 +90,11 @@ function Slot({ slot, selected, onSelect }) {
         type="button"
         onClick={() => onSelect(slot)}
         aria-pressed={selected}
-        aria-label={`${slot.family.day} ${slot.family.time} ${slot.family.zone}, ${slot.pacific.day} ${slot.pacific.time} in Irvine`}
+        aria-label={
+          showsPacific(slot)
+            ? `${slot.family.day} ${slot.family.time} ${slot.family.zone}, ${slot.pacific.day} ${slot.pacific.time} in Irvine`
+            : `${slot.family.day} ${slot.family.time} ${slot.family.zone}`
+        }
         className={`min-h-[52px] w-full rounded-[1.25rem] px-4 py-3 text-center ${
           selected ? 'slot-on' : 'neu-slot'
         }`}
@@ -277,7 +295,19 @@ export default function BookingBlock({ slug, initial, copy }) {
     /* Google wants a URL, not a file; everything else reads the .ics. */
     const googleUrl =
       'https://calendar.google.com/calendar/render?action=TEMPLATE' +
-      `&text=${encodeURIComponent(copy.booked.calendarTitle || 'Conversation with Ryan Choi')}` +
+      /* `copy.calendarTitle`, not `copy.booked.calendarTitle` (fixed
+         2026-09-07). page.js passes calendarTitle at the TOP level of copy,
+         beside zoomLink and confirmLabel; this line read it one level down
+         inside `booked`, where nothing ever put it, so the expression always
+         fell through to the literal below and the Add-to-Google-Calendar
+         button said "Conversation with Ryan Choi" no matter whose page it was
+         or what the row asked for. Invisible while Ryan was the only
+         instructor and no row set the field; wrong the moment either changed.
+         The read moved rather than the write, because page.js's fallback
+         (`Conversation with ${instructor.fullName}`) is the correct one and
+         moving the key into `booked` would have meant spreading a defaulted
+         object to keep it. */
+      `&text=${encodeURIComponent(copy.calendarTitle || 'Conversation with Ryan Choi')}` +
       `&dates=${stamp(startUtc)}/${stamp(endUtc)}` +
       `&details=${encodeURIComponent(`Zoom: ${zoomLink}`)}` +
       `&location=${encodeURIComponent(zoomLink)}`;
@@ -447,7 +477,13 @@ export default function BookingBlock({ slug, initial, copy }) {
             <p className="text-[15px] leading-relaxed text-ink-soft">
               {month.days.length
                 ? 'Tap a day to see its times.'
-                : `No mornings are open in ${monthLabel}. Try the next month.`}
+                /* NOT "no mornings" (2026-09-07). The window a row asks for is
+                   `booking.morning` only because the first lead was fifteen
+                   hours ahead; for a family on the US east coast the same field
+                   holds an EVENING, and this sentence was the one place the
+                   page said otherwise out loud. The row may name its own noun;
+                   the default is "times", which is true on every clock. */
+                : `No ${copy.windowNoun || 'times'} are open in ${monthLabel}. Try the next month.`}
             </p>
           </div>
         )}
@@ -472,8 +508,10 @@ export default function BookingBlock({ slug, initial, copy }) {
               {busy ? 'Booking…' : copy.confirmLabel}
             </button>
             <p className="mt-3 text-[14px] leading-relaxed text-ink-faint">
-              {selected.family.day} {selected.family.time} {selected.family.zone}, which is{' '}
-              {selected.pacific.day} {selected.pacific.time} in Irvine.
+              {selected.family.day} {selected.family.time} {selected.family.zone}
+              {showsPacific(selected)
+                ? `, which is ${selected.pacific.day} ${selected.pacific.time} in Irvine.`
+                : '.'}
             </p>
           </div>
         )}

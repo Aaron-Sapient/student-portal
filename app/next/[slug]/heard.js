@@ -62,6 +62,25 @@ const KINDS = {
      rather than a map: a map shows the ground, a route is the line drawn across
      it, which is the thing that does not exist yet. */
   roadmap: { Icon: Route },
+
+  /* THE FIRST TWO KINDS FROM THE TWO ENUMS (Claude_Lead Pages.md section 2.1,
+     added 2026-09-07 for the Silkowski page, which is the first lead whose hero
+     is ask-then-offer rather than three facts about a student).
+
+     `narrative` is an ASK kind: "craft his story in a way that he's confident
+     in" (Silkowski 13:29), "who he is on paper" (Hidary 21:08). It takes the
+     quill, because the thing being asked for is writing.
+
+     `plan` is an OFFER kind: the short list of moves Ryan improvises in the
+     room (Guerrero 19:10, Reznik 34:15, Silkowski 08:46). It takes the route,
+     for the same reason `roadmap` does: a plan is the line drawn across ground
+     that already exists, and it is the part that does not exist yet.
+
+     The rest of the enum (profile, direction, focus, testing, money; program,
+     hook, rule, diagnosis, promise) stays NOT BUILT. A kind earns a slot when a
+     lead needs it, not before, and the enum stops at twelve. */
+  narrative: { Icon: Feather },
+  plan: { Icon: Route },
 };
 
 /* Older rows carry no `kind`. Three items in the original order are the three
