@@ -638,6 +638,17 @@ export default async function NextPage({ params }) {
 
             Heading and notes stay on the page's own left edge, so nothing that
             is read as text sits on a second edge. Only the cards move. */}
+        {/* RENDERED ONLY WHEN THERE ARE TIERS TO SHOW (2026-09-07, the same
+            ruling that made `international` optional: the /next pages are
+            modular, and a section is a claim about this family rather than a
+            slot every row must fill). The block read `lead.packages.heading`,
+            `.tiers.map` and `.notes.map` unguarded, so a row without a ladder
+            crashed the route instead of dropping a section. Set `tiers` to []
+            (or omit `packages`) and the heading, the cards and the notes are
+            all simply not there; the "Want to learn more?" pamphlet chip below
+            is a separate section and is unaffected. Rows that carry tiers,
+            Conor's included, are untouched and still render. */}
+        {lead.packages?.tiers?.length > 0 && (
         <section className="mt-20" data-reveal>
           <Col>
             <H2>
@@ -716,6 +727,7 @@ export default async function NextPage({ params }) {
           </div>
         </Col>
         </section>
+        )}
 
         {/* ── 9b. Want to learn more? ─────────────────────────────────────────
             The documents, together, under a heading of their own (Aaron,
