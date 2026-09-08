@@ -6,6 +6,7 @@ import {
   Landmark,
   Route,
   Sparkles,
+  Sprout,
 } from 'lucide-react';
 
 /* "What Ryan heard": the three things about this student, as a strip of modules.
@@ -35,7 +36,8 @@ import {
    Icons are Lucide, vendored from lucide-react on its 24px / 2px-stroke grid,
    chosen as ideographs rather than decorations: a train front for trains, a
    quill for poetry, a drafting compass for "a project being built", a
-   two-armed signpost for "two destinations, both open". A lead row may name
+   two-armed signpost for "two destinations, both open", a seedling for a farm.
+   A lead row may name
    its interest's glyph; everything else is fixed per kind, so a family can
    never be shown the wrong idea by a typo in a data file. */
 
@@ -51,6 +53,15 @@ const ICONS = {
   compass: DraftingCompass,
   signpost: SignpostBig,
   route: Route,
+  /* A seedling, for a module about growing things. Added 2026-09-07 (Aaron:
+     "the sparkle icon is mis-chosen for the farm"). The `interest` kind's
+     default is Sparkles, which is a decoration rather than an ideograph: it
+     says "something notable" about a module whose subject is a working farm in
+     New Hampshire, tractors and a mowing job held since the age of seven. The
+     glyph is named by the ROW rather than moved onto the kind, because the next
+     interest module will not be about a farm and Conor's live row must keep the
+     glyph it renders today. */
+  sprout: Sprout,
 };
 
 const KINDS = {

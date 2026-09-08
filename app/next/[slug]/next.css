@@ -791,6 +791,29 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 2.25rem;
   }
+  /* FOUR STAGES SPLIT 2 + 2, they do not run 3 + 1 (2026-09-07, Aaron). Three
+     columns was never a house grid, it was the count of stages every lead had
+     until Charles's page added a fourth, and a lone item under a full row reads
+     as something left over rather than as the last thing in a list.
+
+     The wrapped case needs a taller ROW gap than column gap. At three across
+     there is only one row and the single `gap` value is a column gap wearing
+     both hats; at 2 + 2 the same value would set the two rows closer together
+     than the hairlines that head them, and the second row would read as a
+     continuation of the first item rather than as a new pair.
+
+     One and two stages take their own count for the same reason: a single item
+     in the left third of a three-column grid is the orphan again, one row up. */
+  .next-page .nextlist[data-count='4'] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3rem 2.25rem;
+  }
+  .next-page .nextlist[data-count='2'] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .next-page .nextlist[data-count='1'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .next-page .nextlist-item {
     grid-template-columns: 1fr;
     grid-template-areas: 'icon' 'lead' 'body';
@@ -1094,4 +1117,31 @@ html.reveal-armed .next-page [data-reveal].reveal-now {
   flex-wrap: wrap;
   gap: 0.7rem;
   margin-top: 1.4rem;
+}
+
+/* The same documents when each one carries a note (2026-09-07, the per-lead
+   reading strip). A note cannot go under a pill inside the wrapping row above:
+   the items are laid out on one line, so a second line under one of them sets
+   the whole row's height and drags the unnoted chips off the baseline they
+   share. Each document becomes a block instead, chip over note, stacked.
+
+   ONE LEFT EDGE. The chip, the note, the heading above and the footer below all
+   start on the page's own x. The note takes the caption voice this page already
+   uses twice, for the photograph and for the essay fragment, at the same size
+   and the same faint ink, because it is the same kind of thing: a label under
+   an exhibit. Measure is capped so the note reads as a line rather than as a
+   paragraph the family is expected to work through. */
+.next-page .doc-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1.15rem;
+  margin-top: 1.4rem;
+}
+.next-page .doc-note {
+  margin-top: 0.5rem;
+  max-width: 34rem;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--color-ink-faint);
 }

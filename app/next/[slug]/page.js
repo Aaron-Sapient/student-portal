@@ -243,6 +243,46 @@ export default async function NextPage({ params }) {
       }
     : null;
 
+  /* THE READING STRIP'S DOCUMENTS, from the row (2026-09-07, Ryan via Aaron).
+     ────────────────────────────────────────────────────────────────────────
+     The section used to be two hardcoded booleans, one per pamphlet, each with
+     its own label and href field beside it. That shape could express exactly
+     two documents, in one order, forever, and the two it could express were
+     both fee-bearing, so the round-one no-price ruling switched both off and
+     took the whole section with them. What the ruling actually forbids is an
+     OFFER; what Ryan's round one is made of is "tons of info about Admissions
+     Partners", the firm and the craft. Those are price-free documents, there
+     are more than two of them, and which ones belong in front of a family is a
+     fact about that family. So the row carries a LIST:
+
+       "docs": [ { "label": "...", "href": "...", "note": "..." }, ... ]
+
+     `note` is optional and is the one line saying what the document is for.
+
+     BOTH SHAPES ARE READ, and the old one is not deprecated on Conor's behalf:
+     his row is live, it still carries the two booleans, and it must render
+     exactly what it renders today. A row with no `docs` is therefore mapped
+     from the booleans here, in the same order they used to appear in, so the
+     old row produces the identical list the old markup produced. A row that
+     carries `docs` uses it and ignores the booleans. */
+  const docs =
+    Array.isArray(lead.docs) && lead.docs.length > 0
+      ? lead.docs.filter((d) => d && d.label && d.href)
+      : [
+          lead.packagesPdf && { label: lead.packagesPdfLabel, href: lead.packagesPdfHref },
+          lead.intl_pdf && { label: lead.intlPdfLabel, href: lead.intlPdfHref },
+        ].filter(Boolean);
+
+  /* The strip picks its FORM from the data, the way the meeting list does.
+     Nobody's notes are half-written: either this row explains its documents or
+     it does not. With no notes the chips stay the inline wrapping row they have
+     always been, which is what keeps Conor's page identical to the pixel. With
+     notes, a wrapping row cannot hold them — a note under a pill in a flex row
+     drags the row's items onto different baselines and the set stops reading as
+     peers — so each document becomes a block, chip over note, every one of them
+     starting on the same left edge as the heading above and the footer below. */
+  const docsHaveNotes = docs.some((d) => d.note);
+
   return (
     <>
       <BookedFlag />
@@ -747,23 +787,38 @@ export default async function NextPage({ params }) {
             family needs to book a conversation; this is what they take away if
             they want the longer version, so it sits at the end rather than
             interrupting the argument. Renders nothing at all when a lead has
-            no documents switched on. */}
-        {(lead.packagesPdf || lead.intl_pdf) && (
+            no documents switched on.
+
+            WHAT MAY BE IN IT (2026-09-07, Ryan's round-one ruling): documents
+            about the firm and the craft, never about the offer. A price-free
+            guide is the page being generous; a fee-bearing pamphlet is the page
+            selling, and round one does not sell. The list is per-family and is
+            built above from `docs`; the guard below is its length, so a row
+            with an empty list drops the heading with the chips rather than
+            printing an invitation to read nothing. */}
+        {docs.length > 0 && (
           <section className="mt-20" data-reveal>
             <Col>
               <H2>
                 <Accent text={lead.docsHeading || 'Want to learn more?'} />
               </H2>
-              <div className="doc-chips">
-                {lead.packagesPdf && (
-                  <a className="pdf-chip" href={lead.packagesPdfHref} download>
-                    {lead.packagesPdfLabel}
-                  </a>
-                )}
-                {lead.intl_pdf && (
-                  <a className="pdf-chip" href={lead.intlPdfHref} download>
-                    {lead.intlPdfLabel}
-                  </a>
+              <div className={docsHaveNotes ? 'doc-list' : 'doc-chips'}>
+                {docs.map((d) =>
+                  docsHaveNotes ? (
+                    <div key={d.href} className="doc-list-item">
+                      <a className="pdf-chip" href={d.href} download>
+                        {d.label}
+                      </a>
+                      {d.note && <p className="doc-note">{d.note}</p>}
+                    </div>
+                  ) : (
+                    /* No wrapper in the un-noted case, so the chips stay DIRECT
+                       children of the flex row and the markup Conor's page ships
+                       today is the markup it keeps. */
+                    <a key={d.href} className="pdf-chip" href={d.href} download>
+                      {d.label}
+                    </a>
+                  )
                 )}
               </div>
             </Col>

@@ -41,7 +41,17 @@ export default function NextList({ lines }) {
   return (
     <>
       {staged.length > 0 && (
-        <ol className="nextlist">
+        /* THE COLUMN COUNT COMES FROM THE ROW (2026-09-07, Aaron: a fourth
+           stage "looks orphaned on its own row"). Three across was written when
+           every lead had exactly three stages; Charles's page has four, and
+           four items in three columns is 3 + 1, which reads as a mistake rather
+           than as a list. The count travels to CSS as an attribute instead of a
+           class so the stylesheet keeps the rule and this file keeps the data:
+           four stages split evenly into 2 + 2, one or two take their own
+           columns, and everything else stays on the three-column default that
+           Conor's live row renders on today. Phones stack one per row at every
+           count, which is the base rule and needs nothing. */
+        <ol className="nextlist" data-count={staged.length}>
           {staged.map((r, i) => {
             const Icon = ICONS[r.icon] || null;
             return (
