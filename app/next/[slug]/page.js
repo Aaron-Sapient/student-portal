@@ -902,8 +902,20 @@ export default async function NextPage({ params }) {
               exhibits under one labelling system rather than two unrelated
               objects. That shared label is what does the integrating; the
               tightened gap just stops them looking like separate sections. */}
-          <Col className="mt-10">
-            <figure>
+          {/* THE QUOTATION TAKES ITS OWN MEASURE, 40rem, not the 34rem prose
+              column (2026-09-08, Aaron: the essay and the document notes "are
+              still getting wrapped too early"). Measured at 1440 it was running
+              544px inside an 864px band, which is why it read pinched: the
+              photograph above it goes the full width and the paragraph under it
+              stopped two thirds of the way across.
+
+              40rem is 75 characters at this 17px, the top of the readable range
+              rather than a number picked to make the wrap go away. `Wide` with
+              an inner cap rather than `Col`, because the two share a left edge:
+              the first glyph still traces down the same x as every heading on
+              the page, and only the right-hand rag moves. */}
+          <Wide className="mt-10">
+            <figure className="max-w-[40rem]">
               {/* `text-pretty` because this slot holds a QUOTATION whose text nobody
                   here controls: it is a student's own sentences, and the next
                   row will paste a different length again. Measured 2026-09-08 at
@@ -919,7 +931,7 @@ export default async function NextPage({ params }) {
                 {lead.proof.essayLabel}
               </figcaption>
             </figure>
-          </Col>
+          </Wide>
 
           {/* The pamphlet's 2025-26 results line was here and is deliberately
               GONE. It reads "internships placed at the UN, Deloitte, and
@@ -1010,6 +1022,10 @@ export default async function NextPage({ params }) {
               <H2>
                 <Accent text={lead.docsHeading || 'Want to learn more?'} />
               </H2>
+              {/* Same 40rem as the quotation above, for the same reason and
+                  set by the same token, so the page has ONE secondary measure
+                  rather than one per block. The heading stays in the prose
+                  column; only the list widens, and both start on the page's x. */}
               <div className={docsHaveNotes ? 'doc-list' : 'doc-chips'}>
                 {docs.map((d) => {
                   const ext = isExternal(d.href);

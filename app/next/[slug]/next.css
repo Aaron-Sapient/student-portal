@@ -902,6 +902,30 @@
   letter-spacing: -0.01em;
   color: var(--color-ink);
 }
+/* A linked competition name. Underlined on an offset so the rule sits clear of
+   the descenders, in the page's own accent rather than a browser blue, and
+   thickening on hover so the affordance is felt rather than only seen. The
+   colour is NOT the only signal that this is a link: the underline is always
+   present, which is the rule that meaning is never carried by colour alone. */
+.next-page a.shortlist-name {
+  color: var(--color-ink);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--color-terracotta) 60%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition: text-decoration-color 140ms ease, color 140ms ease;
+}
+.next-page a.shortlist-name:hover {
+  color: var(--color-terracotta-deep);
+  text-decoration-color: var(--color-terracotta-deep);
+  text-decoration-thickness: 2px;
+}
+.next-page a.shortlist-name:focus-visible {
+  outline: 2px solid var(--color-terracotta-deep);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
 .next-page .shortlist-tag {
   flex: none;
   padding: 0.12rem 0.5rem;
@@ -1252,7 +1276,11 @@ html.reveal-armed .next-page [data-reveal].reveal-now {
 }
 .next-page .doc-note {
   margin-top: 0.5rem;
-  max-width: 34rem;
+  /* 40rem, matching the essay quotation, so the page carries one secondary
+     measure instead of one per block (2026-09-08, Aaron). These notes are one
+     or two lines rather than paragraphs a reader works through, which is what
+     lets them share the quotation's cap without running long. */
+  max-width: 40rem;
   font-size: 14px;
   line-height: 1.55;
   color: var(--color-ink-faint);

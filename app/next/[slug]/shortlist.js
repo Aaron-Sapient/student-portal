@@ -36,7 +36,23 @@ export default function Shortlist({ items }) {
       {rows.map((it) => (
         <li className="shortlist-item" key={it.name}>
           <p className="shortlist-head">
-            <span className="shortlist-name">{it.name}</span>
+            {/* THE NAME IS THE LINK when the row carries one (2026-09-08,
+                Aaron). A family reading a list of nine competitions with real
+                deadlines will want to look one up, and making them retype a
+                name into a search box is the page declining to finish its own
+                sentence. The NAME carries the href rather than a trailing
+                "learn more", because the name is what they are looking for and
+                a second element per row would be nine more tap targets.
+                External, so a new tab and rel=noopener: this page is the thing
+                they should still have open afterwards. A row without an href
+                renders the plain span it always did. */}
+            {it.href ? (
+              <a className="shortlist-name is-link" href={it.href} target="_blank" rel="noopener">
+                {it.name}
+              </a>
+            ) : (
+              <span className="shortlist-name">{it.name}</span>
+            )}
             {/* The mark is a WORD, never a colour or a dot on its own: this is
                 the one piece of judgment on the list and it has to survive a
                 greyscale print, a colour-blind reader and a screen reader. */}
