@@ -1,4 +1,5 @@
 import {
+  Blocks,
   TrainFront,
   Feather,
   DraftingCompass,
@@ -92,6 +93,25 @@ const KINDS = {
      lead needs it, not before, and the enum stops at twelve. */
   narrative: { Icon: Feather },
   plan: { Icon: Route },
+
+  /* `profile` is the THIRD kind from the enums, built 2026-09-08 for the Reeder
+     page, which is the first lead whose ask is this one and not `narrative`.
+
+     It is the enum's own first ask: "build it from nothing" (Guerrero 01:41,
+     DeBrot 01:12, Conor 14:43), and Kate Reeder's is the same shape in her own
+     words (Reeder 02:00) — "how do we think about other things that he could do
+     to start to flesh out awards, or academic areas of interest, or research
+     ... I'll say spiky, I won't say well-rounded". Three tapes before this one,
+     so it cleared section 2.1's two-tape guard long ago; it simply had no lead
+     that needed it until now.
+
+     BLOCKS, not the quill and not the sparkle. `narrative` was the only ask
+     kind built, and reaching for it here would have put a writing glyph on an
+     ask that is not about writing — section 2.1's own warning that an icon is
+     an ideograph, so "pretty close" means the wrong idea. What this parent is
+     asking for is a profile assembled out of parts that do not exist yet, and
+     blocks are the ideograph for building something from parts. */
+  profile: { Icon: Blocks },
 };
 
 /* Older rows carry no `kind`. Three items in the original order are the three
