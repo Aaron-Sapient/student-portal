@@ -909,13 +909,27 @@ export default async function NextPage({ params }) {
               photograph above it goes the full width and the paragraph under it
               stopped two thirds of the way across.
 
-              40rem is 75 characters at this 17px, the top of the readable range
-              rather than a number picked to make the wrap go away. `Wide` with
+              38rem, and the number is measured rather than chosen. Rag at 1440
+              across six candidate widths, last line as a percentage of the
+              measure: 34rem 87%, 36rem 54%, 38rem 42%, 40rem 21%, 42rem 11%,
+              44rem 92%. 40rem, the first value tried, produced a four-line
+              paragraph ending in a 137px stub, which is a worse defect than the
+              narrowness it was fixing. 38rem is 71 characters at this 17px,
+              inside the readable range, clearly wider than the prose column,
+              and lands its last line at 42% rather than as a widow.
+
+              44rem tests BEST of all (three lines, 676/658/650, no stub) and is
+              deliberately not used. It is 83 characters, past the measure floor,
+              and — the real reason — that result belongs to THIS student's
+              excerpt. The next row pastes a different paragraph and the tuning
+              evaporates. A measure is chosen for the column, not for one text.
+
+              `Wide` with
               an inner cap rather than `Col`, because the two share a left edge:
               the first glyph still traces down the same x as every heading on
               the page, and only the right-hand rag moves. */}
           <Wide className="mt-10">
-            <figure className="max-w-[40rem]">
+            <figure className="max-w-[38rem]">
               {/* `text-pretty` because this slot holds a QUOTATION whose text nobody
                   here controls: it is a student's own sentences, and the next
                   row will paste a different length again. Measured 2026-09-08 at
@@ -1022,11 +1036,19 @@ export default async function NextPage({ params }) {
               <H2>
                 <Accent text={lead.docsHeading || 'Want to learn more?'} />
               </H2>
-              {/* Same 40rem as the quotation above, for the same reason and
-                  set by the same token, so the page has ONE secondary measure
-                  rather than one per block. The heading stays in the prose
-                  column; only the list widens, and both start on the page's x. */}
-              <div className={docsHaveNotes ? 'doc-list' : 'doc-chips'}>
+            </Col>
+            {/* THE LIST LEAVES THE PROSE COLUMN, same 40rem as the quotation, so
+                the page carries one secondary measure rather than one per block.
+                The heading stays in `Col`; `Wide` shares its left edge, so both
+                still start on the page's x and only the notes' rag moves.
+
+                This has to be a real structural change and not a `max-width` on
+                `.doc-note`: the note was already capped at 34rem by the COLUMN
+                around it, so raising the note's own cap moved nothing. A first
+                pass did exactly that, and left a comment here claiming the list
+                had widened while it measured 544px on prod. */}
+            <Wide>
+              <div className={`max-w-[38rem] ${docsHaveNotes ? 'doc-list' : 'doc-chips'}`}>
                 {docs.map((d) => {
                   const ext = isExternal(d.href);
                   const chip = (
@@ -1055,7 +1077,7 @@ export default async function NextPage({ params }) {
                   );
                 })}
               </div>
-            </Col>
+            </Wide>
           </section>
         )}
 

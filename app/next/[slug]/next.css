@@ -950,7 +950,7 @@
 }
 .next-page .shortlist-meta {
   margin: 0.1rem 0 0;
-  max-width: 40rem;
+  max-width: 38rem;
   font-size: 15px;
   line-height: 1.5;
   color: var(--color-ink-soft);
@@ -1280,7 +1280,7 @@ html.reveal-armed .next-page [data-reveal].reveal-now {
      measure instead of one per block (2026-09-08, Aaron). These notes are one
      or two lines rather than paragraphs a reader works through, which is what
      lets them share the quotation's cap without running long. */
-  max-width: 40rem;
+  max-width: 38rem;
   font-size: 14px;
   line-height: 1.55;
   color: var(--color-ink-faint);
