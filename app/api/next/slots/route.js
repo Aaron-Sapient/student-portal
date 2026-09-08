@@ -1,5 +1,5 @@
 import { getGoogleCalendarClient } from '@/lib/google';
-import { getLead } from '@/app/next/[slug]/leads';
+import { getLead, isBookable } from '@/app/next/[slug]/leads';
 import { monthAvailability } from '@/lib/nextBooking';
 
 /* GET /api/next/slots?slug=<lead-slug>[&month=yyyy-MM]
@@ -36,6 +36,14 @@ export async function GET(request) {
 
   const lead = await getLead(slug);
   if (!lead) return Response.json({ error: 'Not found' }, { status: 404 });
+
+  /* A row that is not bookable has no availability to give (leads.js explains
+     which rows those are and why). 404 rather than 403, and with the same body
+     an unknown slug gets: telling a caller that this address exists but is not
+     offering times is a fact about a family, and this endpoint's whole design is
+     that it answers with availability or with nothing. The page never calls this
+     for such a row anyway; the guard is here for everyone who is not the page. */
+  if (!isBookable(lead)) return Response.json({ error: 'Not found' }, { status: 404 });
 
   try {
     /* The app's own calendar client, keyed per lead so this route draws on its

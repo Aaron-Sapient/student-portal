@@ -6,7 +6,7 @@ import { buildEventTitle } from '@/lib/calendarTitles';
 import { sendBookingEmail } from '@/lib/bookingEmail';
 import { renderConfirmation, sendConfirmation } from '@/lib/nextLeadEmail';
 import { describeSlot, inFamilyMorning, NEXT_DURATION_MINUTES } from '@/lib/nextBooking';
-import { getLead, maskEmail, recordLeadBooking } from '@/app/next/[slug]/leads';
+import { getLead, isBookable, maskEmail, recordLeadBooking } from '@/app/next/[slug]/leads';
 
 /* POST /api/next/book  { slug, start, dryRun? }
    ─────────────────────────────────────────────────────────────────────────
@@ -63,6 +63,15 @@ export async function POST(request) {
 
   const lead = await getLead(slug);
   if (!lead) return Response.json({ error: 'Not found' }, { status: 404 });
+
+  /* THE CALENDAR IS CLOSED FOR THIS ROW (leads.js isBookable says which rows and
+     why). This is the guard that actually matters of the two: slots only reads,
+     this one WRITES an event onto Ryan's real calendar, and the slug that
+     authorizes it is a guessable first name. A light row must not be able to
+     take a half hour of his week through an endpoint just because the page it
+     belongs to stopped offering one. 404, and the same body an unknown slug
+     gets, so the refusal says nothing about the family behind the address. */
+  if (!isBookable(lead)) return Response.json({ error: 'Not found' }, { status: 404 });
 
   const b = lead.booking || {};
   const instructor = getInstructor(b.instructor || 'ryan');

@@ -112,6 +112,34 @@ export async function getLead(slug) {
   return data?.data ?? null;
 }
 
+/* MAY THIS ROW'S CALENDAR BE TOUCHED AT ALL? One definition, imported by every
+   endpoint that reads or writes Ryan's calendar for a lead, because three
+   endpoints each deciding this for themselves is three chances to disagree.
+   ─────────────────────────────────────────────────────────────────────────
+   Two reasons a row is not bookable.
+
+   LIGHT (2026-09-07 evening, Ryan via Aaron). A light page offers no times, and
+   the reason is Ryan's: "if light gets access to the calendar, everyone will
+   book for a free 30 min even if they have NO intention of signing up." Taking
+   the calendar off the PAGE would not have taken it off the row: the slug is
+   the credential and it is a guessable first name, so /api/next/slots and
+   /api/next/book would still have answered anybody who typed the address. The
+   half hour is withheld at the row, not in the markup.
+
+   NOT ACTIVE. A closed page already renders a quiet notice instead of a
+   calendar; its endpoints should say the same thing rather than quietly
+   inserting an event on Ryan's real calendar for a lead nobody is working.
+
+   An ABSENT status reads as active, which is exactly how page.js reads it (it
+   tests only for 'closed'), so a row written before this field existed keeps
+   working. Anything else — 'paused', 'draft', a typo — is refused, because a
+   status nobody here recognises is not permission. */
+export function isBookable(lead) {
+  if (!lead) return false;
+  if (lead.mode === 'light') return false;
+  return (lead.status || 'active') === 'active';
+}
+
 /* Record a confirmed booking on the lead's row.
 
    The booking lives on the SAME row as the page it was made from, so "did this

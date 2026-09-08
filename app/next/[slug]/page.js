@@ -24,6 +24,11 @@ import { getInstructor } from '@/lib/instructors';
      before the prices. It is the whole difference between this and a PDF: the
      page knows who opened it. Blurred to illegibility it still reads as a
      personal address, which is the one thing a template cannot fake.
+   · A row may ask for LIGHT mode ("mode": "light"), and then none of the
+     booking paragraph below applies: the page carries the brochures and one
+     mailto that says yes, and offers no time at all. Ryan's ruling of
+     2026-09-07, and the reason is his: a free half hour offered to everyone is
+     a half hour spent on everyone. Everything else on the page is the same.
    · There is exactly ONE booking door and it is OURS. The family books Ryan's
      real calendar through the portal's own engine, on the same availability
      code a signed-in student books through, so they are never offered a time
@@ -151,6 +156,34 @@ export default async function NextPage({ params }) {
   if (!lead) notFound();
 
   const b = lead.booking || {};
+
+  /* LIGHT MODE (2026-09-07 evening, Ryan via Aaron; supersedes the afternoon
+     ruling where the two conflict).
+     ────────────────────────────────────────────────────────────────────────
+     Ryan's words: "light version: after the first initial, they get a
+     stripped-down version of the pamphlet that has NO pricing in the /lead; if
+     you're interested, let us know so we can move on to the next stage."
+
+     A light page GAUGES INTEREST. It carries the brochures and the overview and
+     nothing else, and the one action on it is a family saying yes. What it must
+     never carry is a calendar, and that is Ryan's own fear stated plainly: "if
+     light gets access to the calendar, everyone will book for a free 30 min even
+     if they have NO intention of signing up." The free thirty minutes is
+     something a family EARNS by asking real questions in a reply, or that Ryan
+     GRANTS by escalating them to the heavy page. So the whole booking apparatus
+     is gone here rather than hidden: no month grid, no sticky bar, no anchor to
+     jump to, no calendar read, and no sentence anywhere promising a second
+     conversation.
+
+     A row without `mode`, or with `mode: "heavy"`, renders exactly what it
+     rendered before this branch. That is not a courtesy: Conor's row is LIVE, so
+     the absent case has to be the identical page, and every new branch below is
+     gated on this one boolean rather than on the absence of some other field.
+     ESCALATION IS ONE SEED, in either direction: flip `mode` to "heavy", stamp
+     `escalatedAt` and `escalatedBy` (the family asked, or Ryan decided), re-seed,
+     and the calendar is back. Nothing else on the row moves, which is why the
+     `booking` object stays filled in on a light row and is simply unread. */
+  const isLight = lead.mode === 'light';
   /* Server-side only, which is why it can come from lib/instructors rather than
      the client-safe half: this component never ships to the browser, and the
      one field the client needs (zoomLink) is handed over explicitly below. */
@@ -209,8 +242,14 @@ export default async function NextPage({ params }) {
   /* One month, the family's current one (or the next, if this one is spent),
      with the first open day's times already in it. Null on failure: the block
      then shows its quiet empty sentence rather than an empty grid pretending
-     to be knowledge. */
+     to be knowledge.
+
+     NOT READ AT ALL ON A LIGHT PAGE. There is no calendar to fill, and asking
+     Google for Ryan's availability to render a page that offers none is a live
+     API call bought for nothing. It also keeps the guarantee honest at the
+     source: a light page cannot leak a time because it never learns one. */
   let month = null;
+  if (!isLight) {
   try {
     const res = await fetch(
       `${proto}://${host}/api/next/slots?slug=${encodeURIComponent(slug)}`,
@@ -222,6 +261,7 @@ export default async function NextPage({ params }) {
     }
   } catch (err) {
     console.error(`/next/${slug}: could not load availability`, err);
+  }
   }
 
   /* A family who already booked sees their booking, not a list of times. The
@@ -299,6 +339,25 @@ export default async function NextPage({ params }) {
      rather than declared per row, so a document cannot be labelled wrongly by a
      typo in a data file. */
   const isExternal = (href) => /^https?:\/\//i.test(href || '');
+
+  /* The light page's one action. Defaults live here rather than in the data so
+     a row that says nothing but `"mode": "light"` still renders a complete
+     block; a row that wants its own voice (Ryan speaks in the first person on
+     some pages and is spoken about on others) overrides any field. */
+  const interest = lead.interest || {};
+  /* ryan@ryanchoice.com, not ryan@admissions.partners. The second is an ALIAS of
+     support@ and nothing watches it as a lead inbox; the first is the mailbox
+     the lead watcher actually reads. A yes that lands where nobody is looking is
+     the one failure this whole mode exists to prevent. */
+  const interestTo = interest.to || 'ryan@ryanchoice.com';
+  /* SUBJECT ONLY, and the subject carries nothing about the family but the
+     student's first name. A prefilled BODY puts words in a parent's mouth and
+     then gets sent verbatim, which reads as a form response to the person who
+     receives it; and everything the subject says travels through whatever
+     unencrypted hop the family's mail takes. What we need back is a yes, and a
+     subject line is a yes. */
+  const interestSubject = interest.subject || `Options for ${lead.student}`;
+  const interestHref = `mailto:${interestTo}?subject=${encodeURIComponent(interestSubject)}`;
 
   return (
     <>
@@ -441,6 +500,54 @@ export default async function NextPage({ params }) {
             renders to HTML on the server: the first paint carries real times,
             already on both clocks, before any JavaScript has run. What
             JavaScript adds is the ability to tap one. */}
+        {/* THE LIGHT PAGE'S CTA, in the slot the calendar holds on a booking
+            page. Same position, same visual language (an H2 with the accented
+            last word, one line of sub, then a raised panel whose action is a
+            pill), so a family who sees both pages over time reads them as one
+            house. What changes is the ask: not a time, a yes.
+
+            A mailto and nothing else. No form, no endpoint, no state: the reply
+            lands in Ryan's inbox where every other family conversation already
+            lives, and a page that cannot collect an answer cannot mishandle
+            one. Server-rendered, so no client component is added for it. */}
+        {isLight && (
+          <section className="mt-16">
+            <Col>
+              <H2>
+                <Accent text={interest.heading || 'Tell us you are interested.'} />
+              </H2>
+              {interest.sub && (
+                <p className="mt-4 text-[16px] leading-relaxed text-ink-soft">{interest.sub}</p>
+              )}
+            </Col>
+            <Wide>
+              <div className="neu-raised mt-6 rounded-[1.75rem] p-7">
+                <p className="font-display text-[1.35rem] font-semibold leading-snug text-ink">
+                  {interest.panel || 'One line back is enough.'}
+                </p>
+                <div className="cal-add">
+                  <a className="cal-add-btn" href={interestHref}>
+                    {interest.buttonLabel || 'Tell Ryan you are interested'}
+                  </a>
+                </div>
+                {/* The address in plain sight under the button. A mailto opens
+                    nothing at all for a family who reads mail in a browser tab,
+                    and a button that does nothing when tapped is worse than no
+                    button. Printed, it is also just an address they can write to
+                    from anywhere. */}
+                <p className="mt-4 text-[14px] leading-relaxed text-ink-faint">
+                  Or write to{' '}
+                  <a className="hover:text-terracotta-deep" href={`mailto:${interestTo}`}>
+                    {interestTo}
+                  </a>
+                  .
+                </p>
+              </div>
+            </Wide>
+          </section>
+        )}
+
+        {!isLight && (
         <section id="pick-a-time" className="mt-16 scroll-mt-8">
           <Col>
             {/* "Pick a time." stops being true the moment they have one
@@ -512,6 +619,7 @@ export default async function NextPage({ params }) {
             />
           </Wide>
         </section>
+        )}
         {/* ── 6. What happens in that conversation ──────────────────────────
             A running order, not prose: three stages of the meeting as a list,
             then the one line that is not a stage. The list takes the page's
@@ -895,7 +1003,11 @@ export default async function NextPage({ params }) {
           still got a "Pick a time" bar pinned over their confirmation. Nothing
           had ever stayed booked before tonight, so nothing had ever shown it.
           The class stays for the client-side transitions BookingBlock drives. */}
-      {!bookedState && (
+      {/* A LIGHT PAGE HAS NO STICKY BAR, because it has nothing to jump to. The
+          bar is an anchor to the calendar and the calendar is not on the page;
+          left in, it would be a permanent "Pick a time" pinned over a page whose
+          whole design is that no time is being offered yet. */}
+      {!bookedState && !isLight && (
       <div className="sticky-book unbooked-only lg:hidden">
         <a href="#pick-a-time" className="sticky-book-btn">
           {b.stickyLabel}
