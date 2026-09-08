@@ -341,6 +341,12 @@ export default async function NextPage({ params }) {
      typo in a data file. */
   const isExternal = (href) => /^https?:\/\//i.test(href || '');
 
+  /* One address or several, normalised here so the footer markup stays a map
+     rather than a conditional. `emails` wins when a row carries it. */
+  const footerEmails = Array.isArray(lead.footer.emails)
+    ? lead.footer.emails.filter(Boolean)
+    : [lead.footer.email].filter(Boolean);
+
   /* The light page's one action. Defaults live here rather than in the data so
      a row that says nothing but `"mode": "light"` still renders a complete
      block; a row that wants its own voice (Ryan speaks in the first person on
@@ -358,19 +364,18 @@ export default async function NextPage({ params }) {
      unencrypted hop the family's mail takes. What we need back is a yes, and a
      subject line is a yes. */
   const interestSubject = interest.subject || `Options for ${lead.student}`;
-  /* A PREFILLED BODY, added 2026-09-08 (Aaron via Clauni, ratified 14:1x). The
-     note above argued against one, on the grounds that words put in a parent's
-     mouth get sent verbatim and read as a form response. That is overruled and
-     the reasoning is kept because it is still the risk being accepted: the
-     sentence is therefore one line, says only yes, and names the student, so a
-     parent who sends it unedited has still said exactly what they meant. Every
-     mail client leaves it editable, and the subject alone still carries the
-     answer if a client drops the body. */
-  const interestBody = interest.body || `Yes, please send options for ${lead.student}.`;
+  /* THE PREFILLED BODY IS GONE AGAIN (2026-09-08, Ryan via Aaron), and this
+     time for a reason that outranks both earlier positions. Ryan's stated goal
+     for this door is that a family "reply to that email with questions/concerns
+     ... so that we can then offer custom packages". A body reading "Yes, please
+     send options" hands a parent a finished message: they send it and write
+     nothing, which is exactly the information the door exists to collect. The
+     prefill did not merely risk putting words in their mouth, it suppressed the
+     answer. Subject only, so the mail opens with an empty body and a cursor.
+     A row may still set `body` if some future family needs a scaffold. */
   const interestHref =
-    `mailto:${interestTo}` +
-    `?subject=${encodeURIComponent(interestSubject)}` +
-    `&body=${encodeURIComponent(interestBody)}`;
+    `mailto:${interestTo}?subject=${encodeURIComponent(interestSubject)}` +
+    (interest.body ? `&body=${encodeURIComponent(interest.body)}` : '');
 
   return (
     <>
@@ -886,7 +891,15 @@ export default async function NextPage({ params }) {
               tightened gap just stops them looking like separate sections. */}
           <Col className="mt-10">
             <figure>
-              <blockquote className="font-display text-[17px] italic leading-relaxed text-ink">
+              {/* `text-pretty` because this slot holds a QUOTATION whose text nobody
+                  here controls: it is a student's own sentences, and the next
+                  row will paste a different length again. Measured 2026-09-08 at
+                  the 34rem measure, the previous excerpt broke 477 / 542 / 540 /
+                  322, which is a notch at the top, two flush lines, then a stub,
+                  and that is the "wrapped weirdly" Aaron saw. The replacement
+                  excerpt breaks 502 / 518 / 488 / 472 on its own, so this is
+                  insurance for the next quote rather than the fix for that one. */}
+              <blockquote className="font-display text-[17px] italic leading-relaxed text-pretty text-ink">
                 <p>{lead.proof.essay}</p>
               </blockquote>
               <figcaption className="mt-4 text-[14px] leading-relaxed text-ink-faint">
@@ -903,6 +916,53 @@ export default async function NextPage({ params }) {
               committing the firm to an outcome. This is not a formatting cut:
               do not restore the line without a ruling on that word. */}
         </section>
+
+        {/* ── 11. THE DOOR ───────────────────────────────────────────────────
+            The light page's one action, and now the section that closes the
+            argument (2026-09-08, Aaron via Clauni; moved back above the
+            reading strip later the same day, on Aaron's word).
+
+            It used to sit in the slot the calendar holds on a booking page,
+            which put the ask third and asked a family to say yes before the
+            page had shown them what they were saying yes to. A light page has
+            no calendar and no price, so the only argument it can make is the
+            material itself: what we heard, the work already done for this
+            student, the ways a year runs, the brochures. The ask goes after
+            all of it.
+
+            A mailto and nothing else. No form, no endpoint, no state: the reply
+            lands in Ryan's inbox where every other family conversation already
+            lives, and a page that cannot collect an answer cannot mishandle
+            one. Server-rendered, so no client component is added for it. */}
+        {isLight && (
+          <section className="mt-20" data-reveal>
+            <Col>
+              {/* THE HEADING NAMES THE STUDENT, because this page is one
+                  family's and the ask should not read like a newsletter's. */}
+              <H2>
+                <Accent text={interest.heading || `Want to see options for ${lead.student}?`} />
+              </H2>
+              <p className="mt-4 text-[17px] leading-relaxed text-ink-soft">
+                {interest.panel ||
+                  `Say yes in one line and Ryan puts together two or three options built around what we heard, then emails them to you. No forms, nothing to prepare.`}
+              </p>
+              {/* ONE control and NOTHING UNDER IT (2026-09-08, Aaron: "remove
+                  the bare, dangling ryan@ryanchoice.com"). The address was
+                  printed here in plain text so a family reading mail in a
+                  browser tab could still see where to write. It was the third
+                  version of the same idea in three hours and it read as
+                  leftover: an orphaned string under a button, pointing at the
+                  address the button already opens. The footer carries both of
+                  Ryan's addresses a screen further down, which is where a
+                  contact detail belongs. */}
+              <div className="cal-add">
+                <a className="cal-add-btn" href={interestHref}>
+                  {interest.buttonLabel || 'Send your questions'}
+                </a>
+              </div>
+            </Col>
+          </section>
+        )}
 
         {/* ── 9b. Want to learn more? ─────────────────────────────────────────
             The documents, together, under a heading of their own (Aaron,
@@ -970,73 +1030,57 @@ export default async function NextPage({ params }) {
           </section>
         )}
 
-        {/* ── 11. THE DOOR ───────────────────────────────────────────────────
-            The light page's one action, and now the LAST section above the
-            footer (2026-09-08, Aaron via Clauni, ratified 14:1x).
-
-            It used to sit in the slot the calendar holds on a booking page,
-            which put the ask third and asked a family to say yes before the
-            page had shown them what they were saying yes to. A light page has
-            no calendar and no price, so the only argument it can make is the
-            material itself: what we heard, the work already done for this
-            student, the ways a year runs, the brochures. The ask goes after
-            all of it.
-
-            A mailto and nothing else. No form, no endpoint, no state: the reply
-            lands in Ryan's inbox where every other family conversation already
-            lives, and a page that cannot collect an answer cannot mishandle
-            one. Server-rendered, so no client component is added for it. */}
-        {isLight && (
-          <section className="mt-20" data-reveal>
-            <Col>
-              {/* THE HEADING NAMES THE STUDENT, because this page is one
-                  family's and the ask should not read like a newsletter's. */}
-              <H2>
-                <Accent text={interest.heading || `Want to see options for ${lead.student}?`} />
-              </H2>
-              <p className="mt-4 text-[17px] leading-relaxed text-ink-soft">
-                {interest.panel ||
-                  `Say yes in one line and Ryan puts together two or three options built around what we heard, then emails them to you. No forms, nothing to prepare.`}
-              </p>
-              {/* ONE control. There were two: a pill, and under it "Or write to
-                  ryan@ryanchoice.com" as a second link to the identical mailto.
-                  Two targets for one destination make a reader choose between
-                  things that are not different. The address stays, because a
-                  mailto opens nothing for a family reading mail in a browser
-                  tab and the string has to be readable and copyable — but it is
-                  PLAIN TEXT now, not a link, so there is exactly one thing on
-                  this section to tap. */}
-              <div className="cal-add">
-                <a className="cal-add-btn" href={interestHref}>
-                  {interest.buttonLabel || 'Yes, send me options'}
-                </a>
-              </div>
-              <p className="mt-3 text-[14px] leading-relaxed text-ink-faint">{interestTo}</p>
-            </Col>
-          </section>
-        )}
-
         {/* ── 10. The footer ──────────────────────────────────────────────────
             The firm's contact block in the form the pamphlets print it. The en
             dash in the suite range is theirs; the hyphens in the phone number
             are a compound, not a range. */}
-        <Col className="mt-20" data-reveal>
+        <Col className="mt-20 pb-4" data-reveal>
+          {/* SPACING REBUILT 2026-09-08 (Aaron: "the vertical padding for the
+              footer is weird"). It was. Five lines carried four different gaps
+              — name to firm 0.25rem, firm to address 0.75rem, then address to
+              phone and phone to email at ZERO, because those two paragraphs had
+              no margin at all. So the block opened loose and closed as a solid
+              clump, and the address, the phone number and the email address ran
+              together as though they were one wrapped line.
+
+              Now it is two groups with one rhythm: who (name, firm) and where
+              to reach him (address, phone, email), the second group set on a
+              single `space-y` so every contact line gets the identical gap. The
+              group separation is the only gap that is larger, which is what
+              makes it read as a separation rather than as an accident. */}
           <div className="border-t border-ink-faint/25 pt-8 text-[14px] leading-relaxed text-ink-faint">
-            <p className="font-display text-[1.05rem] font-semibold text-ink-soft">
+            <p className="font-display text-[1.05rem] font-semibold leading-snug text-ink-soft">
               {lead.footer.name}
             </p>
-            <p className="mt-1">{lead.footer.firm}</p>
-            <p className="mt-3">{lead.footer.address}</p>
-            <p>
-              <a className="hover:text-terracotta-deep" href={`tel:+1${lead.footer.phone.replace(/\D/g, '')}`}>
-                {lead.footer.phone}
-              </a>
-            </p>
-            <p>
-              <a className="hover:text-terracotta-deep" href={`mailto:${lead.footer.email}`}>
-                {lead.footer.email}
-              </a>
-            </p>
+            <p className="mt-1.5">{lead.footer.firm}</p>
+            <div className="mt-4 space-y-1.5">
+              <p>{lead.footer.address}</p>
+              <p>
+                <a className="hover:text-terracotta-deep" href={`tel:+1${lead.footer.phone.replace(/\D/g, '')}`}>
+                  {lead.footer.phone}
+                </a>
+              </p>
+              {/* BOTH OF RYAN'S ADDRESSES, in the order the funnel meets them
+                  (2026-09-08, Aaron): ryan@admissions.partners is what a lead
+                  has been corresponding with, and ryan@ryanchoice.com is where
+                  this page's own button writes. Printing only the second made
+                  the page look like a different firm from the emails. The first
+                  is an ALIAS of support@ rather than a mailbox Ryan watches, so
+                  it is shown for continuity and is deliberately NOT what the
+                  door opens; the door still writes to ryanchoice.com.
+                  A row may carry `emails` (a list) or the older single `email`,
+                  so Conor's live row renders exactly as it does today. */}
+              <p className="flex flex-wrap items-center gap-x-2">
+                {footerEmails.map((addr, i) => (
+                  <span key={addr} className="flex items-center gap-x-2">
+                    {i > 0 && <span aria-hidden="true">/</span>}
+                    <a className="hover:text-terracotta-deep" href={`mailto:${addr}`}>
+                      {addr}
+                    </a>
+                  </span>
+                ))}
+              </p>
+            </div>
             {/* The International Families PDF link that lived here has MOVED
                 into the international section itself, as a chip. A document
                 filed next to a phone number is a document nobody decided a home
