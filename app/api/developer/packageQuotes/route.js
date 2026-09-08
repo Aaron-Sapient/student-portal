@@ -1,5 +1,6 @@
 import { requireAdmin } from '@/lib/developerAuth'
 import { listQuotes, saveQuote, updateQuote, findQuotesByStudentName, readPricing } from '@/lib/pricing'
+import { resolvePricing } from '@/lib/pricingSchema'
 
 // package_quotes.id is a uuid; Postgres raises on a malformed one, so a bad
 // `updateId` answers 400 rather than surfacing a raw Postgres string as a 500.
@@ -50,9 +51,12 @@ export async function POST(request) {
     if (!String(studentName || '').trim()) {
       return Response.json({ error: 'Add the student’s name before saving.' }, { status: 400 })
     }
-    // Snapshot the active config into the row so the contract derivation can
-    // reproduce the family's numbers after the pricing dashboard moves.
-    const config = await readPricing()
+    // Snapshot the config this proposal was PRICED against into the row, so the
+    // contract derivation can reproduce the family's numbers after the pricing
+    // dashboard moves. `selection.pricingPreset` decides which card that is:
+    // absent or unknown means the current one, so every row saved before
+    // presets existed snapshots exactly what it snapshotted before.
+    const config = resolvePricing(selection?.pricingPreset, await readPricing())
 
     if (updateId) {
       if (!UUID_RE.test(String(updateId))) {

@@ -14,12 +14,15 @@ import {
 import {
   ADDON_DEFS,
   ADDON_PACKAGES,
-  CLOSED_PACKAGES,
   DEFAULT_OFFERED,
+  DEFAULT_PRESET,
   GRADES,
   LEGACY_OFFERED,
   PACKAGES,
   PACKAGE_LABELS,
+  PRICING_PRESETS,
+  presetFor,
+  resolvePricing,
   studentNameKey,
 } from '@/lib/pricingSchema';
 import { computeQuote, money } from '@/lib/pricingCalc';
@@ -54,6 +57,9 @@ export function makeInitial() {
     // new row never reaches normalizeSelectedPackages' legacy fallback and
     // never quotes a closed tier by omission.
     selectedPackages: [...DEFAULT_OFFERED],
+    // Which pricing card this proposal is priced from. Current by default; the
+    // legacy card is an explicit, visible choice, never a fallback.
+    pricingPreset: DEFAULT_PRESET,
     // The saved row this form is editing, once there is one: { id, nameKey }.
     // It is the form's IDENTITY, not part of the proposal, so it is excluded
     // from the `state` memo that becomes `selection`. Without it a save can
@@ -86,6 +92,25 @@ export function fromSelection(sel, sourceQuote = null) {
   // late-start window, the early-start block — so restoring a stale date
   // verbatim is the one thing here that would put a dead deadline ("expires
   // 4/12", three times) in front of a family. ISO dates compare lexically.
+  // Reopening restores the card the row was priced on, and the tiers it
+  // offered are then filtered to what that card can actually price — a row is
+  // only as coherent as the day it was saved, and a tier the active card has no
+  // price for would render as somebody else's number under this card's label.
+  // Empty after the filter falls back to the card's own default rather than to
+  // normalizeSelectedPackages' silent substitution.
+  // The row's own field wins; failing that, the card the Saved tab inferred
+  // from its config_snapshot; failing that, current. The middle term is what
+  // stops a pre-refresh proposal reopening at today's prices.
+  const preset = presetFor(sel.pricingPreset || sourceQuote?.pricingPreset);
+  const stored = Array.isArray(sel.selectedPackages) ? sel.selectedPackages : [...LEGACY_OFFERED];
+  // ONLY a non-default card prunes. The current card can price every member of
+  // PACKAGES, so filtering there could only change the outcome for a row whose
+  // stored selection is already unrepresentable — an Essential-only proposal —
+  // and that one must keep resolving exactly as it did before presets existed
+  // (verbatim here, then normalizeSelectedPackages' legacy-pair fallback).
+  const pruned = preset.offerPackages.filter((p) => stored.includes(p));
+  const storedTiers =
+    preset.key === DEFAULT_PRESET ? stored : pruned.length ? pruned : [...preset.defaultOffered];
   const storedExpiry = String(sel.discountExpires || '');
   const keepExpiry =
     /^\d{4}-\d{2}-\d{2}$/.test(storedExpiry) &&
@@ -108,7 +133,10 @@ export function fromSelection(sel, sourceQuote = null) {
     // it reopens as the legacy pair and becomes explicit on its next save.
     // Carrying a stored selection verbatim is what stops a narrower proposal
     // from silently reopening with tiers the family was never offered.
-    selectedPackages: Array.isArray(sel.selectedPackages) ? sel.selectedPackages : [...LEGACY_OFFERED],
+    selectedPackages: storedTiers,
+    // presetFor() never returns undefined, so a row saved before this field
+    // existed reopens on the current card — which is what it was priced on.
+    pricingPreset: preset.key,
   };
 }
 
@@ -204,6 +232,7 @@ export default function PackageBuilder({ config, form, setForm }) {
   // last remaining tier is a no-op, because an empty selection has no
   // meaningful rendering and normalizeSelectedPackages would substitute the
   // legacy pair without saying so. This control is where that is prevented.
+  const preset = presetFor(f.pricingPreset);
   const tiers = Array.isArray(f.selectedPackages) ? f.selectedPackages : [...DEFAULT_OFFERED];
   const toggleTier = (pkg) =>
     setF((s) => {
@@ -211,6 +240,23 @@ export default function PackageBuilder({ config, form, setForm }) {
       const on = cur.includes(pkg);
       if (on && cur.length === 1) return s;
       return { ...s, selectedPackages: PACKAGES.filter((x) => (x === pkg ? !on : cur.includes(x))) };
+    });
+
+  // Switching cards prunes any tier the new card cannot offer, because a
+  // selection is only meaningful against the card that prices it — UVIP did not
+  // exist in 2025-26. Pruning to empty falls back to the card's own default
+  // rather than leaving a selection normalizeSelectedPackages would silently
+  // substitute for.
+  const setPreset = (key) =>
+    setF((s) => {
+      const next = presetFor(key);
+      const cur = Array.isArray(s.selectedPackages) ? s.selectedPackages : [];
+      const kept = next.offerPackages.filter((p) => cur.includes(p));
+      return {
+        ...s,
+        pricingPreset: next.key,
+        selectedPackages: kept.length ? kept : [...next.defaultOffered],
+      };
     });
 
   const state = useMemo(
@@ -231,12 +277,19 @@ export default function PackageBuilder({ config, form, setForm }) {
       // Read straight off `f` rather than through the render-scoped `tiers`, so
       // the memo keeps depending on `f` alone.
       selectedPackages: f.selectedPackages,
+      // Saved with the proposal, so a re-render — here, in the contract
+      // derivation, or in any later reader — prices from the same card.
+      pricingPreset: f.pricingPreset,
     }),
     [f]
   );
 
-  const quote = useMemo(() => computeQuote(state, config), [state, config]);
-  const email = useMemo(() => buildEmail(state, config), [state, config]);
+  // Every figure on this screen comes from the resolved card, never from
+  // `config` directly: `config` is the live row, which is only the current
+  // preset's card.
+  const activeConfig = useMemo(() => resolvePricing(f.pricingPreset, config), [f.pricingPreset, config]);
+  const quote = useMemo(() => computeQuote(state, activeConfig), [state, activeConfig]);
+  const email = useMemo(() => buildEmail(state, activeConfig), [state, activeConfig]);
 
   const copy = async () => {
     try {
@@ -382,10 +435,39 @@ export default function PackageBuilder({ config, form, setForm }) {
             </div>
           </div>
           <div className="block sm:col-span-2">
+            {/* Which price card this proposal is built from. Ryan picks it
+                per family, because a family already quoted before the
+                2026-08-31 refresh keeps the terms they were shown (Aaron's
+                ruling 2026-09-08). It is the FIRST control in this card rather
+                than a setting elsewhere: it moves every number below it, so
+                choosing it after building a proposal is choosing it twice. */}
+            <span className={labelCls}>Pricing card</span>
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+              {Object.values(PRICING_PRESETS).map((pr) => (
+                <Chip
+                  key={pr.key}
+                  on={f.pricingPreset === pr.key}
+                  onClick={() => setPreset(pr.key)}
+                  title={pr.hint}
+                >
+                  {pr.label}
+                </Chip>
+              ))}
+            </div>
+            {f.pricingPreset !== DEFAULT_PRESET && (
+              <p className="mt-2 text-[12px] leading-snug text-terracotta">
+                Pricing from the frozen {preset.label} card — for a family who was already quoted
+                on it. Everything below, including the installment terms and the pay-in-full
+                incentive, is the {preset.label} version.
+              </p>
+            )}
+          </div>
+
+          <div className="block sm:col-span-2">
             <span className={labelCls}>Tiers offered</span>
             <div className="mt-1.5 flex flex-wrap items-center gap-2">
-              {PACKAGES.map((pkg) => {
-                const closed = CLOSED_PACKAGES.includes(pkg);
+              {preset.offerPackages.map((pkg) => {
+                const closed = preset.closedPackages.includes(pkg);
                 return (
                   <Chip
                     key={pkg}
@@ -433,10 +515,14 @@ export default function PackageBuilder({ config, form, setForm }) {
       </Card>
 
       {/* Totals strip */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {PACKAGES.map((p) => {
+      <div
+        className={`grid grid-cols-1 gap-3 ${
+          preset.offerPackages.length === 2 ? 'sm:grid-cols-2' : 'sm:grid-cols-3'
+        }`}
+      >
+        {preset.offerPackages.map((p) => {
           const P = quote.packages[p];
-          const closed = CLOSED_PACKAGES.includes(p);
+          const closed = preset.closedPackages.includes(p);
           return (
             <div key={p} className={`neu-raised rounded-[1.5rem] p-4${closed ? ' opacity-60' : ''}`}>
               <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-ink-faint">

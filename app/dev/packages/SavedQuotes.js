@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { DateTime } from 'luxon';
 import { useDevData } from '@/app/developer/(panel)/DevDataContext';
-import { studentNameKey } from '@/lib/pricingSchema';
+import { DEFAULT_PRESET, presetForSavedQuote, studentNameKey } from '@/lib/pricingSchema';
 import {
   Badge,
   Card,
@@ -116,12 +116,26 @@ function QuoteDetail({ id, onBack, onOpenInBuilder }) {
         {quote && (
           <div className="flex flex-wrap items-center gap-2">
             {copied && <span className="text-[12px] font-medium text-moss">Copied.</span>}
+            {/* Which price card this proposal was built from — inferred from
+                the row's own config_snapshot when it predates the preset field,
+                which is every proposal saved before 2026-08-31. Shown only when
+                it is NOT the current card: a badge on every row would be noise,
+                and the thing worth seeing is a proposal priced off a frozen
+                card, which reopens on that same card. */}
+            {presetForSavedQuote(quote).key !== DEFAULT_PRESET && (
+              <span className="rounded-full bg-terracotta/10 px-2.5 py-1 text-[12px] font-semibold text-terracotta">
+                {presetForSavedQuote(quote).label} pricing
+              </span>
+            )}
             {quote.selection && (
               <GhostButton
                 onClick={() =>
                   onOpenInBuilder(quote.selection, {
                     id: quote.id,
                     nameKey: studentNameKey(quote.student_name),
+                    // The card this row was priced on, so reopening it cannot
+                    // silently reprice the family onto today's ladder.
+                    pricingPreset: presetForSavedQuote(quote).key,
                   })
                 }
               >

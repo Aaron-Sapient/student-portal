@@ -1,5 +1,6 @@
 import { requireAdmin } from '@/lib/developerAuth';
 import { getQuote, readPricing } from '@/lib/pricing';
+import { resolvePricing } from '@/lib/pricingSchema';
 import { buildContract } from '@/lib/packageContract';
 
 // GET /api/developer/packageQuotes/<id> → one saved proposal: the `selection`
@@ -34,7 +35,10 @@ export async function GET(request, { params }) {
     if (!quote) return Response.json({ error: 'Not found' }, { status: 404 });
     // The quote read as a commitment: per-tier committed deliverables, derived
     // from the same calculator that priced them (see lib/packageContract.js).
-    const contract = buildContract(quote, await readPricing());
+    // The fallback config, used only for a row saved before config_snapshot
+    // existed. It follows the row's own preset for the same reason the snapshot
+    // does: a legacy-card proposal must not re-derive against today's ladder.
+    const contract = buildContract(quote, resolvePricing(quote.selection?.pricingPreset, await readPricing()));
     return Response.json({ quote, contract });
   } catch (err) {
     console.error('packageQuotes GET one error:', err);

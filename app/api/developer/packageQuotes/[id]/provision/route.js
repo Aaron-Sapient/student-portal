@@ -1,5 +1,6 @@
 import { requireAdmin } from '@/lib/developerAuth'
 import { getQuote, readPricing, markQuoteProvisioned } from '@/lib/pricing'
+import { resolvePricing } from '@/lib/pricingSchema'
 import { buildContract } from '@/lib/packageContract'
 import { provisionFamily } from '@/lib/provisioning'
 
@@ -38,7 +39,12 @@ export async function POST(request, { params }) {
     const quote = await getQuote(id)
     if (!quote) return Response.json({ error: 'Quote not found' }, { status: 404 })
 
-    const config = await readPricing()
+    // Follows the row's own pricing preset, for the same reason the snapshot
+    // does. buildContract prefers config_snapshot and only reaches this when a
+    // row was saved without one, but that is exactly the case where guessing
+    // the current card would restate a legacy family's price at today's ladder
+    // inside an immutable provisioning receipt.
+    const config = resolvePricing(quote.selection?.pricingPreset, await readPricing())
     const contract = buildContract(quote, config)
 
     if (!contract.offered.includes(tier)) {

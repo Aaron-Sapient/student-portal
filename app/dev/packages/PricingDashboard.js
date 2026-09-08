@@ -15,6 +15,7 @@ import {
   GRADES,
   PACKAGES,
   PACKAGE_LABELS,
+  PRICING_PRESETS,
   validatePricing,
 } from '@/lib/pricingSchema';
 
@@ -111,6 +112,17 @@ export default function PricingDashboard({ config, onSaved }) {
 
   return (
     <div className="space-y-5">
+      {/* The one place the frozen card is discoverable. This screen writes the
+          live pricing_config row, which IS the current card — a proposal built
+          on the legacy card reads none of it, and nothing else in the UI says
+          so. Without this line, editing a number here and seeing a legacy
+          proposal ignore it looks like a bug. */}
+      <p className="text-[12px] leading-snug text-ink-faint">
+        This is the {PRICING_PRESETS.current.label} card. A proposal built on the{' '}
+        {PRICING_PRESETS.legacy2025.label} card is priced from a frozen copy in the code and
+        ignores every field below.
+      </p>
+
       {/* Base package prices */}
       <Card delay={60}>
         <SectionTitle hint="Starting price for each package at each grade level.">
