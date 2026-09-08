@@ -6,6 +6,7 @@ import BookingBlock from './BookingBlock';
 import HeardStrip from './heard';
 import Reveal from './Reveal';
 import NextList from './nextlist';
+import Shortlist from './shortlist';
 import { BookedFlag } from './LiveBits';
 import { describeSlot } from '@/lib/nextBooking';
 import { getInstructor } from '@/lib/instructors';
@@ -357,7 +358,19 @@ export default async function NextPage({ params }) {
      unencrypted hop the family's mail takes. What we need back is a yes, and a
      subject line is a yes. */
   const interestSubject = interest.subject || `Options for ${lead.student}`;
-  const interestHref = `mailto:${interestTo}?subject=${encodeURIComponent(interestSubject)}`;
+  /* A PREFILLED BODY, added 2026-09-08 (Aaron via Clauni, ratified 14:1x). The
+     note above argued against one, on the grounds that words put in a parent's
+     mouth get sent verbatim and read as a form response. That is overruled and
+     the reasoning is kept because it is still the risk being accepted: the
+     sentence is therefore one line, says only yes, and names the student, so a
+     parent who sends it unedited has still said exactly what they meant. Every
+     mail client leaves it editable, and the subject alone still carries the
+     answer if a client drops the body. */
+  const interestBody = interest.body || `Yes, please send options for ${lead.student}.`;
+  const interestHref =
+    `mailto:${interestTo}` +
+    `?subject=${encodeURIComponent(interestSubject)}` +
+    `&body=${encodeURIComponent(interestBody)}`;
 
   return (
     <>
@@ -500,52 +513,6 @@ export default async function NextPage({ params }) {
             renders to HTML on the server: the first paint carries real times,
             already on both clocks, before any JavaScript has run. What
             JavaScript adds is the ability to tap one. */}
-        {/* THE LIGHT PAGE'S CTA, in the slot the calendar holds on a booking
-            page. Same position, same visual language (an H2 with the accented
-            last word, one line of sub, then a raised panel whose action is a
-            pill), so a family who sees both pages over time reads them as one
-            house. What changes is the ask: not a time, a yes.
-
-            A mailto and nothing else. No form, no endpoint, no state: the reply
-            lands in Ryan's inbox where every other family conversation already
-            lives, and a page that cannot collect an answer cannot mishandle
-            one. Server-rendered, so no client component is added for it. */}
-        {isLight && (
-          <section className="mt-16">
-            <Col>
-              <H2>
-                <Accent text={interest.heading || 'Tell us you are interested.'} />
-              </H2>
-              {interest.sub && (
-                <p className="mt-4 text-[16px] leading-relaxed text-ink-soft">{interest.sub}</p>
-              )}
-            </Col>
-            <Wide>
-              <div className="neu-raised mt-6 rounded-[1.75rem] p-7">
-                <p className="font-display text-[1.35rem] font-semibold leading-snug text-ink">
-                  {interest.panel || 'One line back is enough.'}
-                </p>
-                <div className="cal-add">
-                  <a className="cal-add-btn" href={interestHref}>
-                    {interest.buttonLabel || 'Tell Ryan you are interested'}
-                  </a>
-                </div>
-                {/* The address in plain sight under the button. A mailto opens
-                    nothing at all for a family who reads mail in a browser tab,
-                    and a button that does nothing when tapped is worse than no
-                    button. Printed, it is also just an address they can write to
-                    from anywhere. */}
-                <p className="mt-4 text-[14px] leading-relaxed text-ink-faint">
-                  Or write to{' '}
-                  <a className="hover:text-terracotta-deep" href={`mailto:${interestTo}`}>
-                    {interestTo}
-                  </a>
-                  .
-                </p>
-              </div>
-            </Wide>
-          </section>
-        )}
 
         {!isLight && (
         <section id="pick-a-time" className="mt-16 scroll-mt-8">
@@ -620,6 +587,40 @@ export default async function NextPage({ params }) {
           </Wide>
         </section>
         )}
+
+        {/* ── 6b. The one thing built for this family ─────────────────────────
+            Present only when the row carries a `shortlist`, which today is
+            Stella's alone. It sits HERE, directly under "what happens next" and
+            well above the ask, because it is the evidence for the ask: the page
+            has just told a family that Ryan puts things together himself, and
+            this is him having already done it. Putting it after the CTA would
+            make it a reward for saying yes; putting it before makes it the
+            reason.
+
+            The heading takes the prose column with every other heading on the
+            page and the list takes the wide band, which is the same split the
+            "what happens next" columns above it use. */}
+        {lead.shortlist && Array.isArray(lead.shortlist.items) && (
+          <>
+            <Col className="mt-16" data-reveal>
+              <H2>
+                <Accent text={lead.shortlist.heading} />
+              </H2>
+              {lead.shortlist.lead && (
+                <p className="mt-4 text-[17px] leading-relaxed text-ink-soft">
+                  {lead.shortlist.lead}
+                </p>
+              )}
+            </Col>
+            <Wide className="mt-7" data-reveal>
+              <Shortlist items={lead.shortlist.items} />
+              {lead.shortlist.checked && (
+                <p className="shortlist-checked">{lead.shortlist.checked}</p>
+              )}
+            </Wide>
+          </>
+        )}
+
         {/* ── 6. What happens in that conversation ──────────────────────────
             A running order, not prose: three stages of the meeting as a list,
             then the one line that is not a stage. The list takes the page's
@@ -635,6 +636,122 @@ export default async function NextPage({ params }) {
         <Wide className="mt-7" data-reveal>
           <NextList lines={lead.next.lines} />
         </Wide>
+
+        {/* ── 9. The packages ─────────────────────────────────────────────────
+            The ladder, not a quote. Three peer columns on desktop, three
+            stacked blocks on a phone. No tier is starred, emphasised, or
+            ordered by preference, and Ultra VIP carries no figure on any
+            family-facing surface. */}
+        {/* The page has exactly one exception to its measure and this is its
+            second use: a WIDE FIGURE with its words back in the column. The
+            photograph does it above, bleeding past the text with its caption
+            returned to the column edge, and the tier cards do it here for the
+            same reason. Three tiers inside a 68-character prose column give
+            each about 190px, which breaks every feature line onto three lines
+            and turns a comparison into three paragraphs; the measure exists for
+            prose, and this is a table wearing cards.
+
+            Heading and notes stay on the page's own left edge, so nothing that
+            is read as text sits on a second edge. Only the cards move. */}
+        {/* RENDERED ONLY WHEN THERE ARE TIERS TO SHOW (2026-09-07, the same
+            ruling that made `international` optional: the /next pages are
+            modular, and a section is a claim about this family rather than a
+            slot every row must fill). The block read `lead.packages.heading`,
+            `.tiers.map` and `.notes.map` unguarded, so a row without a ladder
+            crashed the route instead of dropping a section. Set `tiers` to []
+            (or omit `packages`) and the heading, the cards and the notes are
+            all simply not there; the "Want to learn more?" pamphlet chip below
+            is a separate section and is unaffected. Rows that carry tiers,
+            Conor's included, are untouched and still render. */}
+        {lead.packages?.tiers?.length > 0 && (
+        <section className="mt-20" data-reveal>
+          <Col>
+            <H2>
+              <Accent text={lead.packages.heading} />
+            </H2>
+          </Col>
+
+        <Wide className="mt-8" data-reveal>
+          {/* THE GRID IS SIZED BY WHAT IS IN IT (2026-09-07, the senior shape).
+              Three peer columns is the LADDER, which is what grades 9 to 11 get.
+              A senior gets ONE number, custom-scoped (Claude_Lead Pages.md 2.4),
+              and one card left in a three-column grid reads as two tiers that
+              failed to load. One tier is a single card held to a card's width so
+              it sits under the heading like a statement; two is two columns.
+              A data change, not a page change: the three-tier case emits the
+              exact class string it emitted before, so no live row moves.
+              Full class names, never interpolated fragments: Tailwind reads this
+              file as text and never sees a name it has to compute. */}
+          <div
+            className={
+              lead.packages.tiers.length === 1
+                ? 'grid gap-5 lg:max-w-[24rem] lg:gap-4'
+                : lead.packages.tiers.length === 2
+                  ? 'grid gap-5 lg:grid-cols-2 lg:gap-4'
+                  : 'grid gap-5 lg:grid-cols-3 lg:gap-4'
+            }
+          >
+            {lead.packages.tiers.map((tier) => (
+              <div key={tier.name} className="neu-raised flex flex-col rounded-[1.75rem] p-6">
+                <p className="font-display text-[1.25rem] font-semibold leading-snug text-ink">
+                  {tier.name}
+                </p>
+                {/* A figure and a phrase are not the same typographic object.
+                    "$44,000" wants display size; "By conversation" set at the
+                    same size wraps to two lines and shouts louder than the two
+                    prices it sits beside, which is the nudge the house rule
+                    forbids. Sized by what the string IS, not by its slot. */}
+                {/* `posture` OR `price` (2026-09-08). A LIGHT row carries no
+                    figure, and the phrase that belongs in this slot is the
+                    brochure's own posture word for the tier — "Structured",
+                    "Bespoke", "By conversation". Writing that into a field
+                    literally named `price`, on a page whose governing rule is
+                    that no price appears, is a trap for whoever reads the row
+                    next, so light rows use `posture` and priced rows keep
+                    `price` untouched. Conor's live row is a `price` row and
+                    does not move. */}
+                <p
+                  className={`mt-2 font-display font-normal text-ink ${
+                    /\d/.test(tier.posture || tier.price || '')
+                      ? 'text-[1.75rem] leading-none'
+                      : 'text-[1.25rem] leading-snug'
+                  }`}
+                >
+                  {tier.posture || tier.price}
+                </p>
+                {tier.badge && (
+                  <p className="mt-2 text-[13px] font-semibold text-terracotta-deep">{tier.badge}</p>
+                )}
+                <ul className="ticks mt-5 space-y-2 text-[15px] leading-relaxed text-ink-soft">
+                  {tier.features.map((f) => (
+                    <li key={f}>{f}</li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </Wide>
+
+        {/* The pamphlet, under the ladder it describes (2026-09-04, Aaron:
+            "can the page host the full PDF of our 9-11 pamphlet, available for
+            download?").
+            HERE rather than in the footer, where the other PDF slot lives: a
+            family that wants this in writing wants it at the moment they are
+            reading prices, not after the phone number. It is a plain link with
+            the download attribute rather than a button — the page has one
+            action, and that action is booking a time; a second button beside
+            the ladder would compete with it for the same tap.
+            The label carries the file type because a link that silently starts
+            a download is a link that has surprised someone. */}
+        <Col className="mt-6" data-reveal>
+          <div className="space-y-1 text-[14px] leading-relaxed text-ink-faint">
+            {lead.packages.notes.map((n) => (
+              <p key={n}>{n}</p>
+            ))}
+          </div>
+        </Col>
+        </section>
+        )}
 
         {/* ── 7. Families outside the United States ───────────────────────────
             Every sentence is one the International Families pamphlet already
@@ -787,113 +904,6 @@ export default async function NextPage({ params }) {
               do not restore the line without a ruling on that word. */}
         </section>
 
-        {/* ── 9. The packages ─────────────────────────────────────────────────
-            The ladder, not a quote. Three peer columns on desktop, three
-            stacked blocks on a phone. No tier is starred, emphasised, or
-            ordered by preference, and Ultra VIP carries no figure on any
-            family-facing surface. */}
-        {/* The page has exactly one exception to its measure and this is its
-            second use: a WIDE FIGURE with its words back in the column. The
-            photograph does it above, bleeding past the text with its caption
-            returned to the column edge, and the tier cards do it here for the
-            same reason. Three tiers inside a 68-character prose column give
-            each about 190px, which breaks every feature line onto three lines
-            and turns a comparison into three paragraphs; the measure exists for
-            prose, and this is a table wearing cards.
-
-            Heading and notes stay on the page's own left edge, so nothing that
-            is read as text sits on a second edge. Only the cards move. */}
-        {/* RENDERED ONLY WHEN THERE ARE TIERS TO SHOW (2026-09-07, the same
-            ruling that made `international` optional: the /next pages are
-            modular, and a section is a claim about this family rather than a
-            slot every row must fill). The block read `lead.packages.heading`,
-            `.tiers.map` and `.notes.map` unguarded, so a row without a ladder
-            crashed the route instead of dropping a section. Set `tiers` to []
-            (or omit `packages`) and the heading, the cards and the notes are
-            all simply not there; the "Want to learn more?" pamphlet chip below
-            is a separate section and is unaffected. Rows that carry tiers,
-            Conor's included, are untouched and still render. */}
-        {lead.packages?.tiers?.length > 0 && (
-        <section className="mt-20" data-reveal>
-          <Col>
-            <H2>
-              <Accent text={lead.packages.heading} />
-            </H2>
-          </Col>
-
-        <Wide className="mt-8" data-reveal>
-          {/* THE GRID IS SIZED BY WHAT IS IN IT (2026-09-07, the senior shape).
-              Three peer columns is the LADDER, which is what grades 9 to 11 get.
-              A senior gets ONE number, custom-scoped (Claude_Lead Pages.md 2.4),
-              and one card left in a three-column grid reads as two tiers that
-              failed to load. One tier is a single card held to a card's width so
-              it sits under the heading like a statement; two is two columns.
-              A data change, not a page change: the three-tier case emits the
-              exact class string it emitted before, so no live row moves.
-              Full class names, never interpolated fragments: Tailwind reads this
-              file as text and never sees a name it has to compute. */}
-          <div
-            className={
-              lead.packages.tiers.length === 1
-                ? 'grid gap-5 lg:max-w-[24rem] lg:gap-4'
-                : lead.packages.tiers.length === 2
-                  ? 'grid gap-5 lg:grid-cols-2 lg:gap-4'
-                  : 'grid gap-5 lg:grid-cols-3 lg:gap-4'
-            }
-          >
-            {lead.packages.tiers.map((tier) => (
-              <div key={tier.name} className="neu-raised flex flex-col rounded-[1.75rem] p-6">
-                <p className="font-display text-[1.25rem] font-semibold leading-snug text-ink">
-                  {tier.name}
-                </p>
-                {/* A figure and a phrase are not the same typographic object.
-                    "$44,000" wants display size; "By conversation" set at the
-                    same size wraps to two lines and shouts louder than the two
-                    prices it sits beside, which is the nudge the house rule
-                    forbids. Sized by what the string IS, not by its slot. */}
-                <p
-                  className={`mt-2 font-display font-normal text-ink ${
-                    /\d/.test(tier.price)
-                      ? 'text-[1.75rem] leading-none'
-                      : 'text-[1.25rem] leading-snug'
-                  }`}
-                >
-                  {tier.price}
-                </p>
-                {tier.badge && (
-                  <p className="mt-2 text-[13px] font-semibold text-terracotta-deep">{tier.badge}</p>
-                )}
-                <ul className="ticks mt-5 space-y-2 text-[15px] leading-relaxed text-ink-soft">
-                  {tier.features.map((f) => (
-                    <li key={f}>{f}</li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-        </Wide>
-
-        {/* The pamphlet, under the ladder it describes (2026-09-04, Aaron:
-            "can the page host the full PDF of our 9-11 pamphlet, available for
-            download?").
-            HERE rather than in the footer, where the other PDF slot lives: a
-            family that wants this in writing wants it at the moment they are
-            reading prices, not after the phone number. It is a plain link with
-            the download attribute rather than a button — the page has one
-            action, and that action is booking a time; a second button beside
-            the ladder would compete with it for the same tap.
-            The label carries the file type because a link that silently starts
-            a download is a link that has surprised someone. */}
-        <Col className="mt-6" data-reveal>
-          <div className="space-y-1 text-[14px] leading-relaxed text-ink-faint">
-            {lead.packages.notes.map((n) => (
-              <p key={n}>{n}</p>
-            ))}
-          </div>
-        </Col>
-        </section>
-        )}
-
         {/* ── 9b. Want to learn more? ─────────────────────────────────────────
             The documents, together, under a heading of their own (Aaron,
             2026-09-05). Both pamphlets used to sit as small ledes inside other
@@ -956,6 +966,52 @@ export default async function NextPage({ params }) {
                   );
                 })}
               </div>
+            </Col>
+          </section>
+        )}
+
+        {/* ── 11. THE DOOR ───────────────────────────────────────────────────
+            The light page's one action, and now the LAST section above the
+            footer (2026-09-08, Aaron via Clauni, ratified 14:1x).
+
+            It used to sit in the slot the calendar holds on a booking page,
+            which put the ask third and asked a family to say yes before the
+            page had shown them what they were saying yes to. A light page has
+            no calendar and no price, so the only argument it can make is the
+            material itself: what we heard, the work already done for this
+            student, the ways a year runs, the brochures. The ask goes after
+            all of it.
+
+            A mailto and nothing else. No form, no endpoint, no state: the reply
+            lands in Ryan's inbox where every other family conversation already
+            lives, and a page that cannot collect an answer cannot mishandle
+            one. Server-rendered, so no client component is added for it. */}
+        {isLight && (
+          <section className="mt-20" data-reveal>
+            <Col>
+              {/* THE HEADING NAMES THE STUDENT, because this page is one
+                  family's and the ask should not read like a newsletter's. */}
+              <H2>
+                <Accent text={interest.heading || `Want to see options for ${lead.student}?`} />
+              </H2>
+              <p className="mt-4 text-[17px] leading-relaxed text-ink-soft">
+                {interest.panel ||
+                  `Say yes in one line and Ryan puts together two or three options built around what we heard, then emails them to you. No forms, nothing to prepare.`}
+              </p>
+              {/* ONE control. There were two: a pill, and under it "Or write to
+                  ryan@ryanchoice.com" as a second link to the identical mailto.
+                  Two targets for one destination make a reader choose between
+                  things that are not different. The address stays, because a
+                  mailto opens nothing for a family reading mail in a browser
+                  tab and the string has to be readable and copyable — but it is
+                  PLAIN TEXT now, not a link, so there is exactly one thing on
+                  this section to tap. */}
+              <div className="cal-add">
+                <a className="cal-add-btn" href={interestHref}>
+                  {interest.buttonLabel || 'Yes, send me options'}
+                </a>
+              </div>
+              <p className="mt-3 text-[14px] leading-relaxed text-ink-faint">{interestTo}</p>
             </Col>
           </section>
         )}

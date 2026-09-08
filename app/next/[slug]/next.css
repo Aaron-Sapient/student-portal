@@ -769,17 +769,38 @@
    needs to sit clear of the FIRST COLUMN in particular: left-aligned under a
    three-column grid, a stray paragraph reads as that column's last line. The
    space does the separating, because the alternative (centring it) would be the
-   only centred text on a page that is left-aligned throughout. */
+   only centred text on a page that is left-aligned throughout.
+
+   MEASURE: 38rem, not the 34rem prose cap the Col band uses. This paragraph sits
+   under a WIDE figure rather than inside the prose column, so wrapping it on the
+   narrow cap made the break look arbitrary next to three columns running the full
+   54rem (Aaron, 2026-09-08). 38rem is ~75 characters at 17px, which is the top of
+   the readable-measure range rather than a value picked to make the wrap go away. */
 .next-page .nextlist-after {
   margin-top: 2rem;
-  max-width: 34rem;
+  max-width: 38rem;
   font-size: 17px;
   line-height: 1.6;
   color: var(--color-ink-soft);
 }
 @media (min-width: 1024px) {
+  /* THE GAP UNDER A RAGGED ROW IS OPTICAL, NOT GEOMETRIC (Aaron, 2026-09-08; the
+     general rule is now in the frontend-designt skill).
+
+     This value used to be 3.25rem and read as roughly double that. `margin-top`
+     clears the bottom of the grid ROW, and a grid row is as tall as its TALLEST
+     column, so the space under the SHORTEST column is 3.25rem plus however much
+     shorter it is — on Stella's page the first column ends about 150px above the
+     third, and the paragraph looked stranded.
+
+     So the geometric value is discounted: the ragged bottom is already doing most
+     of the separating, and the declared margin only has to cover the shortest
+     case. It is scoped to this breakpoint on purpose. Below 1024px the items stack
+     one per row, there is no ragged bottom, nothing is doing the work for free, and
+     the undiscounted 2rem above is the correct value there. One value for both
+     widths is what produced the defect. */
   .next-page .nextlist-after {
-    margin-top: 3.25rem;
+    margin-top: 1.35rem;
   }
 }
 @media (min-width: 1024px) {
@@ -838,6 +859,87 @@
   .next-page .nextlist-body {
     margin-top: 0.4rem;
   }
+}
+
+/* ── The bespoke shortlist ──────────────────────────────────────────────────
+   Nine competitions with dates, on a page that has no calendar and no price.
+   Rows under hairlines rather than nine cards: the separation a card buys is
+   already bought by the rule, and the padding a card costs is paid nine times.
+   The same hairline the "what happens next" columns are headed by, so the two
+   lists read as one house rather than as two components.
+
+   Contrast, computed from the resolved tokens rather than eyeballed:
+   terracotta-deep #a8492a on cream #faf9f4 = 5.46:1, and #e8926f on #19191b =
+   7.33:1 in dark; ink-soft is 5.35:1 and 8.39:1. All above the 4.5:1 body
+   floor, which the date line needs because it is the one thing on the row a
+   family will act on. */
+.next-page .shortlist {
+  list-style: none;
+  margin: 1.6rem 0 0;
+  padding: 0;
+}
+.next-page .shortlist-item {
+  display: grid;
+  gap: 0.15rem;
+  padding: 1.05rem 0;
+  border-top: 1px solid color-mix(in srgb, var(--color-terracotta) 45%, transparent);
+}
+/* Baseline-aligned so the tag sits ON the name's baseline rather than on the
+   box's top edge, and wrapping so a long name and its tag stack on a phone
+   instead of squeezing the name into a column two words wide. */
+.next-page .shortlist-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 0.6rem;
+  margin: 0;
+}
+.next-page .shortlist-name {
+  font-family: var(--font-display);
+  font-size: 1.12rem;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+}
+.next-page .shortlist-tag {
+  flex: none;
+  padding: 0.12rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--color-terracotta) 55%, transparent);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-terracotta-deep);
+}
+/* The date is the line a family acts on, so it is the one thing on the row
+   allowed to take the accent colour. It sits under the name rather than beside
+   it: at nine rows, a right-aligned date column would set every row's width to
+   the longest date string and leave a gutter down the middle of the list. */
+.next-page .shortlist-when {
+  margin: 0.1rem 0 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--color-terracotta-deep);
+}
+.next-page .shortlist-meta {
+  margin: 0.1rem 0 0;
+  max-width: 40rem;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--color-ink-soft);
+}
+/* The dated provenance line. Caption voice, same as the photograph's and the
+   essay fragment's, because it is the same kind of thing: a note about the
+   exhibit rather than part of it. */
+.next-page .shortlist-checked {
+  margin-top: 1.5rem;
+  max-width: 38rem;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--color-ink-faint);
 }
 
 /* ── The welcome line ───────────────────────────────────────────────────────
