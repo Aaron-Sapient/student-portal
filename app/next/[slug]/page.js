@@ -429,7 +429,20 @@ export default async function NextPage({ params }) {
             it is, and a label over a self-evident thing is narration. */}
         <Col>
           <h1 className="font-display text-[2.6rem] font-normal leading-[1.05] tracking-[-0.02em] text-ink sm:text-[3.4rem]">
-            Hi <em>{lead.student}.</em>
+            {/* WHO THE PAGE GREETS IS A ROW DECISION (2026-09-08, Clauni's
+                addressee ruling). This line was `Hi {lead.student}` and nothing
+                else, so a row that wanted to greet the parent could not: the
+                `greeting` key those rows carried was dead data, read by nothing,
+                and editing it changed the page not at all — which is exactly how
+                it wasted a reseed before anyone noticed.
+
+                A 9-11 light row speaks to the PARENT about the student: email
+                one goes to her, the hero already says "she", and the door asks
+                what SHE should tell us. A senior row speaks to the student, who
+                works with Ryan directly. `greetName` is how a row says which.
+                Absent, it falls back to the student's name, so Conor's live row
+                and every row that never sets it render the identical string. */}
+            Hi <em>{lead.greetName || lead.student}.</em>
           </h1>
           {lead.welcome && (
             <p className="welcome mt-3">
