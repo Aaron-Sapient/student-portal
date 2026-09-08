@@ -137,6 +137,22 @@ export async function getLead(slug) {
 export function isBookable(lead) {
   if (!lead) return false;
   if (lead.mode === 'light') return false;
+  /* HEAVY HAS NO CALENDAR EITHER, unless the row asks for one (2026-09-08,
+     Aaron relaying Ryan). The reasoning is Ryan's and it is the same one that
+     took the calendar off light, one step further along: "parents will ALWAYS
+     book a free follow-up if the option is available." A heavy family has
+     already been escalated, so a free half hour they book on reflex costs Ryan
+     the hour and buys nothing the page has not already told them.
+
+     A BOOLEAN, not a rule, because the exception is real: some escalated
+     families should be handed a time, and that is Ryan's call per family rather
+     than a property of the mode. `calendar: true` on the row turns it back on
+     and everything downstream — the month grid, the sticky bar, /api/next/slots
+     and /api/next/book — follows from this one function.
+
+     A row with NO mode is untouched and still bookable, which is Conor's live
+     shape: heavy is an opt-in, so the absent case belongs to neither branch. */
+  if (lead.mode === 'heavy' && lead.calendar !== true) return false;
   return (lead.status || 'active') === 'active';
 }
 

@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { headers } from 'next/headers';
 import { DateTime } from 'luxon';
-import { getLead, maskEmail } from './leads';
+import { getLead, isBookable, maskEmail } from './leads';
 import BookingBlock from './BookingBlock';
 import HeardStrip from './heard';
 import Reveal from './Reveal';
@@ -9,6 +9,8 @@ import NextList from './nextlist';
 import Shortlist from './shortlist';
 import InterestButton from './InterestButton';
 import HeavyDetail, { heavyBandFor } from './heavy';
+import { resolvePricing, PACKAGE_LABELS } from '@/lib/pricingSchema';
+import { readPricing } from '@/lib/pricing';
 import { BookedFlag } from './LiveBits';
 import { describeSlot } from '@/lib/nextBooking';
 import { getInstructor } from '@/lib/instructors';
@@ -191,6 +193,65 @@ export default async function NextPage({ params }) {
      Conor's shape and must keep rendering exactly as it does, so heavy is its
      own explicit opt-in and the absent case belongs to neither branch. */
   const isHeavy = lead.mode === 'heavy';
+  /* ONE SOURCE FOR "IS THERE A CALENDAR", shared with /api/next/slots and
+     /api/next/book (2026-09-08). The booking section used to be gated on
+     `!isLight`, which was the same answer as isBookable() right up until heavy
+     stopped carrying a calendar by default — at which point the page would have
+     offered a month grid the API behind it refuses to serve. Two places
+     answering one question is how they end up disagreeing, so the page asks the
+     function the API asks. */
+  const bookable = isBookable(lead);
+
+  /* BASE PRICES, HEAVY ONLY (2026-09-08, Aaron: the heavy ladder "shows base
+     price"). Derived from lib/pricingSchema rather than typed onto the row: the
+     card is edited in one place and a lead page that disagreed with the
+     generator would be the worst possible bug on this surface.
+
+     THE GRADE IS REQUIRED AND NEVER GUESSED. A price is only correct for one
+     grade, so a row without `grade` shows no figures at all and keeps the
+     posture words. Being silent is recoverable; quoting a 10th grader the
+     11th-grade card is not.
+
+     ULTRA VIP IS NEVER PRINTED, on either preset. It is by-conversation on
+     every family-facing surface (Claude_Services.md 7), and on the legacy card
+     it is worse than that: UVIP did not exist in 2025-26, and the base entries
+     the legacy config carries for it are today's figures kept only so the
+     calculator has something to read. Printing one would invent a quote for a
+     tier that family was never offered. */
+  const heavyBase = await (async () => {
+    if (!isHeavy) return null;
+    const grade = String(lead.grade || '');
+    if (!['9', '10', '11'].includes(grade)) return null;
+    /* `resolvePricing` returns the LIVE card unchanged on the current preset —
+       its whole job is to substitute a frozen config only for a legacy row — so
+       the live card has to be read and handed in. Passing nothing returned
+       undefined and every price silently vanished, which is exactly the failure
+       this page must never have: no error, no log, just a ladder with the
+       figures missing. Read once here, per render. */
+    let live = null;
+    try {
+      live = await readPricing();
+    } catch (err) {
+      console.error('[next] pricing read failed', err?.message);
+      return null;
+    }
+    const cfg = resolvePricing(lead.pricingPreset, live);
+    const row = cfg?.base?.[grade];
+    if (!row) return null;
+    return { comprehensive: row.comprehensive, vip: row.vip };
+  })();
+
+  /* Tier name to package key, by the label table the generator itself uses, so
+     a renamed tier cannot silently stop matching. */
+  const PKG_BY_LABEL = Object.fromEntries(
+    Object.entries(PACKAGE_LABELS).map(([k, v]) => [v.toLowerCase(), k]),
+  );
+  const baseFor = (tierName) => {
+    if (!heavyBase) return null;
+    const key = PKG_BY_LABEL[String(tierName || '').toLowerCase()];
+    return key && heavyBase[key] ? heavyBase[key] : null;
+  };
+  const money = (n) => `$${n.toLocaleString('en-US')}`;
   /* Server-side only, which is why it can come from lib/instructors rather than
      the client-safe half: this component never ships to the browser, and the
      one field the client needs (zoomLink) is handed over explicitly below. */
@@ -556,7 +617,7 @@ export default async function NextPage({ params }) {
             already on both clocks, before any JavaScript has run. What
             JavaScript adds is the ability to tap one. */}
 
-        {!isLight && (
+        {bookable && (
         <section id="pick-a-time" className="mt-16 scroll-mt-8">
           <Col>
             {/* "Pick a time." stops being true the moment they have one
@@ -743,6 +804,22 @@ export default async function NextPage({ params }) {
                     same size wraps to two lines and shouts louder than the two
                     prices it sits beside, which is the nudge the house rule
                     forbids. Sized by what the string IS, not by its slot. */}
+                {/* HEAVY WITH A GRADE puts the base price in the big slot and
+                    demotes the posture word to a line under it, because that is
+                    what a family on this page came to read. The caption says
+                    BASE out loud: a bare figure beside an add-on menu is a
+                    number a parent will treat as the total. */}
+                {baseFor(tier.name) ? (
+                  <>
+                    <p className="mt-2 font-display text-[1.75rem] font-normal leading-none text-ink">
+                      {money(baseFor(tier.name))}
+                    </p>
+                    <p className="mt-1 text-[13px] leading-snug text-ink-faint">
+                      Base, before any add-ons. {tier.posture || tier.price}
+                    </p>
+                  </>
+                ) : (
+                <>
                 {/* `posture` OR `price` (2026-09-08). A LIGHT row carries no
                     figure, and the phrase that belongs in this slot is the
                     brochure's own posture word for the tier — "Structured",
@@ -761,6 +838,8 @@ export default async function NextPage({ params }) {
                 >
                   {tier.posture || tier.price}
                 </p>
+                </>
+                )}
                 {tier.badge && (
                   <p className="mt-2 text-[13px] font-semibold text-terracotta-deep">{tier.badge}</p>
                 )}
@@ -1228,11 +1307,15 @@ export default async function NextPage({ params }) {
           still got a "Pick a time" bar pinned over their confirmation. Nothing
           had ever stayed booked before tonight, so nothing had ever shown it.
           The class stays for the client-side transitions BookingBlock drives. */}
-      {/* A LIGHT PAGE HAS NO STICKY BAR, because it has nothing to jump to. The
-          bar is an anchor to the calendar and the calendar is not on the page;
-          left in, it would be a permanent "Pick a time" pinned over a page whose
-          whole design is that no time is being offered yet. */}
-      {!bookedState && !isLight && (
+      {/* THE BAR FOLLOWS THE CALENDAR, not the mode (corrected 2026-09-08). It
+          is an anchor to #pick-a-time, so it must exist exactly when that anchor
+          does. Gated on `isLight` it was right for light and wrong the moment
+          heavy stopped carrying a calendar: a heavy row rendered a permanent
+          "Pick a time" pinned over the page, pointing at an id that was no
+          longer in the document, so tapping it did nothing at all. `bookable`
+          is the same value the booking section itself renders on, which is the
+          only way the two cannot disagree again. */}
+      {!bookedState && bookable && (
       <div className="sticky-book unbooked-only lg:hidden">
         <a href="#pick-a-time" className="sticky-book-btn">
           {b.stickyLabel}
