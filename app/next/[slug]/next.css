@@ -1199,6 +1199,70 @@ html.reveal-armed .next-page [data-reveal].reveal-now {
   }
 }
 
+/* ── The forked door ────────────────────────────────────────────────────────
+   Two controls, one row, wrapping to two rows on a narrow phone. The primary is
+   the page's existing pill unchanged; the second is the SAME size and the same
+   44px target and differs only in weight, so a family who wants to ask a
+   question is not made to hunt for a smaller button. Salience tracks the ask,
+   not the tap area. */
+.next-page .door-fork {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.7rem;
+}
+.next-page .cal-add-btn.is-quiet {
+  color: var(--color-ink-soft);
+  background: transparent;
+  border-color: color-mix(in srgb, var(--color-ink-faint) 40%, transparent);
+}
+.next-page .cal-add-btn.is-quiet:hover {
+  color: var(--color-terracotta-deep);
+  background: color-mix(in srgb, var(--color-terracotta) 8%, var(--color-cream));
+  border-color: color-mix(in srgb, var(--color-terracotta) 40%, transparent);
+}
+.next-page .cal-add-btn:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+.next-page .cal-add-btn:focus-visible {
+  outline: 2px solid var(--color-terracotta-deep);
+  outline-offset: 3px;
+}
+
+/* What replaces the button once a family has said yes. It is a statement, not a
+   toast: nothing fades, nothing needs dismissing, and it survives a reload only
+   in the sense that the send already happened. */
+.next-page .interest-sent {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-width: 38rem;
+}
+.next-page .interest-sent-lead {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--color-terracotta-deep);
+}
+.next-page .interest-sent-body {
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--color-ink-soft);
+}
+.next-page .interest-error {
+  flex-basis: 100%;
+  margin-top: 0.2rem;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--color-ink-soft);
+}
+.next-page .interest-error a {
+  color: var(--color-terracotta-deep);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .next-page .booked-actions {
   display: flex;
   flex-wrap: wrap;

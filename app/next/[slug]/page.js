@@ -7,6 +7,7 @@ import HeardStrip from './heard';
 import Reveal from './Reveal';
 import NextList from './nextlist';
 import Shortlist from './shortlist';
+import InterestButton from './InterestButton';
 import { BookedFlag } from './LiveBits';
 import { describeSlot } from '@/lib/nextBooking';
 import { getInstructor } from '@/lib/instructors';
@@ -994,9 +995,41 @@ export default async function NextPage({ params }) {
                   address the button already opens. The footer carries both of
                   Ryan's addresses a screen further down, which is where a
                   contact detail belongs. */}
-              <div className="cal-add">
-                <a className="cal-add-btn" href={interestHref}>
-                  {interest.buttonLabel || 'Send your questions'}
+              {/* THE DOOR FORKS (2026-09-08, Aaron). One button was always
+                  going to be wrong for somebody: a single mailto serves the
+                  family who wants to ask something and fails the family who has
+                  decided, because it hands them an empty compose window and asks
+                  them to find words for "yes". Two buttons, and the difference
+                  between them is the difference between the two families.
+
+                  BUILD ME CUSTOM PACKAGES is a real send, not a mailto. It POSTs
+                  to /api/next/interest, which mails Ryan's watched box, CCs the
+                  shared inbox, and writes a machine-readable body an automation
+                  can pick up. That is the "indicate interest" control returning
+                  as a first-class feature rather than a parked one.
+
+                  I HAVE QUESTIONS stays a mailto, deliberately. A family with a
+                  question needs the compose window; handing them a form would be
+                  the same mistake pointing the other way.
+
+                  Yes-first, because that is the outcome this page exists for.
+                  The quiet button beside it is the lower-commitment option, and
+                  it is quieter rather than smaller: same target size, less
+                  weight, so the salience matches the ask without punishing the
+                  thumb. */}
+              <div className="cal-add door-fork">
+                <InterestButton
+                  slug={slug}
+                  label={interest.buttonLabel || 'Build me custom packages'}
+                  sentHeading={interest.sentHeading || 'Sent to Ryan.'}
+                  sentBody={
+                    interest.sentBody ||
+                    'He puts the options together himself and emails them to you. Nothing else to do.'
+                  }
+                  fallbackEmail={interestTo}
+                />
+                <a className="cal-add-btn is-quiet" href={interestHref}>
+                  {interest.askLabel || 'I have questions'}
                 </a>
               </div>
             </Col>
