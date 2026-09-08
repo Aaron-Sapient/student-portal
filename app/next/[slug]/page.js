@@ -283,6 +283,23 @@ export default async function NextPage({ params }) {
      starting on the same left edge as the heading above and the footer below. */
   const docsHaveNotes = docs.some((d) => d.note);
 
+  /* A CHIP TELLS THE TRUTH ABOUT WHERE IT GOES (2026-09-07). Every document
+     used to be a PDF sitting in public/next/, so one treatment was honest for
+     all of them: a file-down glyph and a `download` attribute. Half the strip
+     is now Ryan's guides on go.ryanchoice.com, and on those the same treatment
+     was wrong twice over. `download` is IGNORED cross-origin, so the attribute
+     promised a saved file and delivered a navigation; and the glyph promised a
+     file where a web page opens. Worse, the family left a page whose one job is
+     to get a conversation booked, in the same tab, with nothing to come back to.
+
+     An external chip therefore opens in a new tab (rel="noopener", which is
+     what makes that safe) and takes an arrow-out-of-a-box glyph, which is the
+     Lucide ideograph for "this leaves here". A hosted file keeps `download` and
+     the file glyph, because for it both are still true. Derived from the href
+     rather than declared per row, so a document cannot be labelled wrongly by a
+     typo in a data file. */
+  const isExternal = (href) => /^https?:\/\//i.test(href || '');
+
   return (
     <>
       <BookedFlag />
@@ -803,23 +820,33 @@ export default async function NextPage({ params }) {
                 <Accent text={lead.docsHeading || 'Want to learn more?'} />
               </H2>
               <div className={docsHaveNotes ? 'doc-list' : 'doc-chips'}>
-                {docs.map((d) =>
-                  docsHaveNotes ? (
+                {docs.map((d) => {
+                  const ext = isExternal(d.href);
+                  const chip = (
+                    <a
+                      key={d.href}
+                      className={ext ? 'pdf-chip is-external' : 'pdf-chip'}
+                      href={d.href}
+                      {...(ext
+                        ? { target: '_blank', rel: 'noopener' }
+                        : { download: true })}
+                    >
+                      {d.label}
+                    </a>
+                  );
+                  /* The un-noted case returns the chip ITSELF, with no wrapper,
+                     so the chips stay DIRECT children of the flex row and the
+                     markup a boolean-era row ships today is the markup it
+                     keeps. */
+                  return docsHaveNotes ? (
                     <div key={d.href} className="doc-list-item">
-                      <a className="pdf-chip" href={d.href} download>
-                        {d.label}
-                      </a>
+                      {chip}
                       {d.note && <p className="doc-note">{d.note}</p>}
                     </div>
                   ) : (
-                    /* No wrapper in the un-noted case, so the chips stay DIRECT
-                       children of the flex row and the markup Conor's page ships
-                       today is the markup it keeps. */
-                    <a key={d.href} className="pdf-chip" href={d.href} download>
-                      {d.label}
-                    </a>
-                  )
-                )}
+                    chip
+                  );
+                })}
               </div>
             </Col>
           </section>

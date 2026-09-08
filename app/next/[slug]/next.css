@@ -1017,6 +1017,16 @@ html.reveal-armed .next-page [data-reveal].reveal-now {
   mask: var(--pdf-icon) center / contain no-repeat;
   -webkit-mask: var(--pdf-icon) center / contain no-repeat;
 }
+/* A chip that LEAVES the page says so (2026-09-07). Same chip, same size, same
+   colour, one different ideograph: Lucide "external-link", an arrow leaving a
+   box, in place of the file-down arrow. The file glyph is a promise that
+   something lands in the downloads folder, and for Ryan's guides on
+   go.ryanchoice.com nothing does; they open in a new tab. Swapping only the
+   masked glyph keeps the two kinds reading as one set, which they are: the
+   difference between them is where they go, not what they are worth. */
+.next-page .pdf-chip.is-external::before {
+  --pdf-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 3h6v6'/%3E%3Cpath d='M10 14 21 3'/%3E%3Cpath d='M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6'/%3E%3C/svg%3E");
+}
 
 /* ── The booked panel's actions ─────────────────────────────────────────────
    Two weights, because the four actions are not four peers. Adding the meeting
