@@ -48,7 +48,7 @@ export default function InterestButton({ slug, label, sentHeading, sentBody, fal
 
   return (
     <>
-      <button type="button" className="cal-add-btn" onClick={send} disabled={state === 'sending'}>
+      <button type="button" className="cal-add-btn is-primary" onClick={send} disabled={state === 'sending'}>
         {state === 'sending' ? 'Sending…' : label}
       </button>
       {/* The failure names the address, because the one thing a family must not

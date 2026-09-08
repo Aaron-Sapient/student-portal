@@ -1185,7 +1185,12 @@ html.reveal-armed .next-page [data-reveal].reveal-now {
   color: var(--color-terracotta-deep);
   background: color-mix(in srgb, var(--color-terracotta) 10%, var(--color-cream));
   border: 1px solid color-mix(in srgb, var(--color-terracotta) 32%, transparent);
-  transition: background 150ms linear, border-color 150ms linear;
+  /* A <button> renders with the default arrow; only <a href> gets the hand, and
+     this row now holds one of each (2026-09-08, Aaron: the primary "doesn't get
+     a mouse on-hover change to a pointer"). Set here rather than per element so
+     the next control added to this row cannot reintroduce it. */
+  cursor: pointer;
+  transition: background 150ms linear, border-color 150ms linear, transform 90ms ease;
 }
 .next-page .cal-add-btn:hover {
   background: color-mix(in srgb, var(--color-terracotta) 18%, var(--color-cream));
@@ -1211,15 +1216,120 @@ html.reveal-armed .next-page [data-reveal].reveal-now {
   align-items: center;
   gap: 0.7rem;
 }
+/* ── The primary door button ────────────────────────────────────────────────
+   PORTED FROM links.ryanchoice.com's "Get your SuperScore" row (2026-09-08,
+   Aaron: it "has to look REALLY premium, exciting, and fun to click"). The
+   mechanic is that page's LED ring, not its palette: a conic gradient rotated
+   by a registered <angle> custom property and masked to the border, so the
+   light travels around the edge while the fill stays quiet.
+
+   THE PERIOD IS EXACTLY 180deg and the stop list below 180 is repeated verbatim
+   above it. That two-fold symmetry is the load-bearing part of the original and
+   it is kept: it locks the two lit lobes to rotationally symmetric points of a
+   rotationally symmetric shape, so the conic distortion applies to both
+   identically and neither lobe can gain on the other as it travels.
+
+   TROUGHS ARE NEUTRAL, never a dimmed terracotta, for the reason the original
+   gives about its own gold: a dimmed accent reads as a muddy brown edge rather
+   than as an unlit one. The palette is this page's, because the original glows
+   gold on near-black and this button sits on cream. */
+@property --lead-led-a {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+.next-page .cal-add-btn.is-primary {
+  position: relative;
+  isolation: isolate;
+  font-weight: 700;
+  color: var(--color-terracotta-deep);
+  /* A quiet fill, so the edge carries the signal as it does on the original
+     while the label still has a ground: cream on cream would read as an
+     unfinished button rather than a restrained one. */
+  background: color-mix(in srgb, var(--color-terracotta) 7%, var(--color-cream));
+  border-color: transparent;
+}
+.next-page .cal-add-btn.is-primary::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  /* 1.6px rather than the original's 1.25: the same ring has to hold its own
+     against cream instead of near-black. */
+  padding: 1.6px;
+  background: conic-gradient(
+    from var(--lead-led-a),
+    color-mix(in srgb, var(--color-ink-faint) 14%, transparent) 0deg,
+    color-mix(in srgb, var(--color-ink-faint) 22%, transparent) 10deg,
+    color-mix(in srgb, var(--color-terracotta) 34%, transparent) 28deg,
+    color-mix(in srgb, var(--color-terracotta) 74%, transparent) 52deg,
+    var(--color-terracotta) 78deg,
+    #f3c0a6 90deg,
+    var(--color-terracotta) 102deg,
+    color-mix(in srgb, var(--color-terracotta) 74%, transparent) 128deg,
+    color-mix(in srgb, var(--color-terracotta) 34%, transparent) 152deg,
+    color-mix(in srgb, var(--color-ink-faint) 22%, transparent) 170deg,
+    color-mix(in srgb, var(--color-ink-faint) 14%, transparent) 180deg,
+    color-mix(in srgb, var(--color-ink-faint) 22%, transparent) 190deg,
+    color-mix(in srgb, var(--color-terracotta) 34%, transparent) 208deg,
+    color-mix(in srgb, var(--color-terracotta) 74%, transparent) 232deg,
+    var(--color-terracotta) 258deg,
+    #f3c0a6 270deg,
+    var(--color-terracotta) 282deg,
+    color-mix(in srgb, var(--color-terracotta) 74%, transparent) 308deg,
+    color-mix(in srgb, var(--color-terracotta) 34%, transparent) 332deg,
+    color-mix(in srgb, var(--color-ink-faint) 22%, transparent) 350deg,
+    color-mix(in srgb, var(--color-ink-faint) 14%, transparent) 360deg
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: lead-led 5s linear infinite;
+  pointer-events: none;
+}
+@keyframes lead-led {
+  to {
+    --lead-led-a: 360deg;
+  }
+}
+.next-page .cal-add-btn.is-primary:hover {
+  background: color-mix(in srgb, var(--color-terracotta) 13%, var(--color-cream));
+  border-color: transparent;
+}
+.next-page .cal-add-btn.is-primary:active {
+  transform: translateY(1px);
+}
+/* The original kills every animation under reduced motion. This does not: a
+   blanket `animation: none` freezes the ring at 0deg, the one angle where both
+   troughs sit at the seam and the button reads as having a broken border.
+   Frozen at 90deg the lit lobe sits at the top, so the button keeps the look it
+   was designed for, minus the travel. */
+@media (prefers-reduced-motion: reduce) {
+  .next-page .cal-add-btn.is-primary::before {
+    animation: none;
+    --lead-led-a: 90deg;
+  }
+  .next-page .cal-add-btn.is-primary:active {
+    transform: none;
+  }
+}
+
+/* The second door button. It must not resemble the primary's RESTING state
+   (2026-09-08, Aaron: its hover "looks identical to the Build me custom
+   packages non-hover button styling"). It did: both landed on a warm tint over
+   cream inside a terracotta edge. The quiet button is neutral now at rest AND
+   on hover — ink, not terracotta — so the two controls can never trade places. */
 .next-page .cal-add-btn.is-quiet {
   color: var(--color-ink-soft);
   background: transparent;
   border-color: color-mix(in srgb, var(--color-ink-faint) 40%, transparent);
 }
 .next-page .cal-add-btn.is-quiet:hover {
-  color: var(--color-terracotta-deep);
-  background: color-mix(in srgb, var(--color-terracotta) 8%, var(--color-cream));
-  border-color: color-mix(in srgb, var(--color-terracotta) 40%, transparent);
+  color: var(--color-ink);
+  background: color-mix(in srgb, var(--color-ink-faint) 10%, transparent);
+  border-color: color-mix(in srgb, var(--color-ink-faint) 62%, transparent);
 }
 .next-page .cal-add-btn:disabled {
   opacity: 0.65;
