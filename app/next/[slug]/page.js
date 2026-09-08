@@ -8,6 +8,7 @@ import Reveal from './Reveal';
 import NextList from './nextlist';
 import Shortlist from './shortlist';
 import InterestButton from './InterestButton';
+import HeavyDetail, { heavyBandFor } from './heavy';
 import { BookedFlag } from './LiveBits';
 import { describeSlot } from '@/lib/nextBooking';
 import { getInstructor } from '@/lib/instructors';
@@ -186,6 +187,10 @@ export default async function NextPage({ params }) {
      and the calendar is back. Nothing else on the row moves, which is why the
      `booking` object stays filled in on a light row and is simply unread. */
   const isLight = lead.mode === 'light';
+  /* HEAVY is not "not light" (2026-09-08). A row with no `mode` at all is
+     Conor's shape and must keep rendering exactly as it does, so heavy is its
+     own explicit opt-in and the absent case belongs to neither branch. */
+  const isHeavy = lead.mode === 'heavy';
   /* Server-side only, which is why it can come from lib/instructors rather than
      the client-safe half: this component never ships to the browser, and the
      one field the client needs (zoomLink) is handed over explicitly below. */
@@ -323,6 +328,24 @@ export default async function NextPage({ params }) {
      drags the row's items onto different baselines and the set stops reading as
      peers — so each document becomes a block, chip over note, every one of them
      starting on the same left edge as the heading above and the footer below. */
+  /* THE FEE-BEARING PAMPHLET COMES BACK ON FOR HEAVY, and it is appended here
+     rather than inside the fallback above, because the fallback only runs for a
+     row that carries no `docs` list at all and every live row carries one. A
+     first pass put it there and it would have reached no row that exists.
+
+     The round-one ruling switched this pamphlet off because it prints the fee
+     structure and a light page carries no price. A heavy row is the escalation
+     where that stops applying, and the pamphlet is where the real numbers live
+     in a form Ryan has already approved. Guarded against a row that already
+     lists it, so a heavy row cannot show the same document twice. */
+  if (isHeavy && lead.packagesPdfHref && !docs.some((d) => d.href === lead.packagesPdfHref)) {
+    docs.push({
+      label: lead.packagesPdfLabel || 'Packages (PDF)',
+      href: lead.packagesPdfHref,
+      note: 'The full pamphlet, including how the packages are priced.',
+    });
+  }
+
   const docsHaveNotes = docs.some((d) => d.note);
 
   /* A CHIP TELLS THE TRUTH ABOUT WHERE IT GOES (2026-09-07). Every document
@@ -770,6 +793,24 @@ export default async function NextPage({ params }) {
           </div>
         </Col>
         </section>
+        )}
+
+        {/* ── 9a. HEAVY: everything we do ─────────────────────────────────────
+            Only on a row that has opted in. Ryan escalates a family here by
+            hand, and his read of them is that the detail is the point: "the
+            longer and heavier, the better. they love it." A light page is short
+            because it is asking a question; this one is long because the family
+            has already answered it.
+
+            It sits UNDER the ladder rather than replacing it, so the shape a
+            family already knows stays where it was and the catalogue extends it.
+            When Ryan's saved quotes exist, the per-family options block lands
+            between the two: the specific offer first, the whole catalogue under
+            it. Content and the band rule live in heavy.js. */}
+        {isHeavy && (
+          <Wide className="mt-16" data-reveal>
+            <HeavyDetail band={heavyBandFor(lead)} />
+          </Wide>
         )}
 
         {/* ── 7. Families outside the United States ───────────────────────────
