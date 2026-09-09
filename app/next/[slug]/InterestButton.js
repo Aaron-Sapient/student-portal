@@ -52,11 +52,16 @@ export default function InterestButton({ slug, label, sentHeading, sentBody, fal
         {state === 'sending' ? 'Sending…' : label}
       </button>
       {/* The failure names the address, because the one thing a family must not
-          lose here is the ability to reach Ryan at all. */}
+          lose here is the ability to reach us at all.
+          "we will pick it up", not "Ryan will" (2026-09-09). The address in this
+          sentence is whatever the row's `interest.to` holds, and since Charles's
+          row points at the shared support@ mailbox, naming Ryan here would have
+          promised a specific person over an inbox the Care Team watches. "We"
+          is true of both addresses; his name was only ever true of one. */}
       {state === 'error' && (
         <p className="interest-error" role="alert">
           That did not go through. Please write to{' '}
-          <a href={`mailto:${fallbackEmail}`}>{fallbackEmail}</a> and Ryan will pick it up.
+          <a href={`mailto:${fallbackEmail}`}>{fallbackEmail}</a> and we will pick it up.
         </p>
       )}
     </>
