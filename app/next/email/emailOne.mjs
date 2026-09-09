@@ -36,7 +36,10 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LEADS_DIR = path.join(__dirname, '..', 'leads');
-const DEFAULT_BASE = 'https://book.ryanchoice.com';
+// The lead host, moved 2026-09-09 from book.ryanchoice.com. Every email rendered
+// from here on carries the new address; already-sent links still resolve, because
+// the old host 308s (next.config.mjs redirects).
+const DEFAULT_BASE = 'https://next.admissions.partners';
 const DEFAULT_OUT = '/Users/aaron/Documents/VS Code/scratchpads/student-portal/wt-next-renders/email';
 
 const args = process.argv.slice(2);
@@ -237,9 +240,12 @@ const checks = [
    has existed. A light email whose body is clean and whose preview line offers a
    meeting is still an email that offers a meeting.
 
-   The link is subtracted first. It is book.ryanchoice.com/<slug>, so a check for
-   "book" across the raw html would fail on the one string that has to be there,
-   twice. Everything else in the document is prose or markup, and neither may
+   The link is subtracted first. It was book.ryanchoice.com/<slug> until the host
+   moved on 2026-09-09, so a check for "book" across the raw html would fail on
+   the one string that had to be there, twice. The new host carries no such word,
+   but the subtraction stays: it is what makes the lint independent of whatever
+   the host is called next. Everything else in the document is prose or markup,
+   and neither may
    offer a time, a calendar, a Zoom or a number of minutes, because the page it
    points at offers none of those. */
 if (isLight) {

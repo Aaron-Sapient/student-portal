@@ -72,7 +72,13 @@ export async function GET(request) {
 
   /* UID is derived from the Google event id, so re-adding after a reschedule
      UPDATES the entry the family already has instead of leaving them holding
-     two meetings. SEQUENCE rises with booked_at for the same reason. */
+     two meetings. SEQUENCE rises with booked_at for the same reason.
+
+     THE DOMAIN HERE IS FROZEN AT book.ryanchoice.com AND DOES NOT FOLLOW THE
+     HOST MOVE of 2026-09-09. A UID is an identity, not an address: it is never
+     resolved and never fetched, and changing it would make every calendar that
+     already holds one of these events treat the next download as a SECOND
+     meeting rather than an update. */
   const uid = `${booking.event_id || slug}@book.ryanchoice.com`;
   const sequence = booking.booked_at ? Math.floor(DateTime.fromISO(booking.booked_at).toSeconds()) % 100000 : 0;
 

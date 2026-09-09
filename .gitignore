@@ -89,4 +89,9 @@ supabase/.temp/
 # not. The example file is committed so the route stays buildable and reviewable
 # on a fresh clone.
 /app/next/leads/*.json
+# The `*.json` pattern above does NOT match `charles.json.bak-2026-09-09`, and a
+# .bak beside the file is how every edit in this lane is made reversible. So the
+# backups are named explicitly (2026-09-09, first one written); without this line
+# an `add -A` from any lane commits a parent's email address to a public repo.
+/app/next/leads/*.json.bak*
 !/app/next/leads/example-*.json

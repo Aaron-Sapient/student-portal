@@ -335,8 +335,9 @@ export default async function NextPage({ params }) {
      at all.
 
      The origin is derived from the REQUEST, never hardcoded, so this works
-     unchanged on portal.admissions.partners and on book.ryanchoice.com, where
-     the very same page is served from the root.
+     unchanged on portal.admissions.partners and on next.admissions.partners
+     (and on the retired book.ryanchoice.com, which still 308s), where the very
+     same page is served from the root.
 
      A failure here must never take the page down: the block falls back to its
      empty state and the client re-asks. */
@@ -597,9 +598,16 @@ export default async function NextPage({ params }) {
             the grouping mechanism here, not a rule or a heading — there is no
             eyebrow over the strip any more, so spacing is all that is left to
             say where one thing ends. */}
-        <Wide className="mt-12" data-reveal>
-          <HeardStrip items={lead.heard} />
-        </Wide>
+        {/* A row with no modules renders no wrapper either. HeardStrip already
+            returns null on an empty list, but the Wide around it would still
+            emit an element carrying mt-12 and a data-reveal the observer then
+            watches forever. Charles is the first row to ship with `heard: []`
+            (2026-09-09, the copy trim), so this is the first time it matters. */}
+        {lead.heard?.length > 0 && (
+          <Wide className="mt-12" data-reveal>
+            <HeardStrip items={lead.heard} />
+          </Wide>
+        )}
 
         {/* ── 3. The video slot ───────────────────────────────────────────────
             Rendered only when this lead has a film. An empty frame promising a

@@ -38,7 +38,7 @@ import { LEAD_PAGES, getSupabaseClient } from '@/lib/supabase';
                             it is the state an operator can see.
 
    THE SLUG IS THE STUDENT'S FIRST NAME, lowercase and ASCII: /next/conor,
-   book.ryanchoice.com/conor. If a second LIVE lead shares a first name, BOTH
+   next.admissions.partners/conor. If a second LIVE lead shares a first name, BOTH
    move to first-last (conor-min), so no family's address quietly changes
    meaning while they are holding it.
 

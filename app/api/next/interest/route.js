@@ -77,7 +77,10 @@ export async function POST(request) {
   }
 
   const student = lead.student || slug;
-  const page = `https://book.ryanchoice.com/${slug}`;
+  /* The lead host, moved 2026-09-09 from book.ryanchoice.com. This URL is only
+     ever read by Ryan in the notification mail, so it wants the CURRENT address
+     rather than whichever one the family happened to be sent. */
+  const page = `https://next.admissions.partners/${slug}`;
   /* Everything below is read off the row rather than off the request. The
      request carries a slug and nothing else, so a caller cannot put words in a
      family's mouth or address the notification somewhere new. */

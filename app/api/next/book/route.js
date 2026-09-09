@@ -54,11 +54,13 @@ export async function POST(request) {
   }
 
   const { slug, start, dryRun = false } = body || {};
-  /* The family reaches this page at book.ryanchoice.com/<slug>, not under
+  /* The family reaches this page at next.admissions.partners/<slug>, not under
      /next/ — that host serves lead pages from its root (proxy.js). The
      confirmation links there rather than at the portal domain so the address in
-     their inbox matches the one in the email that brought them. */
-  const familyBase = process.env.NEXT_LEAD_BASE_URL || 'https://book.ryanchoice.com';
+     their inbox matches the one in the email that brought them. Host moved from
+     book.ryanchoice.com on 2026-09-09; the old one 308s, so a family who booked
+     from an older email still lands on their own page. */
+  const familyBase = process.env.NEXT_LEAD_BASE_URL || 'https://next.admissions.partners';
   if (!slug || !start) return Response.json({ error: 'Missing slug or start' }, { status: 400 });
 
   const lead = await getLead(slug);

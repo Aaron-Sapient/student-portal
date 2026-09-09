@@ -26,22 +26,30 @@ import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 // routes 404 an unknown one, so they cannot be used to enumerate leads either.
 const isPublicRoute = createRouteMatcher(['/demo(.*)', '/sign-in(.*)', '/sso-callback(.*)', '/parents(.*)', '/api/parentCheckin', '/write(.*)', '/next/(.*)', '/api/next/(.*)', '/api/writing/doc', '/api/writing/save', '/api/writing/tab', '/api/writing/history', '/sat(.*)', '/api/sat/init', '/api/sat/quiz', '/api/sat/submit', '/api/cron(.*)', '/api/omnibar(.*)'])
 
-// book.ryanchoice.com serves the lead pages from its ROOT, so on that host the
-// path is `/conor-c44061` and the matcher above (which knows about `/next/…`)
-// never fires. The middleware sees the ORIGINAL path, not the rewritten one, so
-// the host has to be checked here rather than inferred from the destination.
+// next.admissions.partners serves the lead pages from its ROOT, so on that host
+// the path is `/conor` and the matcher above (which knows about `/next/…`) never
+// fires. The middleware sees the ORIGINAL path, not the rewritten one, so the
+// host has to be checked here rather than inferred from the destination.
 //
-// Scoped to ONE path segment matching the slug shape, and only on that host:
+// Scoped to ONE path segment matching the slug shape, and only on those hosts:
 // this must never widen what is public on portal.admissions.partners, where a
 // bare `/:slug` rule would unauthenticate a great deal more than a lead page.
 // `/api/*` is excluded by the segment rule (it has two) and is already covered
 // above, so the API works identically from either host.
-const BOOK_HOST = 'book.ryanchoice.com'
+//
+// MOVED 2026-09-09: the lead host is next.admissions.partners. The retired
+// book.ryanchoice.com stays in this list on purpose. next.config's redirects run
+// BEFORE middleware, so in practice the old host 308s and never reaches here at
+// all; keeping it means that if that ordering ever changes, a family holding an
+// already-sent link gets their page rather than a sign-in wall. It widens
+// nothing relative to what that host already served.
+const BOOK_HOST = 'next.admissions.partners'
+const RETIRED_BOOK_HOST = 'book.ryanchoice.com'
 const BOOK_SLUG = /^\/[a-z0-9]+(?:-[a-z0-9]+)*$/
 
 function isBookHostLeadPage(request) {
   const host = request.headers.get('host')?.split(':')[0].toLowerCase()
-  if (host !== BOOK_HOST) return false
+  if (host !== BOOK_HOST && host !== RETIRED_BOOK_HOST) return false
   return BOOK_SLUG.test(new URL(request.url).pathname)
 }
 
