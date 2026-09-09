@@ -470,6 +470,16 @@ export default async function NextPage({ params }) {
     ? lead.footer.emails.filter(Boolean)
     : [lead.footer.email].filter(Boolean);
 
+  /* THE PHOTOGRAPH IS A ROW DECISION (2026-09-09, Aaron, on Charles's page:
+     "the Paraguay OMNI picture should be removed entirely"). It was hardcoded,
+     so a row that did not want it had no way to say so; the src is in the
+     markup and only the alt and caption ever came from the data.
+     Opt-OUT rather than opt-in, so every row that says nothing renders exactly
+     what it renders today — Conor's live page included. A row drops the image
+     with `proof.photo: false`, which also drops its caption, because a caption
+     with no photograph above it is a label for nothing. */
+  const showPhoto = lead.proof?.photo !== false;
+
   /* The light page's one action. Defaults live here rather than in the data so
      a row that says nothing but `"mode": "light"` still renders a complete
      block; a row that wants its own voice (Ryan speaks in the first person on
@@ -916,13 +926,37 @@ export default async function NextPage({ params }) {
             the ladder would compete with it for the same tap.
             The label carries the file type because a link that silently starts
             a download is a link that has surprised someone. */}
-        <Col className="mt-6" data-reveal>
-          <div className="space-y-1 text-[14px] leading-relaxed text-ink-faint">
+        {/* THE NOTES TAKE THE PAGE'S 38rem MEASURE, not the 34rem prose column
+            (2026-09-09, Aaron: the wrapping "is still happening too soon for
+            these paragraphs"). They were the last block on the page still
+            reading at 34rem while the two things either side of them — the
+            document list below and the essay excerpt above — had already been
+            widened to 38rem on 09-08 for exactly this complaint, which is why
+            they now looked like the narrow one rather than the normal one.
+            They also sit directly under a full-band tier card, so the eye has a
+            864px edge to compare them against.
+
+            38rem is the page's ONE measure exception and this is its third use,
+            not a fourth width. Measured at 1440, four notes, line widths in px:
+              34rem  533/528/26 · 517/536 · 533/250 · 521/294
+              36rem  564/527 · 547/507 · 556/226 · 573/243
+              38rem  564/527 · 583/470 · 605/178 · 603/213
+            The 26px tail on the first note at 34rem is the defect underneath the
+            complaint — a three-line paragraph whose third line is the single
+            word "him." — and it is gone at both wider values. 36rem clears it
+            too and is deliberately not used: it would put a third column width
+            on one page to buy nothing the shared exception does not already buy.
+
+            `Wide` with an inner cap rather than `Col`, so the first glyph stays
+            on the same x as every heading, the tier cards and the notes' own
+            siblings, and only the right-hand rag moves. */}
+        <Wide className="mt-6" data-reveal>
+          <div className="max-w-[38rem] space-y-1 text-[14px] leading-relaxed text-ink-faint">
             {lead.packages.notes.map((n) => (
               <p key={n}>{n}</p>
             ))}
           </div>
-        </Col>
+        </Wide>
         </section>
         )}
 
@@ -1067,6 +1101,7 @@ export default async function NextPage({ params }) {
             column, and it earns that by being the only thing that is not
             words. */}
         <section className="mt-20" data-reveal>
+          {showPhoto && (
           <figure>
             <img
               className="band"
@@ -1081,6 +1116,7 @@ export default async function NextPage({ params }) {
               </figcaption>
             </Col>
           </figure>
+          )}
 
           {/* The three-figure row that sat here is GONE (2026-09-04, Aaron).
               Three numerals in a row is the shape a landing page uses when it
@@ -1145,7 +1181,11 @@ export default async function NextPage({ params }) {
               an inner cap rather than `Col`, because the two share a left edge:
               the first glyph still traces down the same x as every heading on
               the page, and only the right-hand rag moves. */}
-          <Wide className="mt-10">
+          {/* mt-10 is the gap to the PHOTOGRAPH, so it goes when the
+              photograph does: the section already opens on mt-20 and stacking
+              both left the excerpt floating a third of a screen below the
+              packages notes with nothing between them. */}
+          <Wide className={showPhoto ? 'mt-10' : ''}>
             <figure className="max-w-[38rem]">
               {/* `text-pretty` because this slot holds a QUOTATION whose text nobody
                   here controls: it is a student's own sentences, and the next
@@ -1352,7 +1392,11 @@ export default async function NextPage({ params }) {
             <p className="font-display text-[1.05rem] font-semibold leading-snug text-ink-soft">
               {lead.footer.name}
             </p>
-            <p className="mt-1.5">{lead.footer.firm}</p>
+            {/* OPTIONAL (2026-09-09). A row whose signature line already names
+                the firm ("Admissions Partners Care Team") would otherwise print
+                the firm twice, and an empty <p> here still carries its own
+                margin, so omitting the field alone left a phantom gap. */}
+            {lead.footer.firm && <p className="mt-1.5">{lead.footer.firm}</p>}
             <div className="mt-4 space-y-1.5">
               <p>{lead.footer.address}</p>
               <p>
