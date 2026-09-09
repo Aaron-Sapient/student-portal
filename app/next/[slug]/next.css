@@ -1588,3 +1588,59 @@ html.reveal-armed .next-page [data-reveal].reveal-now {
   line-height: 1.55;
   color: var(--color-ink-faint);
 }
+
+/* ── The proposal block (2026-09-08) ──────────────────────────────────────
+   The offer Ryan actually made, above the price-free catalogue. Deliberately
+   quiet: this is the most consequential thing on the page and a family reading
+   money does not need it decorated. Everything below is spacing and alignment;
+   the card, the ticks and the type scale are the page's existing idiom. */
+.proposal-h {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+/* A label and an amount on one baseline, with the gap doing the work of a
+   leader dot. `justify-content: space-between` rather than a table so a long
+   label wraps under itself instead of pushing the figure off the card. */
+.proposal-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1.25rem;
+}
+.proposal-amount {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+}
+.proposal-bonus {
+  font-size: 13px;
+}
+.proposal-sum {
+  border-top: 1px solid var(--rule-soft);
+  padding-top: 0.9rem;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+.proposal-sum > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1.25rem;
+  padding: 0.15rem 0;
+}
+.proposal-sum dd {
+  font-variant-numeric: tabular-nums;
+}
+/* The total is the row the eye should land on, so it gets weight and a rule
+   above it rather than a colour of its own. */
+.proposal-sum .proposal-total {
+  margin-top: 0.4rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--rule-soft);
+  font-weight: 600;
+  color: var(--ink);
+}

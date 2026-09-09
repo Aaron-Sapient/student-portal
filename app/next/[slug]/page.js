@@ -9,6 +9,9 @@ import NextList from './nextlist';
 import Shortlist from './shortlist';
 import InterestButton from './InterestButton';
 import HeavyDetail, { heavyBandFor } from './heavy';
+import Proposal from './proposal';
+import { getQuote } from '@/lib/pricing';
+import { buildContract } from '@/lib/packageContract';
 import { resolvePricing, PACKAGE_LABELS } from '@/lib/pricingSchema';
 import { readPricing } from '@/lib/pricing';
 import { BookedFlag } from './LiveBits';
@@ -241,12 +244,45 @@ export default async function NextPage({ params }) {
     return { comprehensive: row.comprehensive, vip: row.vip };
   })();
 
+  /* THE FAMILY'S ACTUAL OFFER (2026-09-08, Aaron: "each heavy /lead link should
+     always generate the full custom package proposal off-rip, including the
+     add-ons"). A heavy row stores `quoteId`; this reads that quote and turns it
+     into the same contract the proposal email was rendered from.
+
+     FAILS SOFT, ON PURPOSE. If the quote is missing, deleted, or unreadable the
+     page falls back to the base ladder rather than erroring: a heavy page with
+     no proposal is a worse page, but a heavy page that 500s is no page at all,
+     and this row belongs to a family who was just emailed a link to it.
+
+     buildContract re-derives from the quote's own config_snapshot, so these
+     figures are frozen at the moment Ryan saved the proposal and cannot drift
+     when the pricing dashboard changes. That is what keeps the page and the
+     sent email in agreement. */
+  const contract = await (async () => {
+    if (!isHeavy || !lead.quoteId) return null;
+    try {
+      const row = await getQuote(lead.quoteId);
+      if (!row) return null;
+      const c = buildContract(row, null);
+      return c?.offered?.length ? c : null;
+    } catch (err) {
+      console.error('[next] quote read failed', slug, err?.message);
+      return null;
+    }
+  })();
+
   /* Tier name to package key, by the label table the generator itself uses, so
      a renamed tier cannot silently stop matching. */
   const PKG_BY_LABEL = Object.fromEntries(
     Object.entries(PACKAGE_LABELS).map(([k, v]) => [v.toLowerCase(), k]),
   );
   const baseFor = (tierName) => {
+    /* A PAGE MUST NOT PRINT TWO PRICES FOR ONE TIER (2026-09-08). When the
+       proposal is on the page, the ladder's base figure is a second, smaller
+       number for the same word, and the family's email carries the proposal's.
+       The ladder keeps its posture words and becomes what it is on a light
+       page: the shape of the offer, not its price. */
+    if (contract) return null;
     if (!heavyBase) return null;
     const key = PKG_BY_LABEL[String(tierName || '').toLowerCase()];
     return key && heavyBase[key] ? heavyBase[key] : null;
@@ -872,6 +908,29 @@ export default async function NextPage({ params }) {
           </div>
         </Col>
         </section>
+        )}
+
+        {/* ── 8a. THE OFFER RYAN MADE THIS FAMILY ─────────────────────────────
+            Placed exactly where the block below always said it would go: "the
+            per-family options block lands between the two: the specific offer
+            first, the whole catalogue under it." The ladder above it keeps its
+            posture words and loses its figures (see baseFor), so the page names
+            one price per tier and it is the price in the family's email.
+
+            Rendered only when the quote actually resolved. A heavy row whose
+            quote is missing keeps the ladder's base figures and reads exactly
+            as it did before this existed, which is the safe direction to fail. */}
+        {contract && (
+          <section className="mt-16" data-reveal>
+            <Col>
+              <H2>
+                <Accent text={`What Director Ryan put together for ${lead.student}.`} />
+              </H2>
+            </Col>
+            <Wide className="mt-8" data-reveal>
+              <Proposal contract={contract} firstName={lead.student} />
+            </Wide>
+          </section>
         )}
 
         {/* ── 9a. HEAVY: everything we do ─────────────────────────────────────
