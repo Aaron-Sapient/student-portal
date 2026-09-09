@@ -10,6 +10,7 @@ import Shortlist from './shortlist';
 import InterestButton from './InterestButton';
 import HeavyDetail, { heavyBandFor } from './heavy';
 import Proposal from './proposal';
+import HeavyDoor from './HeavyDoor';
 import { getQuote } from '@/lib/pricing';
 import { buildContract } from '@/lib/packageContract';
 import { resolvePricing, PACKAGE_LABELS } from '@/lib/pricingSchema';
@@ -497,6 +498,13 @@ export default async function NextPage({ params }) {
   const interestHref =
     `mailto:${interestTo}?subject=${encodeURIComponent(interestSubject)}` +
     (interest.body ? `&body=${encodeURIComponent(interest.body)}` : '');
+  /* A HEAVY PAGE ASKS A DIFFERENT QUESTION (2026-09-08). "Options for Rishaan"
+     is the light page's subject and it is wrong once the options are on screen:
+     a family writing from here has read them and wants to ask about them, and a
+     subject line that requests what they are already holding reads as though
+     nobody kept track. Subject only, same as above, for the same reasons. */
+  const proposalAskHref =
+    `mailto:${interestTo}?subject=${encodeURIComponent(`Question about ${lead.student}'s proposal`)}`;
 
   return (
     <>
@@ -930,6 +938,27 @@ export default async function NextPage({ params }) {
             <Wide className="mt-8" data-reveal>
               <Proposal contract={contract} firstName={lead.student} />
             </Wide>
+            {/* THE ASK, directly under the thing being asked about. The light
+                page puts its door at the very bottom because the whole page is
+                the argument; here the argument is the card immediately above,
+                and a family who has just read a total should not have to scroll
+                past the entire catalogue to say yes to it. The catalogue below
+                is reference material, not persuasion. */}
+            <Col className="mt-10" data-reveal>
+              <p className="text-[17px] leading-relaxed text-ink-soft">
+                {contract.offered.length > 1
+                  ? `Tell Ryan which one fits ${lead.student}, and he takes it from there.`
+                  : `Tell Ryan this is the one for ${lead.student}, and he takes it from there.`}
+              </p>
+              <HeavyDoor
+                slug={slug}
+                options={contract.offered.map((k) => ({ key: k, label: contract.tiers[k].label }))}
+                uvip
+                askHref={proposalAskHref}
+                fallbackEmail={interestTo}
+                firstName={lead.student}
+              />
+            </Col>
           </section>
         )}
 

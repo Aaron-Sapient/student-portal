@@ -53,6 +53,18 @@ export async function POST(request) {
   }
 
   const slug = typeof body?.slug === 'string' ? body.slug : '';
+  /* WHICH TIER THE FAMILY PRESSED (2026-09-08). A heavy page shows the offer
+     Ryan actually made, so its door can name a tier where the light page could
+     only ask for options.
+
+     ALLOWLISTED, NOT ECHOED, and that matters more here than it looks. Every
+     other field below is read off the ROW precisely so a caller cannot put
+     words in a family's mouth, and accepting free text from the request would
+     be the one hole in that. An unrecognised value is dropped rather than
+     rejected: the family's yes must still reach Ryan even if the page sends
+     something this route has not learned about yet. */
+  const CHOICES = { comprehensive: 'Comprehensive', vip: 'VIP', uvip: 'Ultra VIP' };
+  const choice = CHOICES[body?.choice] ? body.choice : '';
   /* Shape-checked before it reaches the database, and it is the same shape the
      seed script enforces when it writes a row. */
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
@@ -75,13 +87,17 @@ export async function POST(request) {
     ['household', lead.recipientName || ''],
     ['family_email', lead.booking?.familyEmail || ''],
     ['mode', lead.mode || 'heavy'],
-    ['action', 'build_custom_packages'],
+    ['action', choice ? 'chose_package' : 'build_custom_packages'],
+    ['choice', choice],
+    ['choice_label', choice ? CHOICES[choice] : ''],
     ['page', page],
     ['requested_at', new Date().toISOString()],
   ];
 
   const text =
-    `${student}'s family asked for custom packages from their page.\n\n` +
+    (choice
+      ? `${student}'s family chose ${CHOICES[choice]} on their page.\n\n`
+      : `${student}'s family asked for custom packages from their page.\n\n`) +
     `LEAD_INTEREST\n` +
     fields.map(([k, v]) => `${k}: ${v}`).join('\n') +
     `\n`;
@@ -90,7 +106,9 @@ export async function POST(request) {
     await sendAutonomousEmail({
       to: RYAN,
       cc: [SHARED],
-      subject: `[LEAD INTEREST] ${student} asked for custom packages`,
+      subject: choice
+        ? `[LEAD INTEREST] ${student} chose ${CHOICES[choice]}`
+        : `[LEAD INTEREST] ${student} asked for custom packages`,
       text,
     });
   } catch (err) {

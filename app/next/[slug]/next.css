@@ -1644,3 +1644,11 @@ html.reveal-armed .next-page [data-reveal].reveal-now {
   font-weight: 600;
   color: var(--ink);
 }
+
+/* The heavy door's second row: the Ultra VIP inquiry and the questions mailto,
+   which are peers of each other and quieter than the tier buttons above them.
+   A margin rather than a gap on the parent, because the two rows are separate
+   flex containers so the tier row can wrap on its own. */
+.door-fork-secondary {
+  margin-top: 0.75rem;
+}
