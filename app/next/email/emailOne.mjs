@@ -71,6 +71,26 @@ const name = lead.student;
    The shape does not change: four sentences and one button either way. */
 const isLight = lead.mode === 'light';
 
+/* WHETHER THE PAGE OFFERS A TIME, which is what the lints at the foot of this
+   file actually care about (2026-09-09). They were gated on `isLight`, and that
+   was the same answer as this one right up until heavy lost its calendar on
+   2026-09-08. A heavy row now renders no calendar unless it asks for one, so
+   the generic heavy sentences below ("thirty minutes on Zoom", "Pick a time on
+   the page") would render over a page with no times on it and every lint would
+   report PASS. That is the exact failure the light lints were written to catch,
+   arriving through the door they were not watching.
+
+   MIRRORS `isBookable()` in app/next/[slug]/leads.js, which is the one gate the
+   page, the sticky bar and /api/next/slots all read. It is duplicated rather
+   than imported because that module is a Next module and this is a standalone
+   script; if the rule there changes, change it here in the same edit. */
+const pageHasCalendar =
+  lead.mode === 'light'
+    ? false
+    : lead.mode === 'heavy'
+      ? lead.calendar === true
+      : (lead.status || 'active') === 'active';
+
 /* THIS FAMILY'S FOUR SENTENCES, FROM THE ROW.
    The generic four below are a fallback, not the product. Every lead-one that
    has actually been sent carried an acknowledgment only that household is owed
@@ -117,6 +137,37 @@ const preheader =
    its cases: Claude_Emails.md, "The opener, when in doubt"). */
 const salutation = rowEmail.salutation || null;
 
+/* THE SIGN-OFF AND THE LETTERHEAD COME OFF THE ROW (2026-09-09), defaulted to
+   what this file has always hardcoded, so every row that says nothing renders
+   byte-identically to before. A row's VOICE is already a row property: a heavy
+   row speaks about "Director Ryan" in the third person and cannot then sign
+   itself "Ryan".
+
+   FROM `email.letterhead`, NOT from `lead.footer`, and the difference is the
+   whole point. Aaron's ruling of 2026-09-09 makes the PAGE footer read
+   "Admissions Partners Care Team" over support@; reading that footer here would
+   have silently restamped every rendered email too, and Charles's email is Ryan
+   writing in the first person, so it would have signed "Best, / Ryan" over a
+   Care Team letterhead. Two surfaces, two rulings. A row that wants the Care
+   Team block in its email says so in its email block.
+
+   The letterhead skips any line identical to the signature above it: "Best, /
+   Ryan" over "Ryan Choi" is a signature over a letterhead, while "Warm regards,
+   / Admissions Partners Care Team" over the same string is a stutter. */
+const signoff = rowEmail.signoff || 'Best,';
+const signature = rowEmail.signature || 'Ryan';
+const letterhead = (
+  Array.isArray(rowEmail.letterhead) && rowEmail.letterhead.length
+    ? rowEmail.letterhead
+    : ['Ryan Choi', 'Admissions Partners', '930 Roosevelt, Suite 221\u2013225, Irvine, CA 92620', '(949) 910-5366']
+).filter((l) => l && l !== signature);
+/* THE PLAIN-TEXT MIRROR STAYS ASCII. The HTML letterhead has always printed the
+   suite range with an en dash and the text alternative with a hyphen, and that
+   asymmetry is deliberate: the text part is the copy a client with a broken
+   charset falls back to, so it should not be the one carrying a non-ASCII
+   glyph. Downgrading here keeps that true however a row spells its own. */
+const letterheadText = letterhead.map((l) => l.replace(/\u2013/g, '-'));
+
 /* Tokens copied off the pamphlet palette rather than the portal's, because an
    email is a print-adjacent surface and the pamphlet is what the family will see
    next to it. Hex only: no CSS variables survive a mail client. */
@@ -131,6 +182,13 @@ const SANS = "-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif";
 
 const esc = (s) =>
   String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/* The HTML letterhead keeps the ENTITY, which is what this block has always
+   emitted. The document declares utf-8, so a literal en dash renders the same in
+   every client that honours it and `&ndash;` renders the same in the ones that
+   do not. Declared here rather than beside `letterhead` above because it needs
+   `esc`, which is defined on the line above this one. */
+const letterheadHtml = letterhead.map((l) => esc(l).replace(/\u2013/g, '&ndash;'));
 
 const html = `<!doctype html>
 <html lang="en">
@@ -180,14 +238,11 @@ ${
           <a href="${esc(link)}" style="color:${INK_FAINT};text-decoration:underline;">${esc(link)}</a>
         </td></tr>
 
-        <tr><td style="font-family:${SERIF};font-size:17px;line-height:1.6;color:${INK_SOFT};padding-bottom:4px;">Best,</td></tr>
-        <tr><td style="font-family:${SERIF};font-size:17px;line-height:1.6;color:${INK};padding-bottom:24px;">Ryan</td></tr>
+        <tr><td style="font-family:${SERIF};font-size:17px;line-height:1.6;color:${INK_SOFT};padding-bottom:4px;">${esc(signoff)}</td></tr>
+        <tr><td style="font-family:${SERIF};font-size:17px;line-height:1.6;color:${INK};padding-bottom:24px;">${esc(signature)}</td></tr>
 
         <tr><td style="border-top:1px solid ${RULE};padding-top:16px;font-family:${SANS};font-size:12px;line-height:1.6;color:${INK_FAINT};">
-          Ryan Choi<br>
-          Admissions Partners<br>
-          930 Roosevelt, Suite 221&ndash;225, Irvine, CA 92620<br>
-          (949) 910-5366
+          ${letterheadHtml.join('<br>\n          ')}
         </td></tr>
 
       </table>
@@ -204,13 +259,10 @@ ${SENTENCES.slice(2).join(' ')}
 
 ${buttonLabel}: ${link}
 
-Best,
-Ryan
+${signoff}
+${signature}
 
-Ryan Choi
-Admissions Partners
-930 Roosevelt, Suite 221-225, Irvine, CA 92620
-(949) 910-5366
+${letterheadText.join('\n')}
 `;
 
 fs.mkdirSync(outDir, { recursive: true });
@@ -248,16 +300,16 @@ const checks = [
    and neither may
    offer a time, a calendar, a Zoom or a number of minutes, because the page it
    points at offers none of those. */
-if (isLight) {
+if (!pageHasCalendar) {
   const doc = html.split(link).join(' ');
   const clean = (re) => !re.test(body) && !re.test(doc);
   checks.push(
-    ['light: no booking language', clean(/\bbook(ing|s|ed)?\b/i)],
-    ['light: no calendar', clean(/\bcalendar\b/i)],
-    ['light: no Zoom', clean(/\bzoom\b/i)],
-    ['light: no meeting length', clean(/\b(30|thirty)[\s-]*min(ute)?s?\b/i)],
-    ['light: no "pick a time"', clean(/pick a time/i)],
-    ['light: an ask to reply', /\breply\b/i.test(body)]
+    ['no calendar: no booking language', clean(/\bbook(ing|s|ed)?\b/i)],
+    ['no calendar: no calendar word', clean(/\bcalendar\b/i)],
+    ['no calendar: no Zoom', clean(/\bzoom\b/i)],
+    ['no calendar: no meeting length', clean(/\b(30|thirty)[\s-]*min(ute)?s?\b/i)],
+    ['no calendar: no "pick a time"', clean(/pick a time/i)],
+    ['no calendar: an ask to reply', /\breply\b/i.test(body)]
   );
 }
 console.log(`subject: ${subject}`);
