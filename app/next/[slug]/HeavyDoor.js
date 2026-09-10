@@ -105,10 +105,15 @@ export default function HeavyDoor({ slug, options, uvip, askHref, fallbackEmail,
           {ASK_LABEL}
         </a>
       </div>
+      {/* This sentence also lives in InterestButton, which is the light page's
+          door, and the two must not drift: they render the same address from
+          the same row field and a family cannot tell which component served
+          them. "We", not Ryan by name, for the reason given there — the address
+          is `interest.to`, and a row may point it at the shared mailbox. */}
       {state === 'error' && (
         <p className="interest-error" role="alert">
           That did not go through. Please write to{' '}
-          <a href={`mailto:${fallbackEmail}`}>{fallbackEmail}</a> and Ryan will pick it up.
+          <a href={`mailto:${fallbackEmail}`}>{fallbackEmail}</a> and we will pick it up.
         </p>
       )}
     </>
