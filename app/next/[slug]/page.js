@@ -445,6 +445,32 @@ export default async function NextPage({ params }) {
     });
   }
 
+  /* THE OUTCOMES REPORT IS THE ONE DOCUMENT EVERY FAMILY GETS (Aaron,
+     2026-09-10), so it is appended here rather than seeded per row. Every other
+     entry in this strip is a fact about a particular family — which guide, which
+     pamphlet, which grade — and belongs in that row's `docs`. The firm's record
+     is a fact about the FIRM, identical on every page, and a row-level chip
+     would mean reseeding the table to add it and reseeding it again for every
+     row created after today.
+
+     It is also gated on nothing. `packagesPdf`, `intl_pdf` and the row's own
+     `docs` list all stay exactly as they are; a round-one light row that
+     switched every other document off still carries this one, which is the
+     point — it is the price-free document about the firm and the craft that
+     Ryan's round-one ruling was protecting room for.
+
+     A row may still override it: a `docs` entry pointing at the same href wins
+     (its own label and note), and this push is skipped. `outcomesReport: false`
+     on the row switches it off entirely for a family it would be wrong for. */
+  const OUTCOMES_HREF = '/next/outcomes-report.pdf';
+  if (lead.outcomesReport !== false && !docs.some((d) => d.href === OUTCOMES_HREF)) {
+    docs.push({
+      label: 'Outcomes Report (PDF)',
+      href: OUTCOMES_HREF,
+      note: 'Twenty-two years of results, and the students who earned them, featured with their consent.',
+    });
+  }
+
   const docsHaveNotes = docs.some((d) => d.note);
 
   /* A CHIP TELLS THE TRUTH ABOUT WHERE IT GOES (2026-09-07). Every document
@@ -1329,7 +1355,13 @@ export default async function NextPage({ params }) {
             selling, and round one does not sell. The list is per-family and is
             built above from `docs`; the guard below is its length, so a row
             with an empty list drops the heading with the chips rather than
-            printing an invitation to read nothing. */}
+            printing an invitation to read nothing.
+
+            SINCE 2026-09-10 THE LIST IS NEVER EMPTY in practice: the Outcomes
+            Report is appended to every row above. The length guard stays, both
+            because a row can switch that document off (`outcomesReport: false`)
+            and because a guard that happens to be true today is not the same
+            thing as markup that assumes it. */}
         {docs.length > 0 && (
           <section className="mt-20" data-reveal>
             <Col>
