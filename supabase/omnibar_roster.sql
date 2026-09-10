@@ -23,9 +23,9 @@ as $$
   select coalesce(jsonb_agg(jsonb_build_object(
            'sheetId', s.student_sheet_id,
            'name',    coalesce(s.name, ''),
-           'class',   coalesce(s.class, ''),
+           'class',   coalesce(s.class::text, ''),
            'slug',    coalesce(s.slug, ''),
-           'status',  coalesce(s.status, ''),
+           'status',  coalesce(s.status::text, ''),
            'email',   coalesce(s.student_email, ''),
            'parents', coalesce((
              select jsonb_agg(g.email order by g.ordinal)
