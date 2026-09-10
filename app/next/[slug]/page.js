@@ -485,11 +485,22 @@ export default async function NextPage({ params }) {
      block; a row that wants its own voice (Ryan speaks in the first person on
      some pages and is spoken about on others) overrides any field. */
   const interest = lead.interest || {};
-  /* ryan@ryanchoice.com, not ryan@admissions.partners. The second is an ALIAS of
-     support@ and nothing watches it as a lead inbox; the first is the mailbox
-     the lead watcher actually reads. A yes that lands where nobody is looking is
-     the one failure this whole mode exists to prevent. */
-  const interestTo = interest.to || 'ryan@ryanchoice.com';
+  /* support@admissions.partners (2026-09-09, Aaron, giving the reason as well as
+     the ruling: ryan@ryanchoice.com "was for the old system back when the /next
+     pages were hosted on ryanchoice.com"). That host moved to
+     next.admissions.partners earlier the same day, and the address moved with
+     the reason for it.
+
+     The concern the old default was written against has not gone away: a yes
+     that lands where nobody is looking is still the one failure this mode
+     exists to prevent. support@ is the answer to it now, because it is the
+     mailbox the Care Team actually watches and the one this page's own footer
+     and door already print.
+
+     This is the FALLBACK. Two rows, stella and charlie, carry an explicit
+     `interest.to` of ryan@ryanchoice.com from before the ruling and therefore
+     still override it. */
+  const interestTo = interest.to || 'support@admissions.partners';
   /* SUBJECT ONLY, and the subject carries nothing about the family but the
      student's first name. A prefilled BODY puts words in a parent's mouth and
      then gets sent verbatim, which reads as a form response to the person who

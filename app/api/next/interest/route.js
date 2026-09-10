@@ -25,14 +25,19 @@ import { sendAutonomousEmail } from '@/lib/autonomousEmail';
    difference between "no such lead" and "that lead is done" is a fact about
    somebody else's family.
 
-   THE MAIL GOES TO A PERSON, DELIBERATELY, which is the one place this route
-   departs from `sendAutonomousEmail`'s usual posture. That helper exists so
-   automated nudges never land in a counselor's personal inbox; here the whole
-   payload IS a person asking Ryan for something, and Ryan's watched mailbox is
-   where every other family conversation already lives. support@ is CC'd so the
-   shared inbox has it too, and so an automation has one place to watch. The
-   From stays the noreply sender and the Reply-To stays support@, so a reply to
-   this notification cannot start a thread the family is not part of.
+   THE MAIL GOES TO support@ AND NOWHERE ELSE (2026-09-09, Aaron: "support@
+   should be the only place where the notifications go"). It used to go to
+   ryan@ryanchoice.com with support@ on CC, and the comment that stood here
+   argued the case for a person rather than a shared inbox. That address is a
+   leftover: it dates from when these pages were served off ryanchoice.com, and
+   the host moved to next.admissions.partners earlier the same day.
+
+   The CC is gone rather than pointed somewhere new. To and CC on one address
+   delivers the same notification twice, and an automation greping for the
+   marker line would then count every yes as two.
+
+   The From stays the noreply sender and the Reply-To stays support@, so a reply
+   to this notification cannot start a thread the family is not part of.
 
    THE BODY IS MACHINE-READABLE ON PURPOSE (Aaron: "something that the
    automations can easily pick up"). A stable marker line, then `key: value`
@@ -41,8 +46,11 @@ import { sendAutonomousEmail } from '@/lib/autonomousEmail';
 
 export const dynamic = 'force-dynamic';
 
-const RYAN = process.env.LEAD_INTEREST_TO || 'ryan@ryanchoice.com';
-const SHARED = process.env.LEAD_INTEREST_CC || 'support@admissions.partners';
+/* The override stays, and it is not decoration: it is how this route was proved
+   to work without mailing a real recipient (2026-09-08, LEAD_INTEREST_TO pointed
+   at Aaron's own address for one POST, then deleted). Verified 2026-09-09 that
+   neither var is set on the project, so the default below is what runs. */
+const NOTIFY = process.env.LEAD_INTEREST_TO || 'support@admissions.partners';
 
 export async function POST(request) {
   let body;
@@ -107,8 +115,7 @@ export async function POST(request) {
 
   try {
     await sendAutonomousEmail({
-      to: RYAN,
-      cc: [SHARED],
+      to: NOTIFY,
       subject: choice
         ? `[LEAD INTEREST] ${student} chose ${CHOICES[choice]}`
         : `[LEAD INTEREST] ${student} asked for custom packages`,
