@@ -94,4 +94,12 @@ supabase/.temp/
 # backups are named explicitly (2026-09-09, first one written); without this line
 # an `add -A` from any lane commits a parent's email address to a public repo.
 /app/next/leads/*.json.bak*
+# And the same hole exists for EVERY other suffix, which cost a near-miss on
+# 2026-09-09: two retired rows renamed to `*.json.retired-<date>` appeared as
+# untracked files carrying a minor's first name in a public repo, because the two
+# patterns above only cover the bare name and `.bak`. This catches anything that
+# starts as a lead file whatever it is renamed to. The retired pair was moved out
+# of the repo entirely rather than relying on this line; the line is for the next
+# rename nobody thinks about.
+/app/next/leads/*.json.*
 !/app/next/leads/example-*.json
