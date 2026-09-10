@@ -153,7 +153,37 @@ export function isBookable(lead) {
      A row with NO mode is untouched and still bookable, which is Conor's live
      shape: heavy is an opt-in, so the absent case belongs to neither branch. */
   if (lead.mode === 'heavy' && lead.calendar !== true) return false;
-  return (lead.status || 'active') === 'active';
+  /* A SENT PAGE IS STILL BOOKABLE. The 2026-09-10 freeze is about COPY — what a
+     family reads must not change under them — and booking is state, not copy.
+     Only an archived page loses its calendar, which is the rule 'closed' always
+     carried under its old name. */
+  return leadLifecycle(lead) !== 'archived';
+}
+
+/* THREE STATES: unsent | sent | archived (Aaron, 2026-09-10).
+   ─────────────────────────────────────────────────────────────────────────
+   THE RULE. A lead page freezes when it is sent. Until the family has the link
+   the page is ours to change; once email one has gone, what they opened is what
+   they keep opening — including template-level additions no one seeded onto
+   their row. Conor's page went 2026-09-05 and must render exactly as it did.
+
+   ARCHIVED IS 'closed' UNDER ITS NEW NAME, and both spellings resolve here, so
+   the quiet-200 notice and the calendar refusal keep working on a row written
+   before this existed. 'active' is the other legacy value and it means "not
+   sent, not archived" — unsent.
+
+   SENT IS READ FROM TWO PLACES ON PURPOSE. `status: 'sent'` is the vocabulary;
+   `sentAt` is the date. Either one alone marks the row sent, because the two
+   were written in two passes: production runs whatever main carries, and a row
+   flipped to a status main did not yet understand would have taken the booking
+   panel off a live family's page in the window before the merge. `sentAt` is
+   invisible to that older reader, so it could be written first and safely.
+   After the status pass both agree and this reads either. */
+export function leadLifecycle(lead) {
+  const raw = lead?.status;
+  if (raw === 'archived' || raw === 'closed') return 'archived';
+  if (raw === 'sent' || lead?.sentAt) return 'sent';
+  return 'unsent';
 }
 
 /* Record a confirmed booking on the lead's row.

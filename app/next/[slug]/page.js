@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { headers } from 'next/headers';
 import { DateTime } from 'luxon';
-import { getLead, isBookable, maskEmail } from './leads';
+import { getLead, isBookable, maskEmail, leadLifecycle } from './leads';
 import BookingBlock from './BookingBlock';
 import HeardStrip from './heard';
 import Reveal from './Reveal';
@@ -299,7 +299,8 @@ export default async function NextPage({ params }) {
      something wrong when they did not, and it gives them nothing to do next.
      This one gives them the one thing that works. Nothing else on the page
      renders, so a closed lead exposes no prices and no calendar. */
-  if (lead.status === 'closed') {
+  const lifecycle = leadLifecycle(lead);
+  if (lifecycle === 'archived') {
     return (
       <main className="next-page relative z-10 pt-24">
         <Col>
@@ -461,13 +462,23 @@ export default async function NextPage({ params }) {
 
      A row may still override it: a `docs` entry pointing at the same href wins
      (its own label and note), and this push is skipped. `outcomesReport: false`
-     on the row switches it off entirely for a family it would be wrong for. */
+     on the row switches it off entirely for a family it would be wrong for.
+
+     GATED ON `unsent` (Aaron, 2026-09-10). A sent page is frozen: Conor's
+     family opened his on 2026-09-05 and the page they reopen is the page they
+     read. That is what makes a template-level chip safe to add at all — it
+     reaches only rows nobody has been handed yet, and every row created after
+     today, which default to unsent. */
   const OUTCOMES_HREF = '/next/outcomes-report.pdf';
-  if (lead.outcomesReport !== false && !docs.some((d) => d.href === OUTCOMES_HREF)) {
+  if (
+    lifecycle === 'unsent' &&
+    lead.outcomesReport !== false &&
+    !docs.some((d) => d.href === OUTCOMES_HREF)
+  ) {
     docs.push({
       label: 'Outcomes Report (PDF)',
       href: OUTCOMES_HREF,
-      note: 'Twenty-two years of results, and the students who earned them, featured with their consent.',
+      note: 'Twenty-two years of results.',
     });
   }
 

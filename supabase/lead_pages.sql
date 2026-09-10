@@ -92,3 +92,53 @@ end $$;
 
 comment on column lead_pages.status is
   'active | closed. A closed page renders a graceful notice with a 200, never a 404.';
+
+-- ── Three-state lifecycle: unsent | sent | archived (2026-09-10 · Aaron) ────
+-- A LEAD PAGE FREEZES WHEN IT IS SENT. Until the family has the link, the page
+-- is ours to change; the moment email one goes, what they opened is what they
+-- keep opening, and that includes template-level additions nobody seeded onto
+-- the row (the Outcomes Report chip is the first of those). A page that gains a
+-- document a week after a family read it is a page that cannot be quoted back.
+--
+-- ADDITIVE, ON PURPOSE. The old vocabulary ('active' | 'closed') stays legal in
+-- the constraint so a writer that predates this migration cannot be rejected by
+-- the database; the readers understand both. 'closed' KEEPS ITS SEMANTICS under
+-- the new name: an archived page renders the same quiet 200 notice a closed one
+-- did, and `closed_at` remains the column that timestamps it.
+--
+--   active  -> unsent    (nothing had been sent when this ran; all 8 rows)
+--   closed  -> archived  (none existed on 2026-09-10)
+--
+-- ⚠ THE RENDERER READS `data->>'status'`, NOT THIS COLUMN. app/next/[slug]/
+-- leads.js `getLead` selects `data` alone, so the jsonb copy is what decides
+-- what a family sees and this column is the queryable mirror. Any writer must
+-- set BOTH. That asymmetry predates this migration; it is documented here
+-- rather than fixed here because fixing it means changing what the page reads.
+alter table lead_pages add column if not exists sent_at timestamptz;
+
+alter table lead_pages drop constraint if exists lead_pages_status_check;
+alter table lead_pages add constraint lead_pages_status_check
+  check (status in ('unsent', 'sent', 'archived', 'active', 'closed'));
+
+-- THE JSONB IS THE AUTHORITY HERE, not the old column value, because the row
+-- writes of 2026-09-10 went into `data` (psql was unavailable to that session;
+-- the service-role client can write jsonb but not DDL). So the column is
+-- reconciled FROM what the renderer already reads, and the legacy vocabulary is
+-- mapped only where the jsonb has nothing to say.
+update lead_pages set status = case data->>'status'
+    when 'sent'     then 'sent'
+    when 'archived' then 'archived'
+    when 'unsent'   then 'unsent'
+    when 'closed'   then 'archived'
+    else 'unsent'
+  end;
+update lead_pages set closed_at = coalesce(closed_at, now()) where status = 'archived';
+update lead_pages set sent_at = coalesce(sent_at, (data->>'sentAt')::timestamptz)
+  where status = 'sent' and data ? 'sentAt';
+
+alter table lead_pages alter column status set default 'unsent';
+
+comment on column lead_pages.status is
+  'unsent | sent | archived (legacy active | closed still accepted). Sent freezes the page: nothing on it changes after the family has the link. Archived renders a graceful notice with a 200, never a 404. The RENDERER reads data->>''status''; keep both in step.';
+comment on column lead_pages.sent_at is
+  'When email one went to the family. Set with status=''sent''.';
