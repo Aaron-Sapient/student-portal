@@ -470,8 +470,14 @@ export default async function NextPage({ params }) {
      reaches only rows nobody has been handed yet, and every row created after
      today, which default to unsent. */
   const OUTCOMES_HREF = '/next/outcomes-report.pdf';
+  /* Frozen means "as it was when sent", not "as it was before the chip
+     existed": a page sent on or after the day the chip shipped had it when the
+     family opened it, so withholding it now would be the change, not the
+     freeze. Charlie's page went out on 2026-09-10 with the chip on it. */
+  const OUTCOMES_CHIP_SINCE = '2026-09-10';
+  const sentWithChip = typeof lead.sentAt === 'string' && lead.sentAt >= OUTCOMES_CHIP_SINCE;
   if (
-    lifecycle === 'unsent' &&
+    (lifecycle === 'unsent' || sentWithChip) &&
     lead.outcomesReport !== false &&
     !docs.some((d) => d.href === OUTCOMES_HREF)
   ) {
